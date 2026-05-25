@@ -9,17 +9,41 @@ export function searchTabs(
   query: string,
   openTabs: TabInfo[],
   historyEntries: TabHistoryEntry[],
+  currentWindowId?: number,
 ): SearchResult[] {
-  if (!query.trim()) return []
+  if (!query.trim()) {
+    // Sort open tabs by lastAccessed descending
+    const sorted = [...openTabs].sort((a, b) => {
+      const timeA = a.lastAccessed || 0
+      const timeB = b.lastAccessed || 0
+      if (timeA !== timeB) {
+        return timeB - timeA
+      }
+      return b.id - a.id
+    })
+    return sorted.map((t) => ({
+      tab: t,
+      score: 0,
+      isOpen: true,
+      scoreDetails: 'Recently used',
+    }))
+  }
 
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
   const results: SearchResult[] = []
 
   // Score open tabs
   for (const tab of openTabs) {
-    const score = computeScore(terms, tab.title, tab.url)
-    if (score > 0) {
-      results.push({ tab, score, isOpen: true })
+    const { score: matchScore, details: matchDetails } = computeScore(terms, tab.title, tab.url)
+    if (matchScore > 0) {
+      const isSameWindow = currentWindowId !== undefined && tab.windowId === currentWindowId
+      const windowBoost = isSameWindow ? 1 : 0.5
+      const windowDetails = isSameWindow ? 'Same Window +1' : 'Diff Window +0.5'
+      
+      const finalScore = matchScore + windowBoost
+      const finalDetails = matchDetails ? `${matchDetails} | ${windowDetails}` : windowDetails
+      
+      results.push({ tab, score: finalScore, isOpen: true, scoreDetails: finalDetails })
     }
   }
 
@@ -28,13 +52,15 @@ export function searchTabs(
   for (const entry of historyEntries) {
     if (openUrls.has(entry.url)) continue
 
-    const score = computeScore(terms, entry.title, entry.url)
+    const { score, details } = computeScore(terms, entry.title, entry.url)
     if (score > 0) {
       // Boost by recency (decay over 7 days)
       const ageMs = Date.now() - entry.lastAccessed
       const ageDays = ageMs / (1000 * 60 * 60 * 24)
       const recencyBoost = Math.max(0, 1 - ageDays / 7) * 0.2
-      results.push({ tab: entry, score: score + recencyBoost, isOpen: false })
+      const finalScore = score + recencyBoost
+      const boostStr = recencyBoost > 0 ? ` | History +${recencyBoost.toFixed(2)}` : ''
+      results.push({ tab: entry, score: finalScore, isOpen: false, scoreDetails: details + boostStr })
     }
   }
 
@@ -47,51 +73,57 @@ export function searchTabs(
 /**
  * Compute a relevance score for a tab against search terms.
  */
-function computeScore(terms: string[], title: string, url: string): number {
+function computeScore(terms: string[], title: string, url: string): { score: number; details: string } {
   const titleLower = (title || '').toLowerCase()
   const urlLower = (url || '').toLowerCase()
 
   let totalScore = 0
+  const detailsParts: string[] = []
 
   for (const term of terms) {
-    let termScore = 0
+    let titleScore = 0
+    let urlScore = 0
 
-    // Title exact word match
+    // Title match
     if (titleLower.includes(term)) {
-      termScore += 3
+      titleScore += 3
       // Bonus for word boundary match
       const regex = new RegExp(`\\b${escapeRegex(term)}\\b`, 'i')
       if (regex.test(title || '')) {
-        termScore += 1
+        titleScore += 1
       }
       // Bonus for match at start
       if (titleLower.startsWith(term)) {
-        termScore += 1
+        titleScore += 1
       }
     }
 
     // URL match (lower weight)
     if (urlLower.includes(term)) {
-      termScore += 1
+      urlScore += 1
       // Domain match bonus
       try {
         const domain = new URL(url).hostname.toLowerCase()
         if (domain.includes(term)) {
-          termScore += 1
+          urlScore += 1
         }
       } catch {
         // ignore
       }
     }
 
-    if (termScore === 0) {
+    if (titleScore === 0 && urlScore === 0) {
       // If any term doesn't match, return 0 (AND logic)
-      return 0
+      return { score: 0, details: '' }
     }
-    totalScore += termScore
+    
+    if (titleScore > 0) detailsParts.push(`Title +${titleScore}`)
+    if (urlScore > 0) detailsParts.push(`URL +${urlScore}`)
+    
+    totalScore += (titleScore + urlScore)
   }
 
-  return totalScore
+  return { score: totalScore, details: detailsParts.join(' | ') }
 }
 
 function escapeRegex(str: string): string {

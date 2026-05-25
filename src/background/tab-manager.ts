@@ -1,6 +1,7 @@
 import { classify, classifyTabs, groupTabsFreelyWithAI } from './classifier'
 import type { FreeGroupResult } from './classifier'
 import { GROUP_DEFINITIONS, STORAGE_KEYS, DEFAULT_SETTINGS } from '../shared/constants'
+import { extractDomain } from '../shared/utils'
 import { getMessage } from '../shared/i18n'
 import { AIClient } from '../shared/ai-client'
 import type { GroupCategory, GroupedTabs, TabInfo, ExtensionSettings, ChromeTabGroupColor } from '../shared/types'
@@ -405,6 +406,18 @@ async function buildGroupsFromChrome(tabs: chrome.tabs.Tab[]): Promise<GroupedTa
   return result
 }
 
+export function sortTabsByDomainAndTitleHelper(tabs: chrome.tabs.Tab[]): chrome.tabs.Tab[] {
+  return [...tabs].sort((a, b) => {
+    const domainA = extractDomain(a.url || '')
+    const domainB = extractDomain(b.url || '')
+    const comp = domainA.localeCompare(domainB)
+    if (comp !== 0) return comp
+    const titleA = (a.title || '').toLowerCase()
+    const titleB = (b.title || '').toLowerCase()
+    return titleA.localeCompare(titleB)
+  })
+}
+
 // --- Public API ---
 
 /**
@@ -431,8 +444,25 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
       result = freeGroupsToGroupedTabs(freeGroups, tabs)
       cacheIsAIGroupedMap.set(windowId, true)
     } catch (err) {
-      console.error('[TabPilot] AI free grouping failed, falling back to rules:', err)
-      result = ruleGroupsToGroupedTabs(classifyTabs(tabs), tabs)
+      if (settings.ai.fallbackToSort) {
+        console.error('[TabPilot] AI free grouping failed in preview, falling back to tab sorting. Error:', err)
+        const unpinnedTabs = tabs.filter((t) => !t.pinned)
+        const pinnedTabs = tabs.filter((t) => t.pinned)
+        const sortedUnpinned = sortTabsByDomainAndTitleHelper(unpinnedTabs)
+        const allSorted = [...pinnedTabs, ...sortedUnpinned]
+        const tabInfos = allSorted
+          .map((t) => chromeTabToTabInfo(t))
+          .filter((t): t is TabInfo => t !== null)
+        result = [
+          {
+            category: 'other' as GroupCategory,
+            tabs: tabInfos,
+          },
+        ]
+      } else {
+        console.error('[TabPilot] AI free grouping failed in preview, falling back to rule engine. Error:', err)
+        result = ruleGroupsToGroupedTabs(classifyTabs(tabs), tabs)
+      }
       cacheIsAIGroupedMap.set(windowId, false)
     }
   } else {
@@ -500,7 +530,29 @@ export async function groupAllTabs(windowId: number): Promise<void> {
           console.log('[TabPilot] Grouping aborted by user')
           return
         }
-        console.error('[TabPilot] AI free grouping failed, falling back to rules:', err)
+        if (settings.ai.fallbackToSort) {
+          console.error('[TabPilot] AI free grouping failed, falling back to tab sorting. Error:', err)
+          const sortedUnpinned = sortTabsByDomainAndTitleHelper(unpinnedTabs)
+          const tabIds = sortedUnpinned.map((t) => t.id).filter((id): id is number => id !== undefined)
+          if (tabIds.length > 0) {
+            const pinnedCount = tabs.length - unpinnedTabs.length
+            await retryTabOperation(() => chrome.tabs.move(tabIds, { index: pinnedCount }))
+          }
+          const freshTabs = await chrome.tabs.query({ windowId })
+          const tabInfos = freshTabs
+            .map((t) => chromeTabToTabInfo(t))
+            .filter((t): t is TabInfo => t !== null)
+          previewCacheMap.set(windowId, [
+            {
+              category: 'other' as GroupCategory,
+              tabs: tabInfos,
+            },
+          ])
+          cacheIsAIGroupedMap.set(windowId, false)
+          await updateNewTabsBadge(windowId)
+          return
+        }
+        console.error('[TabPilot] AI free grouping failed, falling back to rule engine. Error:', err)
         // Fall through to rule engine
       }
     }

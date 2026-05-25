@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     batchSize: 20,
     customPrompt: '',
     groupingPrompt: DEFAULT_GROUPING_PROMPT,
+    fallbackToSort: false,
   },
   language: 'auto',
   groupOnStartup: false,

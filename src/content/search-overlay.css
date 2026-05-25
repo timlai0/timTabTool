@@ -171,6 +171,28 @@
   color: #86868B;
 }
 
+.atm-score-details {
+  display: none;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  font-weight: 600;
+  background: rgba(0, 122, 255, 0.12);
+  color: #007AFF;
+  margin-left: auto;
+}
+
+.atm-result-item:hover .atm-score-details,
+.atm-result-item.atm-selected .atm-score-details {
+  display: inline-block;
+}
+
+.atm-result-item:hover .atm-badge,
+.atm-result-item.atm-selected .atm-badge {
+  display: none;
+}
+
 .atm-highlight {
   background: rgba(0, 122, 255, 0.12);
   color: #007AFF;
@@ -181,7 +203,7 @@
 .atm-footer {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
   padding: 10px 16px;
   border-top: 0.5px solid rgba(0, 0, 0, 0.06);
   font-size: 11px;
@@ -273,6 +295,11 @@
     color: #98989D;
   }
 
+  .atm-score-details {
+    background: rgba(10, 132, 255, 0.15);
+    color: #0A84FF;
+  }
+
   .atm-highlight {
     background: rgba(10, 132, 255, 0.15);
     color: #0A84FF;
@@ -355,6 +382,11 @@
   color: #98989D;
 }
 
+:host([data-theme="dark"]) .atm-score-details {
+  background: rgba(10, 132, 255, 0.15);
+  color: #0A84FF;
+}
+
 :host([data-theme="dark"]) .atm-highlight {
   background: rgba(10, 132, 255, 0.15);
   color: #0A84FF;
@@ -375,4 +407,183 @@
 
 :host([data-theme="dark"]) .atm-results::-webkit-scrollbar-thumb {
   background: #636366;
+}
+
+/* ─── Command Palette & Score Info Tooltip ─── */
+
+.atm-command-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(125, 95, 255, 0.1);
+  color: #7d5fff;
+  border-radius: 2px;
+}
+
+.atm-badge-command {
+  background: rgba(125, 95, 255, 0.12);
+  color: #7d5fff;
+}
+
+.atm-score-info {
+  position: relative;
+  cursor: help;
+  color: #86868B;
+  background: #F5F5F7;
+  padding: 2px 7px;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 500;
+  user-select: none;
+}
+
+.atm-score-info:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #1D1D1F;
+}
+
+.atm-score-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: 230px;
+  background: #FFFFFF;
+  border: 0.5px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  padding: 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #1D1D1F;
+  text-align: left;
+  z-index: 2147483647;
+}
+
+.atm-score-info:hover .atm-score-tooltip {
+  display: block;
+}
+
+.atm-score-tooltip strong {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+  border-bottom: 0.5px solid rgba(0, 0, 0, 0.06);
+  padding-bottom: 4px;
+  color: #1D1D1F;
+}
+
+.atm-score-tooltip ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.atm-score-tooltip li {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+
+.atm-score-tooltip li span {
+  font-weight: 600;
+  color: #007AFF;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Dark mode overrides */
+@media (prefers-color-scheme: dark) {
+  .atm-score-info {
+    background: #2C2C2E;
+    color: #98989D;
+  }
+  .atm-score-info:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #F5F5F7;
+  }
+  .atm-score-tooltip {
+    background: #1C1C1E;
+    border-color: rgba(255, 255, 255, 0.08);
+    color: #F5F5F7;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  }
+  .atm-score-tooltip strong {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    color: #F5F5F7;
+  }
+  .atm-score-tooltip li span {
+    color: #0A84FF;
+  }
+}
+
+:host([data-theme="dark"]) .atm-score-info {
+  background: #2C2C2E;
+  color: #98989D;
+}
+
+:host([data-theme="dark"]) .atm-score-info:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #F5F5F7;
+}
+
+:host([data-theme="dark"]) .atm-score-tooltip {
+  background: #1C1C1E;
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #F5F5F7;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+}
+
+:host([data-theme="dark"]) .atm-score-tooltip strong {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  color: #F5F5F7;
+}
+
+:host([data-theme="dark"]) .atm-score-tooltip li span {
+  color: #0A84FF;
+}
+
+/* ─── Close Tab Button ─── */
+
+.atm-close-btn {
+  display: none;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: #AEAEB2;
+  cursor: pointer;
+  margin-left: 8px;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.atm-close-btn svg {
+  width: 10px;
+  height: 10px;
+}
+
+.atm-close-btn:hover {
+  background: rgba(255, 59, 48, 0.12);
+  color: #FF3B30;
+}
+
+.atm-result-item:hover .atm-close-btn,
+.atm-result-item.atm-selected .atm-close-btn {
+  display: flex;
+}
+
+@media (prefers-color-scheme: dark) {
+  .atm-close-btn:hover {
+    background: rgba(255, 69, 58, 0.15);
+    color: #FF453A;
+  }
+}
+
+:host([data-theme="dark"]) .atm-close-btn:hover {
+  background: rgba(255, 69, 58, 0.15);
+  color: #FF453A;
 }

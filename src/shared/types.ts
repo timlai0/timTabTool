@@ -7,6 +7,7 @@ export interface TabInfo {
   index: number
   active: boolean
   pinned: boolean
+  lastAccessed?: number
 }
 
 export interface ClassifyResult {
@@ -50,6 +51,7 @@ export interface SearchResult {
   tab: TabInfo | TabHistoryEntry
   score: number
   isOpen: boolean
+  scoreDetails?: string
 }
 
 export interface AIConfig {
@@ -61,6 +63,7 @@ export interface AIConfig {
   batchSize?: number
   customPrompt?: string
   groupingPrompt?: string
+  fallbackToSort?: boolean
 }
 
 export type GroupIndicatorStyle = 'header' | 'bar'
@@ -106,6 +109,7 @@ type MessageAction =
   | 'SWITCH_TAB'
   | 'OPEN_URL'
   | 'CANCEL_OPERATION'
+  | 'CLOSE_TAB'
 
 export interface ExtensionMessage {
   action: MessageAction

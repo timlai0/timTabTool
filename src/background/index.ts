@@ -127,9 +127,9 @@ async function toggleSearchOverlay() {
 
 // --- Message handler ---
 chrome.runtime.onMessage.addListener(
-  (message: ExtensionMessage, _sender, sendResponse) => {
-    handleMessage(message).then(sendResponse).catch((err) => {
-      console.error('[TabPilot] Error:', err)
+  (message: ExtensionMessage, sender, sendResponse) => {
+    handleMessage(message, sender).then(sendResponse).catch((err) => {
+      console.error(`[TabPilot] Error handling action "${message.action}" with payload:`, message.payload, 'Error:', err)
       sendResponse({ error: err.message })
     })
     return true
@@ -144,7 +144,7 @@ async function resolveWindowId(payload: unknown): Promise<number> {
   return win.id ?? -1
 }
 
-async function handleMessage(message: ExtensionMessage): Promise<unknown> {
+async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.MessageSender): Promise<unknown> {
   switch (message.action) {
     case 'GROUP_TABS': {
       const windowId = await resolveWindowId(message.payload)
@@ -231,6 +231,7 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
     case 'SEARCH_TABS': {
       const payload = message.payload as { query: string; windowId?: number } | undefined
       const query = payload?.query ?? ''
+      const currentWindowId = payload?.windowId ?? sender?.tab?.windowId
       const tabs = await chrome.tabs.query({})
       const openTabs: TabInfo[] = tabs
         .filter((t) => t.id !== undefined)
@@ -243,9 +244,10 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
           index: t.index,
           active: t.active,
           pinned: t.pinned,
+          lastAccessed: t.lastAccessed,
         }))
       const history = await getHistoryEntries()
-      return searchTabs(query, openTabs, history)
+      return searchTabs(query, openTabs, history, currentWindowId)
     }
 
     case 'GET_SETTINGS': {
@@ -273,6 +275,14 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
         if (tab.windowId) {
           await chrome.windows.update(tab.windowId, { focused: true })
         }
+      }
+      return { ok: true }
+    }
+
+    case 'CLOSE_TAB': {
+      const tabId = (message.payload as { tabId: number })?.tabId
+      if (tabId) {
+        await chrome.tabs.remove(tabId)
       }
       return { ok: true }
     }

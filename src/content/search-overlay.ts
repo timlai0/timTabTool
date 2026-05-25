@@ -7,9 +7,14 @@ interface SearchResultItem {
     title: string
     favIconUrl?: string
     lastAccessed?: number
+    active?: boolean
   }
   score: number
   isOpen: boolean
+  scoreDetails?: string
+  isCommand?: boolean
+  commandAction?: string
+  commandDescription?: string
 }
 
 // Guard against multiple injections
@@ -22,6 +27,54 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let selectedIndex = 0
   let results: SearchResultItem[] = []
   let debounceTimer: ReturnType<typeof setTimeout> | undefined
+  let ignoreMouseHover = false
+
+  let mouseX = 0
+  let mouseY = 0
+  let lastMouseX = -1
+  let lastMouseY = -1
+  let justOpened = false
+
+  const COMMANDS = [
+    {
+      key: '/group',
+      title: 'Group Tabs',
+      description: 'Organize all tabs in this window into smart groups',
+      action: 'GROUP_TABS'
+    },
+    {
+      key: '/ungroup',
+      title: 'Ungroup All',
+      description: 'Ungroup all tabs in this window',
+      action: 'UNGROUP_ALL'
+    }
+  ]
+
+  window.addEventListener('mousemove', (e) => {
+    mouseX = e.clientX
+    mouseY = e.clientY
+
+    if (visible && (mouseX !== lastMouseX || mouseY !== lastMouseY)) {
+      lastMouseX = mouseX
+      lastMouseY = mouseY
+      ignoreMouseHover = false
+
+      if (shadow) {
+        const hoveredEl = shadow.elementFromPoint(mouseX, mouseY)?.closest('.atm-result-item')
+        if (hoveredEl) {
+          const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
+          if (resultsList) {
+            const items = Array.from(resultsList.querySelectorAll('.atm-result-item'))
+            const index = items.indexOf(hoveredEl)
+            if (index !== -1 && index !== selectedIndex) {
+              selectedIndex = index
+              updateSelection(resultsList)
+            }
+          }
+        }
+      }
+    }
+  }, { passive: true })
 
   function init() {
     if (hostEl) return
@@ -55,11 +108,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     input.type = 'text'
     input.placeholder = 'Search tabs...'
     input.addEventListener('input', () => {
+      ignoreMouseHover = true
       clearTimeout(debounceTimer)
       const query = input.value.trim()
       if (!query) {
-        results = []
-        renderResults(resultsList, query)
+        doSearch('', resultsList)
         return
       }
       debounceTimer = setTimeout(() => {
@@ -67,6 +120,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       }, 150)
     })
     input.addEventListener('keydown', (e) => {
+      ignoreMouseHover = true
       handleKeydown(e, input, resultsList)
     })
 
@@ -83,7 +137,33 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     const footer = document.createElement('div')
     footer.className = 'atm-footer'
-    footer.innerHTML = '<kbd>↑↓</kbd> navigate <kbd>↵</kbd> open <kbd>esc</kbd> close'
+
+    const keybindsSpan = document.createElement('span')
+    keybindsSpan.innerHTML = '<kbd>↑↓</kbd> navigate <kbd>↵</kbd> open <kbd>esc</kbd> close'
+
+    const scoreInfoSpan = document.createElement('span')
+    scoreInfoSpan.className = 'atm-score-info'
+    scoreInfoSpan.textContent = 'How scoring works'
+
+    const scoreTooltip = document.createElement('div')
+    scoreTooltip.className = 'atm-score-tooltip'
+    scoreTooltip.innerHTML = `
+      <strong>How score is calculated:</strong>
+      <ul>
+        <li>Title exact word match: <span>+4</span></li>
+        <li>Title partial match: <span>+3</span></li>
+        <li>Title start match bonus: <span>+1</span></li>
+        <li>URL match: <span>+1</span></li>
+        <li>Domain match bonus: <span>+1</span></li>
+        <li>Same window open tab: <span>+1</span></li>
+        <li>Different window open tab: <span>+0.5</span></li>
+        <li>History recency boost: <span>Up to +0.2</span></li>
+      </ul>
+    `
+    scoreInfoSpan.appendChild(scoreTooltip)
+
+    footer.appendChild(keybindsSpan)
+    footer.appendChild(scoreInfoSpan)
 
     container.appendChild(inputWrap)
     container.appendChild(resultsList)
@@ -117,14 +197,18 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     hostEl.style.display = 'block'
     syncThemeAttribute()
     results = []
-    selectedIndex = 0
+    selectedIndex = -1
+    ignoreMouseHover = true
+    justOpened = true
+    lastMouseX = mouseX
+    lastMouseY = mouseY
     const input = shadow.querySelector('.atm-input') as HTMLInputElement
-    if (input) {
+    const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
+    if (input && resultsList) {
       input.value = ''
+      doSearch('', resultsList)
       setTimeout(() => input.focus(), 0)
     }
-    const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
-    if (resultsList) resultsList.innerHTML = ''
   }
 
   function hide() {
@@ -143,6 +227,26 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   }
 
   async function doSearch(query: string, resultsList: HTMLDivElement) {
+    const trimmed = query.trim()
+    if (trimmed.startsWith('/')) {
+      const matchText = trimmed.toLowerCase()
+      const matched = COMMANDS.filter(c => c.key.startsWith(matchText))
+      results = matched.map(c => ({
+        tab: {
+          title: c.title,
+          url: c.description
+        },
+        score: 0,
+        isOpen: false,
+        isCommand: true,
+        commandAction: c.action,
+        commandDescription: c.description
+      }))
+      selectedIndex = -1
+      renderResults(resultsList, query)
+      return
+    }
+
     try {
       const res = await chrome.runtime.sendMessage({
         action: 'SEARCH_TABS',
@@ -150,7 +254,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       })
       if (Array.isArray(res)) {
         results = res
-        selectedIndex = 0
+        selectedIndex = -1
         renderResults(resultsList, query)
       }
     } catch (err) {
@@ -164,7 +268,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (results.length === 0 && query) {
       const empty = document.createElement('div')
       empty.className = 'atm-empty'
-      empty.textContent = 'No matching tabs'
+      empty.textContent = query.startsWith('/') ? 'No matching commands' : 'No matching tabs'
       resultsList.appendChild(empty)
       return
     }
@@ -174,14 +278,20 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       item.className = 'atm-result-item' + (index === selectedIndex ? ' atm-selected' : '')
       item.addEventListener('click', () => activateResult(result))
       item.addEventListener('mouseenter', () => {
+        if (ignoreMouseHover) return
         selectedIndex = index
         updateSelection(resultsList)
       })
 
-      if (result.tab.favIconUrl) {
+      if (result.isCommand) {
+        const icon = document.createElement('div')
+        icon.className = 'atm-favicon atm-command-icon'
+        icon.innerHTML = `<svg viewBox="0 0 20 20" fill="currentColor" style="width:16px;height:16px;"><path fill-rule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm6.707 4.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L6.414 12l2.293-2.707zM10 13a1 1 0 011-1h4a1 1 0 110 2h-4a1 1 0 01-1-1z" clip-rule="evenodd" /></svg>`
+        item.appendChild(icon)
+      } else if (result.tab.url) {
         const favicon = document.createElement('img')
         favicon.className = 'atm-favicon'
-        favicon.src = result.tab.favIconUrl
+        favicon.src = `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(result.tab.url)}&size=16`
         favicon.alt = ''
         favicon.addEventListener('error', () => {
           favicon.replaceWith(createFaviconPlaceholder())
@@ -200,7 +310,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
       const url = document.createElement('div')
       url.className = 'atm-result-url'
-      url.innerHTML = highlightText(formatUrl(result.tab.url), query)
+      url.innerHTML = result.isCommand ? escapeHtml(result.tab.url) : highlightText(formatUrl(result.tab.url), query)
 
       content.appendChild(title)
       content.appendChild(url)
@@ -208,7 +318,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
       const badge = document.createElement('span')
       badge.className = 'atm-badge'
-      if (result.isOpen) {
+      if (result.isCommand) {
+        badge.classList.add('atm-badge-command')
+        badge.textContent = 'COMMAND'
+      } else if (result.isOpen) {
         badge.classList.add('atm-badge-open')
         badge.textContent = 'OPEN'
       } else {
@@ -217,8 +330,55 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       }
       item.appendChild(badge)
 
+      const scoreDetails = document.createElement('span')
+      scoreDetails.className = 'atm-score-details'
+      scoreDetails.textContent = result.scoreDetails || ''
+      item.appendChild(scoreDetails)
+
+      if (result.isOpen && !result.isCommand && result.tab.id !== undefined) {
+        const closeBtn = document.createElement('button')
+        closeBtn.className = 'atm-close-btn'
+        closeBtn.title = 'Close tab'
+        closeBtn.innerHTML = '<svg viewBox="0 0 20 20" fill="currentColor" style="width:10px;height:10px;"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>'
+        closeBtn.addEventListener('click', (e) => {
+          e.stopPropagation()
+          chrome.runtime.sendMessage({
+            action: 'CLOSE_TAB',
+            payload: { tabId: result.tab.id }
+          })
+          const idx = results.indexOf(result)
+          if (idx !== -1) {
+            results.splice(idx, 1)
+            if (selectedIndex >= results.length) {
+              selectedIndex = results.length - 1
+            }
+            renderResults(resultsList, query)
+          }
+        })
+        item.appendChild(closeBtn)
+      }
+
       resultsList.appendChild(item)
     })
+
+    if (justOpened && shadow) {
+      justOpened = false
+      const hoveredEl = shadow.elementFromPoint(mouseX, mouseY)?.closest('.atm-result-item')
+      if (hoveredEl) {
+        const items = Array.from(resultsList.querySelectorAll('.atm-result-item'))
+        const index = items.indexOf(hoveredEl)
+        if (index !== -1) {
+          selectedIndex = index
+        }
+      } else {
+        if (!query && results.length > 1 && results[0]?.tab.active) {
+          selectedIndex = 1
+        } else {
+          selectedIndex = 0
+        }
+      }
+      updateSelection(resultsList)
+    }
   }
 
   function createFaviconPlaceholder(): HTMLSpanElement {
@@ -232,7 +392,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     items.forEach((item, i) => {
       item.classList.toggle('atm-selected', i === selectedIndex)
     })
-    items[selectedIndex]?.scrollIntoView({ block: 'nearest' })
+    if (selectedIndex !== -1 && items[selectedIndex]) {
+      items[selectedIndex].scrollIntoView({ block: 'nearest' })
+    }
   }
 
   function handleKeydown(e: KeyboardEvent, _input: HTMLInputElement, resultsList: HTMLDivElement) {
@@ -247,7 +409,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       if (results.length > 0) {
-        selectedIndex = (selectedIndex + 1) % results.length
+        if (selectedIndex === -1) {
+          selectedIndex = 0
+        } else {
+          selectedIndex = (selectedIndex + 1) % results.length
+        }
         updateSelection(resultsList)
       }
       return
@@ -256,7 +422,34 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (e.key === 'ArrowUp') {
       e.preventDefault()
       if (results.length > 0) {
-        selectedIndex = (selectedIndex - 1 + results.length) % results.length
+        if (selectedIndex === -1) {
+          selectedIndex = results.length - 1
+        } else {
+          selectedIndex = (selectedIndex - 1 + results.length) % results.length
+        }
+        updateSelection(resultsList)
+      }
+      return
+    }
+
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      if (results.length > 0) {
+        if (e.shiftKey) {
+          // Move up
+          if (selectedIndex === -1) {
+            selectedIndex = results.length - 1
+          } else {
+            selectedIndex = (selectedIndex - 1 + results.length) % results.length
+          }
+        } else {
+          // Move down
+          if (selectedIndex === -1) {
+            selectedIndex = 0
+          } else {
+            selectedIndex = (selectedIndex + 1) % results.length
+          }
+        }
         updateSelection(resultsList)
       }
       return
@@ -264,15 +457,20 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     if (e.key === 'Enter') {
       e.preventDefault()
-      if (results[selectedIndex]) {
-        activateResult(results[selectedIndex])
+      const targetIndex = selectedIndex === -1 ? 0 : selectedIndex
+      if (results[targetIndex]) {
+        activateResult(results[targetIndex])
       }
       return
     }
   }
 
   function activateResult(result: SearchResultItem) {
-    if (result.isOpen && result.tab.id) {
+    if (result.isCommand && result.commandAction) {
+      chrome.runtime.sendMessage({
+        action: result.commandAction
+      })
+    } else if (result.isOpen && result.tab.id) {
       chrome.runtime.sendMessage({
         action: 'SWITCH_TAB',
         payload: { tabId: result.tab.id },

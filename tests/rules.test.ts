@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { extractDomain } from '../src/shared/utils'
 import { DOMAIN_RULES, KEYWORD_RULES } from '../src/shared/rules'
+import { sortTabsByDomainAndTitleHelper } from '../src/background/tab-manager'
 
 describe('extractDomain', () => {
   it('extracts domain from standard URLs', () => {
@@ -70,5 +71,33 @@ describe('KEYWORD_RULES', () => {
       (r) => r.category === 'dev' && r.pattern.test('PULL REQUEST review'),
     )
     expect(rule).toBeTruthy()
+  })
+})
+
+describe('sortTabsByDomainAndTitleHelper', () => {
+  it('should sort tabs by domain name and then by title case-insensitively', () => {
+    const mockTabs = [
+      { id: 1, url: 'https://youtube.com/watch', title: 'Video B' },
+      { id: 2, url: 'https://github.com/abc', title: 'Repo A' },
+      { id: 3, url: 'https://github.com/def', title: 'Repo B' },
+      { id: 4, url: 'https://youtube.com/feed', title: 'video a' },
+      { id: 5, url: 'https://amazon.com/dp/1', title: 'Amazon' },
+    ] as chrome.tabs.Tab[]
+
+    const sorted = sortTabsByDomainAndTitleHelper(mockTabs)
+
+    // Expected order: amazon.com (5), github.com Repo A (2), github.com Repo B (3), youtube.com video a (4), youtube.com Video B (1)
+    expect(sorted.map((t) => t.id)).toEqual([5, 2, 3, 4, 1])
+  })
+
+  it('should handle tabs with missing/invalid URLs or empty titles gracefully', () => {
+    const mockTabs = [
+      { id: 1, url: '', title: 'Empty URL' },
+      { id: 2, url: 'https://github.com/abc', title: '' },
+      { id: 3, url: 'invalid-url', title: 'Invalid' },
+    ] as chrome.tabs.Tab[]
+
+    const sorted = sortTabsByDomainAndTitleHelper(mockTabs)
+    expect(sorted.length).toBe(3)
   })
 })

@@ -223,6 +223,20 @@ async function testConnection() {
           </label>
 
           <template v-if="settings.ai.enabled">
+            <!-- Fallback to sort toggle -->
+            <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
+              <span class="text-xs flex-1" style="color: var(--text-primary);">{{ getMessage('fallbackToSort') }}</span>
+              <div class="relative">
+                <input
+                  type="checkbox"
+                  v-model="settings.ai.fallbackToSort"
+                  class="sr-only peer"
+                />
+                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+              </div>
+            </label>
+
             <!-- Provider -->
             <div class="px-3 py-2 setting-row">
               <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('provider') }}</label>
@@ -311,47 +325,6 @@ async function testConnection() {
               />
             </div>
 
-            <!-- Custom Prompt -->
-            <div class="px-3 py-2 setting-row">
-              <div class="flex items-center justify-between mb-1">
-                <div class="flex items-center gap-1.5">
-                  <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                    Custom System Prompt Instructions
-                    <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                  </label>
-                  <div class="relative group/help">
-                    <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                    <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
-                      <div class="font-bold mb-1" style="color: var(--accent);">Custom System Prompt</div>
-                      Defines global behavior and style rules.
-                      
-                      <strong>When to use</strong>: To enforce global formatting, tone, language, or constraints.
-                      
-                      <strong>Examples</strong>:
-                      • "Always respond in German."
-                      • "Never use emojis."
-                      • "Omit the 'www.' prefix in group names."
-                    </div>
-                  </div>
-                </div>
-                <button
-                  v-if="settings.ai.customPrompt"
-                  @click="resetSystemPrompt"
-                  class="text-[9px] hover:underline"
-                  style="color: var(--accent);"
-                  title="Clear custom instructions"
-                >
-                  Clear
-                </button>
-              </div>
-              <textarea
-                v-model="settings.ai.customPrompt"
-                placeholder="E.g., Never use emojis. Always categorize by project."
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
-                style="background: var(--bg-secondary); color: var(--text-primary);"
-              ></textarea>
-            </div>
-
             <!-- Grouping Prompt -->
             <div class="px-3 py-2 setting-row">
               <div class="flex items-center justify-between mb-1">
@@ -389,6 +362,47 @@ async function testConnection() {
                 v-model="settings.ai.groupingPrompt"
                 :placeholder="'Default:\n' + DEFAULT_GROUPING_PROMPT"
                 class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[220px] resize-y"
+                style="background: var(--bg-secondary); color: var(--text-primary);"
+              ></textarea>
+            </div>
+
+            <!-- Custom Prompt -->
+            <div class="px-3 py-2 setting-row">
+              <div class="flex items-center justify-between mb-1">
+                <div class="flex items-center gap-1.5">
+                  <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                    Custom System Prompt Instructions
+                    <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                  </label>
+                  <div class="relative group/help">
+                    <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                    <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                      <div class="font-bold mb-1" style="color: var(--accent);">Custom System Prompt</div>
+                      Defines global behavior and style rules.
+                      
+                      <strong>When to use</strong>: To enforce global formatting, tone, language, or constraints.
+                      
+                      <strong>Examples</strong>:
+                      • "Always respond in German."
+                      • "Never use emojis."
+                      • "Omit the 'www.' prefix in group names."
+                    </div>
+                  </div>
+                </div>
+                <button
+                  v-if="settings.ai.customPrompt"
+                  @click="resetSystemPrompt"
+                  class="text-[9px] hover:underline"
+                  style="color: var(--accent);"
+                  title="Clear custom instructions"
+                >
+                  Clear
+                </button>
+              </div>
+              <textarea
+                v-model="settings.ai.customPrompt"
+                placeholder="E.g., Never use emojis. Always categorize by project."
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
                 style="background: var(--bg-secondary); color: var(--text-primary);"
               ></textarea>
             </div>

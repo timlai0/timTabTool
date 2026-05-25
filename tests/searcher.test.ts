@@ -16,9 +16,14 @@ const mockHistory: TabHistoryEntry[] = [
 ]
 
 describe('searchTabs', () => {
-  it('returns empty for empty query', () => {
-    expect(searchTabs('', mockTabs, mockHistory)).toEqual([])
-    expect(searchTabs('   ', mockTabs, mockHistory)).toEqual([])
+  it('returns open tabs sorted by recency for empty query', () => {
+    const results1 = searchTabs('', mockTabs, mockHistory)
+    expect(results1.length).toBe(mockTabs.length)
+    expect(results1.every((r) => r.isOpen)).toBe(true)
+    expect(results1.every((r) => r.score === 0)).toBe(true)
+
+    const results2 = searchTabs('   ', mockTabs, mockHistory)
+    expect(results2.length).toBe(mockTabs.length)
   })
 
   it('matches by title', () => {
@@ -78,5 +83,21 @@ describe('searchTabs', () => {
     }))
     const results = searchTabs('Test', manyTabs, [])
     expect(results.length).toBeLessThanOrEqual(50)
+  })
+
+  it('applies same window and different window boosts correctly', () => {
+    // Tab 4 has windowId: 1. Pass currentWindowId: 1
+    const resultsSameWindow = searchTabs('Keyboard', mockTabs, [], 1)
+    
+    const tab4Result = resultsSameWindow.find((r) => 'id' in r.tab && r.tab.id === 4)
+    expect(tab4Result).toBeDefined()
+    expect(tab4Result?.scoreDetails).toContain('Same Window +1')
+    
+    // Pass currentWindowId: 2, so tabs with windowId 1 get Diff Window +0.5 boost
+    const resultsDiffWindow = searchTabs('Keyboard', mockTabs, [], 2)
+    const tab4DiffResult = resultsDiffWindow.find((r) => 'id' in r.tab && r.tab.id === 4)
+    expect(tab4DiffResult).toBeDefined()
+    
+    expect(tab4DiffResult?.scoreDetails).toContain('Diff Window +0.5')
   })
 })

@@ -79,8 +79,8 @@ Only output the JSON array, no other text.`
           }
         }
       }
-    } catch {
-      console.error('[TabPilot] Failed to parse AI response:', response)
+    } catch (err) {
+      console.error('[TabPilot] Failed to parse AI response. Error:', err, 'Response:', response)
     }
 
     return result
@@ -161,17 +161,11 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
     try {
       parsed = JSON.parse(jsonStr)
     } catch {
-      // Likely truncated. Repair: find the last complete object and close the array.
-      const lastCompleteObj = jsonStr.lastIndexOf('}')
-      if (lastCompleteObj <= 0) {
-        throw new Error(`Truncated AI response with no complete objects: ${response.slice(0, 200)}`)
-      }
-      jsonStr = jsonStr.slice(0, lastCompleteObj + 1) + ']'
-      jsonStr = jsonStr.replace(/,\s*([}\]])/g, '$1')
       try {
-        parsed = JSON.parse(jsonStr)
-      } catch {
-        throw new Error(`Failed to parse AI JSON: ${jsonStr.slice(0, 300)}`)
+        const repaired = repairTruncatedJson(jsonStr)
+        parsed = JSON.parse(repaired)
+      } catch (err) {
+        throw new Error(`Failed to parse AI JSON after repair: ${(err as Error).message}. Original: ${jsonStr.slice(0, 200)}`)
       }
     }
 
@@ -271,8 +265,8 @@ Only output the JSON array.`
             ? item.newGroupColor
             : undefined,
         }))
-    } catch {
-      console.error('[TabPilot] Failed to parse classify-new-tabs response:', response)
+    } catch (err) {
+      console.error('[TabPilot] Failed to parse classify-new-tabs response. Error:', err, 'Response:', response)
       return this.fallbackAllToNew(tabs)
     }
   }
@@ -302,7 +296,8 @@ Only output the JSON array.`
 
       const data = await response.json()
       return data.data.map((d: { embedding: number[] }) => d.embedding)
-    } catch {
+    } catch (err) {
+      console.error('[TabPilot] Failed to get embeddings:', err)
       return null
     }
   }
@@ -441,4 +436,112 @@ Only output the JSON array.`
       Authorization: `Bearer ${this.config.apiKey}`,
     }
   }
+}
+
+/**
+ * Repairs a truncated JSON string by slicing up to the last known structural boundary
+ * and closing all open strings, arrays, and objects.
+ */
+export function repairTruncatedJson(jsonStr: string): string {
+  let str = jsonStr.trim()
+  if (!str.startsWith('[') && !str.startsWith('{')) {
+    return str
+  }
+
+  let inString = false
+  let escaped = false
+  const stack: ('[' | '{')[] = []
+  let cleanEndIndex = 0
+
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i]
+
+    if (escaped) {
+      escaped = false
+      continue
+    }
+
+    if (char === '\\') {
+      escaped = true
+      continue
+    }
+
+    if (char === '"') {
+      inString = !inString
+      if (!inString) {
+        cleanEndIndex = i + 1
+      }
+      continue
+    }
+
+    if (inString) {
+      continue
+    }
+
+    if (char === '[' || char === '{') {
+      stack.push(char)
+      cleanEndIndex = i + 1
+      continue
+    }
+
+    if (char === ']' || char === '}') {
+      const top = stack.pop()
+      if ((char === ']' && top === '[') || (char === '}' && top === '{')) {
+        cleanEndIndex = i + 1
+      }
+      continue
+    }
+
+    if (char === ',' || char === ':') {
+      continue
+    }
+
+    if (/\d/.test(char) || char === '-' || char === '.' || char === 't' || char === 'f' || char === 'n') {
+      cleanEndIndex = i + 1
+    }
+  }
+
+  let repaired = str.slice(0, cleanEndIndex).trim()
+  repaired = repaired.replace(/[:,]+$/, '').trim()
+
+  const finalStack: ('[' | '{')[] = []
+  let finalInString = false
+  let finalEscaped = false
+
+  for (let i = 0; i < repaired.length; i++) {
+    const char = repaired[i]
+    if (finalEscaped) {
+      finalEscaped = false
+      continue
+    }
+    if (char === '\\') {
+      finalEscaped = true
+      continue
+    }
+    if (char === '"') {
+      finalInString = !finalInString
+      continue
+    }
+    if (finalInString) {
+      continue
+    }
+    if (char === '[' || char === '{') {
+      finalStack.push(char)
+    }
+    if (char === ']' || char === '}') {
+      finalStack.pop()
+    }
+  }
+
+  if (finalInString) {
+    repaired += '"'
+  }
+
+  while (finalStack.length > 0) {
+    const top = finalStack.pop()
+    if (top === '[') repaired += ']'
+    if (top === '{') repaired += '}'
+  }
+
+  return repaired
 }

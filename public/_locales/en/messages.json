@@ -230,5 +230,9 @@
   "classifyingNewTabs": {
     "message": "Classifying...",
     "description": "Button state while classifying new tabs"
+  },
+  "fallbackToSort": {
+    "message": "When AI fails, sort with fallback",
+    "description": "Toggle in settings to physically sort tabs by domain and title on AI grouping failure"
   }
 }
