@@ -59,6 +59,8 @@ export interface AIConfig {
   endpoint?: string
   model?: string
   batchSize?: number
+  customPrompt?: string
+  groupingPrompt?: string
 }
 
 export type GroupIndicatorStyle = 'header' | 'bar'
@@ -73,6 +75,8 @@ export interface ExtensionSettings {
   groupIndicatorStyle: GroupIndicatorStyle
   smartGroupTitle: boolean
   theme: ThemeMode
+  windowWidth: number
+  windowHeight: number
 }
 
 export interface WindowGroupsInfo {

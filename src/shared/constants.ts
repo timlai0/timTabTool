@@ -15,12 +15,21 @@ export const ALL_CATEGORIES: GroupCategory[] = [
   'work', 'dev', 'learn', 'social', 'media', 'shop', 'docs', 'other',
 ]
 
+export const DEFAULT_GROUPING_PROMPT = `Organize these browser tabs into logical, well-defined groups.
+Guidelines:
+1. Create 2-6 groups. Avoid creating too many single-tab groups.
+2. Group names must be concise (1-3 words) and descriptive (e.g., "Web Development", "Shopping").
+3. Use the same language as the tab titles.
+4. Group related items aggressively rather than fragmenting them.`
+
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   ai: {
     enabled: false,
     provider: 'openai',
     apiKey: '',
     batchSize: 20,
+    customPrompt: '',
+    groupingPrompt: DEFAULT_GROUPING_PROMPT,
   },
   language: 'auto',
   groupOnStartup: false,
@@ -28,6 +37,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   groupIndicatorStyle: 'header',
   smartGroupTitle: true,
   theme: 'system',
+  windowWidth: 360,
 }
 
 export const STORAGE_KEYS = {

@@ -247,7 +247,11 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
     case 'GET_SETTINGS': {
       const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
       const saved = (data[STORAGE_KEYS.SETTINGS] ?? {}) as Partial<ExtensionSettings>
-      return { ...DEFAULT_SETTINGS, ...saved }
+      return { 
+        ...DEFAULT_SETTINGS, 
+        ...saved,
+        ai: { ...DEFAULT_SETTINGS.ai, ...saved?.ai },
+      }
     }
 
     case 'SAVE_SETTINGS': {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
 import { getMessage } from '../shared/i18n'
-import { STORAGE_KEYS, DEFAULT_SETTINGS } from '../shared/constants'
+import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT } from '../shared/constants'
+import { SYSTEM_PROMPT } from '../shared/ai-client'
 import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInfo } from '../shared/types'
 import GroupList from './components/GroupList.vue'
 import SettingsView from './components/SettingsView.vue'
@@ -13,6 +14,9 @@ const groupingWindowId = ref<number | null>(null)
 const classifyingWindowId = ref<number | null>(null)
 const currentWindowId = ref<number | null>(null)
 const indicatorStyle = ref<GroupIndicatorStyle>(DEFAULT_SETTINGS.groupIndicatorStyle)
+const windowWidth = ref(DEFAULT_SETTINGS.windowWidth)
+const windowHeight = ref(DEFAULT_SETTINGS.windowHeight)
+const aiSettings = ref<ExtensionSettings['ai']>(DEFAULT_SETTINGS.ai)
 
 // ─── Theme System ───
 
@@ -49,6 +53,15 @@ onMounted(async () => {
   const stored = data[STORAGE_KEYS.SETTINGS] as Partial<ExtensionSettings> | undefined
   if (stored?.groupIndicatorStyle) {
     indicatorStyle.value = stored.groupIndicatorStyle
+  }
+  if (stored?.windowWidth !== undefined) {
+    windowWidth.value = stored.windowWidth
+  }
+  if (stored?.windowHeight !== undefined) {
+    windowHeight.value = stored.windowHeight
+  }
+  if (stored?.ai) {
+    aiSettings.value = { ...DEFAULT_SETTINGS.ai, ...stored.ai }
   }
   if (stored?.theme) {
     themeMode.value = stored.theme
@@ -104,6 +117,47 @@ function windowLabel(w: WindowGroupsInfo, idx: number): string {
   return `${label}`
 }
 
+function unpinnedTabsCount(w: WindowGroupsInfo): number {
+  return w.groups.reduce((sum, g) => sum + g.tabs.length, 0)
+}
+
+function getSystemPrompt() {
+  if (aiSettings.value.customPrompt?.trim()) {
+    return `${SYSTEM_PROMPT}\n\nUser Instructions:\n${aiSettings.value.customPrompt.trim()}`
+  }
+  return SYSTEM_PROMPT
+}
+
+function getGroupingPrompt() {
+  return aiSettings.value.groupingPrompt?.trim() || DEFAULT_GROUPING_PROMPT
+}
+
+function estimateCostAndTokens(w: WindowGroupsInfo) {
+  const tabs = unpinnedTabsCount(w)
+  const batches = Math.ceil(tabs / (aiSettings.value.batchSize || 20))
+  const promptTokens = Math.ceil((getSystemPrompt().length + getGroupingPrompt().length) / 4)
+  const inputTokens = batches * promptTokens + tabs * 20
+  const outputTokens = batches * 50
+  const totalTokens = inputTokens + outputTokens
+  
+  const provider = aiSettings.value.provider
+  let cost = 0
+  if (provider === 'openai') {
+    cost = (inputTokens * 0.15 + outputTokens * 0.6) / 1000000
+  } else if (provider === 'claude') {
+    cost = (inputTokens * 3 + outputTokens * 15) / 1000000
+  } else if (provider === 'gemini') {
+    cost = (inputTokens * 0.075 + outputTokens * 0.3) / 1000000
+  }
+  
+  let costStr = ''
+  if (cost === 0) costStr = 'Free / Unknown'
+  else if (cost < 0.0001) costStr = '< $0.0001'
+  else costStr = `~$${cost.toFixed(4)}`
+  
+  return { tokens: totalTokens, costStr }
+}
+
 function newTabsCount(w: WindowGroupsInfo): number {
   const group = w.groups.find((g) => g.groupName === 'New Tabs')
   return group ? group.tabs.length : 0
@@ -144,6 +198,15 @@ async function handleSettingsBack() {
   if (stored?.theme) {
     themeMode.value = stored.theme
     applyTheme(themeMode.value)
+  }
+  if (stored?.windowWidth !== undefined) {
+    windowWidth.value = stored.windowWidth
+  }
+  if (stored?.windowHeight !== undefined) {
+    windowHeight.value = stored.windowHeight
+  }
+  if (stored?.ai) {
+    aiSettings.value = { ...DEFAULT_SETTINGS.ai, ...stored.ai }
   }
 }
 
@@ -202,7 +265,7 @@ async function openSearchOverlay() {
 <template>
   <SettingsView v-if="currentView === 'settings'" @back="handleSettingsBack" />
 
-  <div v-else class="w-[360px] min-h-[240px] max-h-[560px] flex flex-col" style="background: var(--bg-primary);">
+  <div v-else :style="{ width: windowWidth + 'px', height: Math.max(240, Math.min(600, windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->
     <header class="flex items-center justify-between px-4 py-3" style="box-shadow: 0 0.5px 0 var(--border);">
       <div class="flex items-center gap-2.5">
@@ -278,7 +341,7 @@ async function openSearchOverlay() {
       <div
         v-for="(w, idx) in allWindows"
         :key="w.windowId"
-        class="rounded-xl overflow-hidden"
+        class="rounded-xl"
         style="background: var(--bg-secondary); box-shadow: var(--shadow-card);"
       >
         <!-- Window section header (clickable to collapse/expand) -->
@@ -312,18 +375,44 @@ async function openSearchOverlay() {
         <template v-if="!isWindowSectionCollapsed(w.windowId)">
           <!-- Action buttons -->
           <div class="flex items-center gap-1.5 px-3.5 pb-2">
-            <button
-              class="px-3 py-[4px] text-[11px] font-medium rounded-btn"
-              style="background: var(--accent); color: #fff;"
-              :disabled="groupingWindowId === w.windowId"
-              @click="handleGroup(w.windowId)"
-            >
-              <span v-if="groupingWindowId === w.windowId" class="inline-flex items-center gap-1">
-                <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full" />
-                {{ getMessage('grouping') }}
-              </span>
-              <span v-else>{{ getMessage('groupTabs') }}</span>
-            </button>
+            <div class="relative group">
+              <button
+                class="px-3 py-[4px] text-[11px] font-medium rounded-btn"
+                style="background: var(--accent); color: #fff;"
+                :disabled="groupingWindowId === w.windowId"
+                @click="handleGroup(w.windowId)"
+              >
+                <span v-if="groupingWindowId === w.windowId" class="inline-flex items-center gap-1">
+                  <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full" />
+                  {{ getMessage('grouping') }}
+                </span>
+                <span v-else>{{ getMessage('groupTabs') }}</span>
+              </button>
+
+              <!-- Tooltip -->
+              <div v-if="aiSettings.enabled && aiSettings.apiKey" class="absolute left-0 top-full mt-1.5 hidden group-hover:block w-[280px] p-2.5 rounded-xl shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+                <div class="font-semibold mb-1" style="color: var(--accent);">AI Grouping Preview</div>
+                
+                <div class="mb-1 text-[9px] uppercase font-bold tracking-wider mt-2" style="color: var(--text-tertiary);">System Prompt</div>
+                <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
+                  {{ getSystemPrompt() }}
+                </div>
+                
+                <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">User Prompt</div>
+                <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
+                  {{ getGroupingPrompt() }}
+                </div>
+                
+                <div class="flex items-center justify-between mt-2 pt-2 border-t" style="border-color: var(--border);">
+                  <span class="text-[10px] font-medium" style="color: var(--text-secondary);">
+                    Est. Requests: <span class="font-bold tabular-nums" style="color: var(--text-primary);">{{ Math.ceil(unpinnedTabsCount(w) / (aiSettings.batchSize || 20)) }}</span>
+                    <span class="opacity-50 mx-1">|</span>
+                    <span class="font-bold tabular-nums" style="color: var(--text-primary);">~{{ estimateCostAndTokens(w).tokens }}</span> tok
+                  </span>
+                  <span class="text-[10px] font-bold tabular-nums" style="color: var(--text-primary);">{{ estimateCostAndTokens(w).costStr }}</span>
+                </div>
+              </div>
+            </div>
             <button
               class="px-3 py-[4px] text-[11px] rounded-btn"
               style="color: var(--text-secondary); background: var(--hover);"

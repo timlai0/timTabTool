@@ -1,6 +1,7 @@
 import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory } from './types'
+import { DEFAULT_GROUPING_PROMPT } from './constants'
 
-const SYSTEM_PROMPT = 'You are a helpful assistant that classifies browser tabs into categories. Be concise.'
+export const SYSTEM_PROMPT = 'You are a helpful assistant that classifies browser tabs into categories. Be concise.'
 
 const DEFAULT_MODELS: Record<AIConfig['provider'], string> = {
   openai: 'gpt-4o-mini',
@@ -121,8 +122,8 @@ Only output the JSON array, no other text.`
       .map((t, i) => this.formatTabForPrompt(t, offset + i + 1))
       .join('\n')
 
-    const prompt = `Organize these browser tabs into groups.
-Create 2-8 groups. Each needs a short name (2-4 words, same language as tab titles).
+    const groupingPrompt = this.config.groupingPrompt?.trim() || DEFAULT_GROUPING_PROMPT
+    const prompt = `${groupingPrompt}
 Colors: grey,blue,red,yellow,green,pink,purple,cyan
 
 Tabs:
@@ -325,6 +326,13 @@ Only output the JSON array.`
     return DEFAULT_MODELS[this.config.provider]
   }
 
+  private get systemPrompt(): string {
+    if (this.config.customPrompt?.trim()) {
+      return `${SYSTEM_PROMPT}\n\nUser Instructions:\n${this.config.customPrompt.trim()}`
+    }
+    return SYSTEM_PROMPT
+  }
+
   private async chatOpenAI(userMessage: string, jsonMode?: boolean): Promise<string> {
     const response = await fetch(`${this.getBaseUrl()}/chat/completions`, {
       method: 'POST',
@@ -332,7 +340,7 @@ Only output the JSON array.`
       body: JSON.stringify({
         model: this.config.model || this.defaultModel,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: this.systemPrompt },
           { role: 'user', content: userMessage },
         ],
         temperature: 0,
@@ -367,7 +375,7 @@ Only output the JSON array.`
       body: JSON.stringify({
         model: this.config.model || this.defaultModel,
         max_tokens: 4096,
-        system: SYSTEM_PROMPT,
+        system: this.systemPrompt,
         messages,
       }),
     })
@@ -394,7 +402,7 @@ Only output the JSON array.`
         },
         body: JSON.stringify({
           systemInstruction: {
-            parts: [{ text: SYSTEM_PROMPT }],
+            parts: [{ text: this.systemPrompt }],
           },
           contents: [
             { role: 'user', parts: [{ text: userMessage }] },

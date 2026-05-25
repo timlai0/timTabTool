@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { getMessage } from '../../shared/i18n'
-import { DEFAULT_SETTINGS, STORAGE_KEYS } from '../../shared/constants'
+import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT } from '../../shared/constants'
 import type { ExtensionSettings } from '../../shared/types'
 import { AIClient } from '../../shared/ai-client'
 
@@ -49,10 +49,17 @@ onMounted(async () => {
   const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
   const stored = data[STORAGE_KEYS.SETTINGS] as Partial<ExtensionSettings> | undefined
   if (stored) {
-    settings.value = { ...DEFAULT_SETTINGS, ...stored }
+    settings.value = { 
+      ...DEFAULT_SETTINGS, 
+      ...stored,
+      ai: { ...DEFAULT_SETTINGS.ai, ...stored.ai }
+    }
   }
   if (!settings.value.ai.endpoint) {
     settings.value.ai.endpoint = DEFAULT_ENDPOINTS[settings.value.ai.provider] || ''
+  }
+  if (!settings.value.ai.groupingPrompt) {
+    settings.value.ai.groupingPrompt = DEFAULT_SETTINGS.ai.groupingPrompt
   }
   const commands = await chrome.commands.getAll()
   const searchCmd = commands.find((c) => c.name === 'open-search')
@@ -60,6 +67,14 @@ onMounted(async () => {
     searchShortcut.value = searchCmd.shortcut
   }
 })
+
+function resetGroupingPrompt() {
+  settings.value.ai.groupingPrompt = DEFAULT_SETTINGS.ai.groupingPrompt
+}
+
+function resetSystemPrompt() {
+  settings.value.ai.customPrompt = ''
+}
 
 function openShortcutSettings() {
   chrome.tabs.create({ url: 'chrome://extensions/shortcuts' })
@@ -69,6 +84,11 @@ async function saveSettings() {
   await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: settings.value })
   saved.value = true
   setTimeout(() => { emit('back') }, 600)
+}
+
+async function saveAndGoBack() {
+  await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: settings.value })
+  emit('back')
 }
 
 async function testConnection() {
@@ -86,11 +106,11 @@ async function testConnection() {
 </script>
 
 <template>
-  <div class="w-[360px] max-h-[500px] flex flex-col" style="background: var(--bg-primary);">
+  <div :style="{ width: settings.windowWidth + 'px', height: Math.max(240, Math.min(600, settings.windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->
     <header class="flex items-center gap-2.5 px-4 py-3" style="box-shadow: 0 0.5px 0 var(--border);">
       <button
-        @click="emit('back')"
+        @click="saveAndGoBack"
         class="w-7 h-7 -ml-1 flex items-center justify-center rounded-full"
         style="color: var(--accent);"
       >
@@ -102,7 +122,7 @@ async function testConnection() {
     </header>
 
     <!-- Scrollable content -->
-    <div class="flex-1 overflow-y-auto px-3 py-3 space-y-4" style="background: var(--bg-secondary);">
+    <div class="flex-1 overflow-y-auto px-2 py-2 space-y-2" style="background: var(--bg-secondary);">
 
       <!-- AI Configuration -->
       <div>
@@ -110,7 +130,7 @@ async function testConnection() {
           {{ getMessage('aiConfig') }}
           <span class="text-[9px] font-normal normal-case tracking-normal px-1.5 py-0.5 rounded-full" style="background: var(--hover); color: var(--text-tertiary);">{{ getMessage('optional') }}</span>
         </h2>
-        <div class="rounded-xl overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
+        <div class="rounded-sm overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
           <!-- Enable toggle -->
           <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
             <span class="text-xs flex-1" style="color: var(--text-primary);">{{ getMessage('enableAI') }}</span>
@@ -127,11 +147,11 @@ async function testConnection() {
 
           <template v-if="settings.ai.enabled">
             <!-- Provider -->
-            <div class="px-3.5 py-2.5 setting-row">
+            <div class="px-3 py-2 setting-row">
               <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('provider') }}</label>
               <select
                 v-model="settings.ai.provider"
-                class="w-full text-xs rounded-lg border-0 py-2 px-2.5"
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
                 style="background: var(--bg-secondary); color: var(--text-primary);"
               >
                 <option value="openai">OpenAI</option>
@@ -142,31 +162,31 @@ async function testConnection() {
             </div>
 
             <!-- API Key -->
-            <div class="px-3.5 py-2.5 setting-row">
+            <div class="px-3 py-2 setting-row">
               <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('apiKey') }}</label>
               <input
                 type="password"
                 v-model="settings.ai.apiKey"
                 placeholder="sk-... / AIza..."
-                class="w-full text-xs rounded-lg border-0 py-2 px-2.5"
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
                 style="background: var(--bg-secondary); color: var(--text-primary);"
               />
             </div>
 
             <!-- Endpoint -->
-            <div class="px-3.5 py-2.5 setting-row">
+            <div class="px-3 py-2 setting-row">
               <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('endpoint') }}</label>
               <input
                 type="url"
                 v-model="settings.ai.endpoint"
                 :placeholder="endpointPlaceholder"
-                class="w-full text-xs rounded-lg border-0 py-2 px-2.5"
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
                 style="background: var(--bg-secondary); color: var(--text-primary);"
               />
             </div>
 
             <!-- Model -->
-            <div class="px-3.5 py-2.5 setting-row">
+            <div class="px-3 py-2 setting-row">
               <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
                 {{ getMessage('model') }}
                 <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
@@ -177,6 +197,11 @@ async function testConnection() {
                   <option value="gemini-3.1-pro-preview"></option>
                   <option value="gemini-3.1-flash-lite"></option>
                   <option value="gemini-2.5-flash"></option>
+                  <option value="gemini-2.5-flash-lite"></option>
+                  <option value="gemini-2.0-flash-lite"></option>
+                  <option value="gemini-flash-lite-latest"></option>
+                  <option value="gemma-4-31b-it"></option>
+                  <option value="gemma-4-26b-a4b-it"></option>
                 </template>
                 <template v-else-if="settings.ai.provider === 'openai'">
                   <option value="gpt-4o-mini"></option>
@@ -188,13 +213,13 @@ async function testConnection() {
                 v-model="settings.ai.model"
                 :placeholder="modelPlaceholder"
                 list="model-suggestions"
-                class="w-full text-xs rounded-lg border-0 py-2 px-2.5"
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
                 style="background: var(--bg-secondary); color: var(--text-primary);"
               />
             </div>
 
             <!-- Batch Size -->
-            <div class="px-3.5 py-2.5 setting-row">
+            <div class="px-3 py-2 setting-row">
               <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
                 {{ getMessage('batchSize') || 'Batch Size' }}
                 <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
@@ -205,9 +230,59 @@ async function testConnection() {
                 placeholder="20"
                 min="1"
                 max="1000"
-                class="w-full text-xs rounded-lg border-0 py-2 px-2.5"
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
                 style="background: var(--bg-secondary); color: var(--text-primary);"
               />
+            </div>
+
+            <!-- Custom Prompt -->
+            <div class="px-3 py-2 setting-row">
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                  Custom System Prompt Instructions
+                  <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                </label>
+                <button
+                  v-if="settings.ai.customPrompt"
+                  @click="resetSystemPrompt"
+                  class="text-[9px] hover:underline"
+                  style="color: var(--accent);"
+                  title="Clear custom instructions"
+                >
+                  Clear
+                </button>
+              </div>
+              <textarea
+                v-model="settings.ai.customPrompt"
+                placeholder="E.g., Never use emojis. Always categorize by project."
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[60px] resize-y"
+                style="background: var(--bg-secondary); color: var(--text-primary);"
+              ></textarea>
+            </div>
+
+            <!-- Grouping Prompt -->
+            <div class="px-3 py-2 setting-row">
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                  Tab Grouping Prompt
+                  <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                </label>
+                <button
+                  v-if="settings.ai.groupingPrompt !== DEFAULT_GROUPING_PROMPT"
+                  @click="resetGroupingPrompt"
+                  class="text-[9px] hover:underline"
+                  style="color: var(--accent);"
+                  title="Restore default instructions"
+                >
+                  Reset to Default
+                </button>
+              </div>
+              <textarea
+                v-model="settings.ai.groupingPrompt"
+                :placeholder="'Default:\n' + DEFAULT_GROUPING_PROMPT"
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[60px] resize-y"
+                style="background: var(--bg-secondary); color: var(--text-primary);"
+              ></textarea>
             </div>
 
             <!-- Test connection -->
@@ -238,8 +313,8 @@ async function testConnection() {
         <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5" style="color: var(--text-secondary);">
           {{ getMessage('shortcutTitle') }}
         </h2>
-        <div class="rounded-xl overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
-          <div class="flex items-center justify-between px-3.5 py-3">
+        <div class="rounded-sm overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
+          <div class="flex items-center justify-between px-3 py-2">
             <div>
               <div class="text-xs" style="color: var(--text-primary);">{{ getMessage('searchPlaceholder').replace('...', '') }}</div>
               <kbd class="inline-block mt-1.5 px-2 py-0.5 text-[10px] font-mono rounded-md" style="background: var(--bg-secondary); color: var(--text-secondary);">{{ searchShortcut }}</kbd>
@@ -260,7 +335,7 @@ async function testConnection() {
         <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5" style="color: var(--text-secondary);">
           {{ getMessage('displaySettings') }}
         </h2>
-        <div class="rounded-xl overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
+        <div class="rounded-sm overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
           <!-- Group indicator style -->
           <div class="px-3.5 py-3">
             <label class="block text-[10px] font-medium mb-2.5" style="color: var(--text-secondary);">
@@ -269,7 +344,7 @@ async function testConnection() {
             <div class="grid grid-cols-2 gap-2.5">
               <!-- Classic mode card -->
               <label
-                class="relative flex flex-col items-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition-all"
+                class="relative flex flex-col items-center gap-2 p-3 rounded-sm border-2 cursor-pointer transition-all"
                 :style="settings.groupIndicatorStyle === 'header'
                   ? { borderColor: 'var(--accent)', background: 'var(--accent-soft)' }
                   : { borderColor: 'var(--border)', background: 'transparent' }"
@@ -291,7 +366,7 @@ async function testConnection() {
               </label>
               <!-- Minimal mode card -->
               <label
-                class="relative flex flex-col items-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition-all"
+                class="relative flex flex-col items-center gap-2 p-3 rounded-sm border-2 cursor-pointer transition-all"
                 :style="settings.groupIndicatorStyle === 'bar'
                   ? { borderColor: 'var(--accent)', background: 'var(--accent-soft)' }
                   : { borderColor: 'var(--border)', background: 'transparent' }"
@@ -321,8 +396,43 @@ async function testConnection() {
           <!-- Divider -->
           <div class="mx-3.5" style="height: 0.5px; background: var(--border);" />
 
+          <!-- Window Width -->
+          <div class="px-3 py-2 setting-row">
+            <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
+              Window Width (px)
+            </label>
+            <input
+              type="number"
+              v-model.number="settings.windowWidth"
+              placeholder="360"
+              min="300"
+              max="800"
+              class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+              style="background: var(--bg-secondary); color: var(--text-primary);"
+            />
+          </div>
+
+          <!-- Window Height -->
+          <div class="px-3 pb-2 setting-row">
+            <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
+              Window Height (px)
+            </label>
+            <input
+              type="number"
+              v-model.number="settings.windowHeight"
+              placeholder="500"
+              min="240"
+              max="600"
+              class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+              style="background: var(--bg-secondary); color: var(--text-primary);"
+            />
+          </div>
+
+          <!-- Divider -->
+          <div class="mx-3.5" style="height: 0.5px; background: var(--border);" />
+
           <!-- Smart group title toggle -->
-          <label class="flex items-start gap-3 px-3.5 py-3 cursor-pointer">
+          <label class="flex items-start gap-3 px-3 py-2 cursor-pointer">
             <div class="flex-1">
               <span class="text-xs block" style="color: var(--text-primary);">{{ getMessage('smartGroupTitle') }}</span>
               <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
