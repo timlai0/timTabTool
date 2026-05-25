@@ -121,6 +121,7 @@ type MessageAction =
   | 'SPLIT_GROUP'
   | 'SPLIT_CURRENT_GROUP'
   | 'MERGE_GROUP'
+  | 'MERGE_CURRENT_GROUP'
 
 export interface ExtensionMessage {
   action: MessageAction

@@ -53,6 +53,36 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       title: 'Split Current Group',
       description: 'Split the current tab group using AI',
       action: 'SPLIT_CURRENT_GROUP'
+    },
+    {
+      key: '/merge',
+      title: 'Merge Current Group',
+      description: 'Merge the current tab group into another group using AI',
+      action: 'MERGE_CURRENT_GROUP'
+    },
+    {
+      key: '/classify',
+      title: 'Classify New Tabs',
+      description: 'Classify ungrouped tabs into existing groups using AI',
+      action: 'CLASSIFY_NEW_TABS'
+    },
+    {
+      key: '/expand',
+      title: 'Expand All Groups',
+      description: 'Expand all tab groups in this window',
+      action: 'EXPAND_ALL_GROUPS'
+    },
+    {
+      key: '/collapse',
+      title: 'Collapse All Groups',
+      description: 'Collapse all tab groups in this window',
+      action: 'COLLAPSE_ALL_GROUPS'
+    },
+    {
+      key: '/titles',
+      title: 'Toggle Group Titles',
+      description: 'Toggle group title visibility in the tab bar',
+      action: 'TOGGLE_GROUP_TITLES'
     }
   ]
 

@@ -200,6 +200,17 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       return { ok: true }
     }
 
+    case 'MERGE_CURRENT_GROUP': {
+      const windowId = await resolveWindowId(message.payload)
+      const [activeTab] = await chrome.tabs.query({ active: true, windowId })
+      if (activeTab?.groupId !== undefined && activeTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+        await mergeGroup(activeTab.groupId)
+      } else {
+        throw new Error('Active tab is not in a group')
+      }
+      return { ok: true }
+    }
+
     case 'CLASSIFY_NEW_TABS': {
       const windowId = await resolveWindowId(message.payload)
       await classifyNewTabs(windowId)
