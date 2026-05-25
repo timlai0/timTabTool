@@ -231,10 +231,7 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
     case 'SEARCH_TABS': {
       const payload = message.payload as { query: string; windowId?: number } | undefined
       const query = payload?.query ?? ''
-      const windowId = payload?.windowId
-      const tabs = await (windowId !== undefined
-        ? chrome.tabs.query({ windowId })
-        : chrome.tabs.query({ currentWindow: true }))
+      const tabs = await chrome.tabs.query({})
       const openTabs: TabInfo[] = tabs
         .filter((t) => t.id !== undefined)
         .map((t) => ({
@@ -271,7 +268,11 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
     case 'SWITCH_TAB': {
       const tabId = (message.payload as { tabId: number })?.tabId
       if (tabId) {
+        const tab = await chrome.tabs.get(tabId)
         await chrome.tabs.update(tabId, { active: true })
+        if (tab.windowId) {
+          await chrome.windows.update(tab.windowId, { focused: true })
+        }
       }
       return { ok: true }
     }

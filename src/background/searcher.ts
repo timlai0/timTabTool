@@ -27,7 +27,6 @@ export function searchTabs(
   const openUrls = new Set(openTabs.map((t) => t.url))
   for (const entry of historyEntries) {
     if (openUrls.has(entry.url)) continue
-    if (!entry.closed) continue
 
     const score = computeScore(terms, entry.title, entry.url)
     if (score > 0) {
