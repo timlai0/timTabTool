@@ -9,6 +9,10 @@ const emit = defineEmits<{
   back: []
 }>()
 
+const vFocus = {
+  mounted: (el: HTMLElement) => el.focus()
+}
+
 const settings = ref<ExtensionSettings>({ ...DEFAULT_SETTINGS })
 const saved = ref(false)
 const testing = ref(false)
@@ -21,6 +25,68 @@ const DEFAULT_ENDPOINTS: Record<string, string> = {
   gemini: 'https://generativelanguage.googleapis.com',
   custom: '',
 }
+
+const PREDEFINED_MODELS: Record<string, { id: string, name: string, complexity: string, costFactor: string }[]> = {
+  gemini: [
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', complexity: 'High', costFactor: '100%' },
+    { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', complexity: 'Medium', costFactor: '75%' },
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', complexity: 'Medium', costFactor: '25%' },
+    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', complexity: 'Low', costFactor: '12%' },
+    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', complexity: 'Low', costFactor: '5%' },
+    { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', complexity: 'Low', costFactor: '4%' },
+    { id: 'gemini-flash-lite-latest', name: 'Gemini Flash Lite Latest', complexity: 'Low', costFactor: '4%' },
+    { id: 'gemma-4-31b-it', name: 'Gemma 4 31B', complexity: 'Low', costFactor: 'Free' },
+    { id: 'gemma-4-26b-a4b-it', name: 'Gemma 4 26B', complexity: 'Low', costFactor: 'Free' },
+  ],
+  openai: [
+    { id: 'gpt-4o', name: 'GPT-4o', complexity: 'High', costFactor: '100%' },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', complexity: 'Low', costFactor: '6%' },
+  ],
+  claude: [
+    { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', complexity: 'High', costFactor: '100%' },
+    { id: 'claude-3-5-sonnet-20240620', name: 'Claude 3.5 Sonnet', complexity: 'Medium', costFactor: '20%' },
+    { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', complexity: 'Low', costFactor: '2%' },
+  ]
+}
+
+const currentProviderModels = computed(() => {
+  return PREDEFINED_MODELS[settings.value.ai.provider] || []
+})
+
+const isPredefinedModel = computed(() => {
+  const models = currentProviderModels.value
+  return (id: string | undefined) => !!id && models.some(m => m.id === id)
+})
+
+const isCustomSelected = ref(false)
+
+const modelSelectValue = computed({
+  get() {
+    if (isCustomSelected.value) {
+      return 'custom'
+    }
+    const val = settings.value.ai.model
+    if (!val) {
+      return ''
+    }
+    if (isPredefinedModel.value(val)) {
+      return val
+    }
+    isCustomSelected.value = true
+    return 'custom'
+  },
+  set(newValue) {
+    if (newValue === 'custom') {
+      isCustomSelected.value = true
+      if (!settings.value.ai.model || isPredefinedModel.value(settings.value.ai.model)) {
+        settings.value.ai.model = ''
+      }
+    } else {
+      isCustomSelected.value = false
+      settings.value.ai.model = newValue
+    }
+  }
+})
 
 const modelPlaceholder = computed(() => {
   const placeholders: Record<string, string> = {
@@ -42,6 +108,11 @@ watch(() => settings.value.ai.provider, (newProvider, oldProvider) => {
   const current = settings.value.ai.endpoint
   if (!current || current === oldDefault) {
     settings.value.ai.endpoint = DEFAULT_ENDPOINTS[newProvider] || ''
+  }
+  const oldPredefined = PREDEFINED_MODELS[oldProvider] || []
+  if (oldPredefined.some(m => m.id === settings.value.ai.model)) {
+    settings.value.ai.model = ''
+    isCustomSelected.value = false
   }
 })
 
@@ -81,12 +152,18 @@ function openShortcutSettings() {
 }
 
 async function saveSettings() {
+  if (!settings.value.windowWidth || settings.value.windowWidth < 360) {
+    settings.value.windowWidth = 360
+  }
   await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: settings.value })
   saved.value = true
   setTimeout(() => { emit('back') }, 600)
 }
 
 async function saveAndGoBack() {
+  if (!settings.value.windowWidth || settings.value.windowWidth < 360) {
+    settings.value.windowWidth = 360
+  }
   await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: settings.value })
   emit('back')
 }
@@ -106,12 +183,12 @@ async function testConnection() {
 </script>
 
 <template>
-  <div :style="{ width: settings.windowWidth + 'px', height: Math.max(240, Math.min(600, settings.windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
+  <div :style="{ width: Math.max(360, settings.windowWidth) + 'px', height: Math.max(240, Math.min(600, settings.windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->
     <header class="flex items-center gap-2.5 px-4 py-3" style="box-shadow: 0 0.5px 0 var(--border);">
       <button
         @click="saveAndGoBack"
-        class="w-7 h-7 -ml-1 flex items-center justify-center rounded-full"
+        class="w-7 h-7 -ml-1 flex items-center justify-center rounded-sm"
         style="color: var(--accent);"
       >
         <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
@@ -128,7 +205,7 @@ async function testConnection() {
       <div>
         <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5 flex items-center gap-1.5" style="color: var(--text-secondary);">
           {{ getMessage('aiConfig') }}
-          <span class="text-[9px] font-normal normal-case tracking-normal px-1.5 py-0.5 rounded-full" style="background: var(--hover); color: var(--text-tertiary);">{{ getMessage('optional') }}</span>
+          <span class="text-[9px] font-normal normal-case tracking-normal px-1.5 py-0.5 rounded-sm" style="background: var(--hover); color: var(--text-tertiary);">{{ getMessage('optional') }}</span>
         </h2>
         <div class="rounded-sm overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
           <!-- Enable toggle -->
@@ -165,7 +242,7 @@ async function testConnection() {
             <div class="px-3 py-2 setting-row">
               <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('apiKey') }}</label>
               <input
-                type="password"
+                type="text"
                 v-model="settings.ai.apiKey"
                 placeholder="sk-... / AIza..."
                 class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
@@ -191,29 +268,28 @@ async function testConnection() {
                 {{ getMessage('model') }}
                 <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
               </label>
-              <datalist id="model-suggestions">
-                <template v-if="settings.ai.provider === 'gemini'">
-                  <option value="gemini-3.5-flash"></option>
-                  <option value="gemini-3.1-pro-preview"></option>
-                  <option value="gemini-3.1-flash-lite"></option>
-                  <option value="gemini-2.5-flash"></option>
-                  <option value="gemini-2.5-flash-lite"></option>
-                  <option value="gemini-2.0-flash-lite"></option>
-                  <option value="gemini-flash-lite-latest"></option>
-                  <option value="gemma-4-31b-it"></option>
-                  <option value="gemma-4-26b-a4b-it"></option>
-                </template>
-                <template v-else-if="settings.ai.provider === 'openai'">
-                  <option value="gpt-4o-mini"></option>
-                  <option value="gpt-4o"></option>
-                </template>
-              </datalist>
+              <select
+                v-model="modelSelectValue"
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                style="background: var(--bg-secondary); color: var(--text-primary);"
+              >
+                <option value="">Default ({{ modelPlaceholder }})</option>
+                <option 
+                  v-for="model in currentProviderModels" 
+                  :key="model.id" 
+                  :value="model.id"
+                >
+                  {{ model.name }} ({{ model.complexity }}, {{ model.costFactor }})
+                </option>
+                <option value="custom">Custom model name...</option>
+              </select>
               <input
+                v-if="modelSelectValue === 'custom'"
+                v-focus
                 type="text"
                 v-model="settings.ai.model"
-                :placeholder="modelPlaceholder"
-                list="model-suggestions"
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                placeholder="Enter custom model name"
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2 mt-2"
                 style="background: var(--bg-secondary); color: var(--text-primary);"
               />
             </div>
@@ -238,10 +314,26 @@ async function testConnection() {
             <!-- Custom Prompt -->
             <div class="px-3 py-2 setting-row">
               <div class="flex items-center justify-between mb-1">
-                <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                  Custom System Prompt Instructions
-                  <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                </label>
+                <div class="flex items-center gap-1.5">
+                  <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                    Custom System Prompt Instructions
+                    <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                  </label>
+                  <div class="relative group/help">
+                    <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                    <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                      <div class="font-bold mb-1" style="color: var(--accent);">Custom System Prompt</div>
+                      Defines global behavior and style rules.
+                      
+                      <strong>When to use</strong>: To enforce global formatting, tone, language, or constraints.
+                      
+                      <strong>Examples</strong>:
+                      • "Always respond in German."
+                      • "Never use emojis."
+                      • "Omit the 'www.' prefix in group names."
+                    </div>
+                  </div>
+                </div>
                 <button
                   v-if="settings.ai.customPrompt"
                   @click="resetSystemPrompt"
@@ -255,7 +347,7 @@ async function testConnection() {
               <textarea
                 v-model="settings.ai.customPrompt"
                 placeholder="E.g., Never use emojis. Always categorize by project."
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[60px] resize-y"
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
                 style="background: var(--bg-secondary); color: var(--text-primary);"
               ></textarea>
             </div>
@@ -263,10 +355,26 @@ async function testConnection() {
             <!-- Grouping Prompt -->
             <div class="px-3 py-2 setting-row">
               <div class="flex items-center justify-between mb-1">
-                <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                  Tab Grouping Prompt
-                  <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                </label>
+                <div class="flex items-center gap-1.5">
+                  <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                    Tab Grouping Prompt
+                    <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                  </label>
+                  <div class="relative group/help">
+                    <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                    <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                      <div class="font-bold mb-1" style="color: var(--accent);">Tab Grouping Prompt</div>
+                      Defines tab clustering logic and categories.
+                      
+                      <strong>When to use</strong>: To modify how tabs are grouped, sizes of groups, or target names.
+                      
+                      <strong>Examples</strong>:
+                      • "Limit maximum groups to 4."
+                      • "Create a dedicated group for Dev tools."
+                      • "Group only if at least 3 tabs match."
+                    </div>
+                  </div>
+                </div>
                 <button
                   v-if="settings.ai.groupingPrompt !== DEFAULT_GROUPING_PROMPT"
                   @click="resetGroupingPrompt"
@@ -280,7 +388,7 @@ async function testConnection() {
               <textarea
                 v-model="settings.ai.groupingPrompt"
                 :placeholder="'Default:\n' + DEFAULT_GROUPING_PROMPT"
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[60px] resize-y"
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[220px] resize-y"
                 style="background: var(--bg-secondary); color: var(--text-primary);"
               ></textarea>
             </div>
@@ -290,7 +398,7 @@ async function testConnection() {
               <button
                 @click="testConnection"
                 :disabled="testing || !settings.ai.apiKey"
-                class="px-3.5 py-1.5 text-[11px] font-medium rounded-lg disabled:opacity-40"
+                class="px-3.5 py-1.5 text-[11px] font-medium rounded-sm disabled:opacity-40"
                 style="background: var(--bg-secondary); color: var(--text-primary);"
               >
                 {{ testing ? getMessage('testing') : getMessage('testConnection') }}
@@ -321,7 +429,7 @@ async function testConnection() {
             </div>
             <button
               @click="openShortcutSettings"
-              class="px-3 py-1.5 text-[11px] font-medium rounded-lg"
+              class="px-3 py-1.5 text-[11px] font-medium rounded-sm"
               style="color: var(--accent);"
             >
               {{ getMessage('changeShortcut') }}
@@ -405,7 +513,7 @@ async function testConnection() {
               type="number"
               v-model.number="settings.windowWidth"
               placeholder="360"
-              min="300"
+              min="360"
               max="800"
               class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
               style="background: var(--bg-secondary); color: var(--text-primary);"
@@ -456,7 +564,7 @@ async function testConnection() {
       <div class="pb-1">
         <button
           @click="saveSettings"
-          class="w-full py-2.5 text-[13px] font-semibold rounded-xl transition-all"
+          class="w-full py-2.5 text-[13px] font-semibold rounded-sm transition-all"
           style="background: var(--accent); color: #fff;"
         >
           <span v-if="saved" class="inline-flex items-center gap-1.5">

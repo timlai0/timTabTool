@@ -85,6 +85,134 @@ const totalTabs = computed(() =>
   allWindows.value.reduce((sum, w) => sum + w.tabCount, 0),
 )
 
+const totalGroups = computed(() =>
+  allWindows.value.reduce((sum, w) => sum + w.groups.length, 0),
+)
+
+const totalWindows = computed(() => allWindows.value.length)
+
+function removeTrackingParams(urlString: string): string {
+  try {
+    const url = new URL(urlString)
+    const trackingParams = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid', '_gl', 'msclkid', 'mc_cid', 'mc_eid']
+    for (const param of trackingParams) {
+      url.searchParams.delete(param)
+    }
+    return url.toString()
+  } catch {
+    return urlString
+  }
+}
+
+const exactDuplicatesCount = computed(() => {
+  const urlSeen = new Set<string>()
+  let count = 0
+  for (const win of allWindows.value) {
+    for (const group of win.groups) {
+      for (const tab of group.tabs) {
+        if (!tab.url) continue
+        if (urlSeen.has(tab.url)) {
+          count++
+        } else {
+          urlSeen.add(tab.url)
+        }
+      }
+    }
+  }
+  return count
+})
+
+const possibleDuplicatesCount = computed(() => {
+  const cleanUrlCounts = new Map<string, number>()
+  const exactUrlSeen = new Set<string>()
+  let exactDupes = 0
+  let cleanDupes = 0
+  
+  for (const win of allWindows.value) {
+    for (const group of win.groups) {
+      for (const tab of group.tabs) {
+        if (!tab.url) continue
+        
+        if (exactUrlSeen.has(tab.url)) {
+          exactDupes++
+        } else {
+          exactUrlSeen.add(tab.url)
+        }
+        
+        const cleanUrl = removeTrackingParams(tab.url)
+        const current = cleanUrlCounts.get(cleanUrl) || 0
+        if (current > 0) {
+          cleanDupes++
+        }
+        cleanUrlCounts.set(cleanUrl, current + 1)
+      }
+    }
+  }
+  return cleanDupes - exactDupes
+})
+
+async function closeExactDuplicates() {
+  const urlSeen = new Set<string>()
+  const tabIdsToRemove: number[] = []
+  
+  for (const win of allWindows.value) {
+    for (const group of win.groups) {
+      for (const tab of group.tabs) {
+        if (!tab.url || tab.id === undefined) continue
+        if (urlSeen.has(tab.url)) {
+          tabIdsToRemove.push(tab.id)
+        } else {
+          urlSeen.add(tab.url)
+        }
+      }
+    }
+  }
+  
+  if (tabIdsToRemove.length > 0) {
+    await chrome.tabs.remove(tabIdsToRemove)
+    await loadAllPreviews()
+  }
+}
+
+async function organizePossibleDuplicates() {
+  const cleanUrlToTabs = new Map<string, number[]>()
+  
+  for (const win of allWindows.value) {
+    for (const group of win.groups) {
+      for (const tab of group.tabs) {
+        if (!tab.url || tab.id === undefined) continue
+        const cleanUrl = removeTrackingParams(tab.url)
+        const arr = cleanUrlToTabs.get(cleanUrl) || []
+        arr.push(tab.id)
+        cleanUrlToTabs.set(cleanUrl, arr)
+      }
+    }
+  }
+  
+  const dupesGroups = Array.from(cleanUrlToTabs.values()).filter(arr => arr.length > 1)
+  if (dupesGroups.length === 0) return
+  
+  const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent()).id!
+  let firstTabIdToOpen: number | null = null
+
+  const allTabIdsToMove: number[] = []
+  for (const group of dupesGroups) {
+    if (!firstTabIdToOpen) firstTabIdToOpen = group[0]
+    allTabIdsToMove.push(...group)
+  }
+  
+  if (allTabIdsToMove.length > 0) {
+    await chrome.tabs.move(allTabIdsToMove, { windowId: currentWinId, index: -1 })
+  }
+  
+  if (firstTabIdToOpen) {
+    await chrome.tabs.update(firstTabIdToOpen, { active: true })
+    await chrome.windows.update(currentWinId, { focused: true })
+  }
+  
+  await loadAllPreviews()
+}
+
 const isDarkActive = computed(() => document.documentElement.classList.contains('dark'))
 
 async function loadAllPreviews() {
@@ -132,26 +260,73 @@ function getGroupingPrompt() {
   return aiSettings.value.groupingPrompt?.trim() || DEFAULT_GROUPING_PROMPT
 }
 
-function estimateCostAndTokens(w: WindowGroupsInfo) {
-  const tabs = unpinnedTabsCount(w)
+const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  // Gemini
+  'gemini-3.1-pro-preview': { input: 2.00, output: 12.00 },
+  'gemini-3.5-flash': { input: 1.50, output: 9.00 },
+  'gemini-2.5-flash': { input: 0.50, output: 3.00 },
+  'gemini-3.1-flash-lite': { input: 0.25, output: 1.50 },
+  'gemini-2.5-flash-lite': { input: 0.10, output: 0.40 },
+  'gemini-2.0-flash-lite': { input: 0.075, output: 0.30 },
+  'gemini-flash-lite-latest': { input: 0.075, output: 0.30 },
+  'gemma-4-31b-it': { input: 0, output: 0 },
+  'gemma-4-26b-a4b-it': { input: 0, output: 0 },
+
+  // OpenAI
+  'gpt-4o': { input: 2.50, output: 10.00 },
+  'gpt-4o-mini': { input: 0.15, output: 0.60 },
+
+  // Claude
+  'claude-3-opus-20240229': { input: 15.00, output: 75.00 },
+  'claude-3-5-sonnet-20240620': { input: 3.00, output: 15.00 },
+  'claude-3-haiku-20240307': { input: 0.25, output: 1.25 },
+}
+
+const PROVIDER_DEFAULTS: Record<string, { input: number; output: number }> = {
+  openai: { input: 0.15, output: 0.60 },
+  claude: { input: 3.00, output: 15.00 },
+  gemini: { input: 1.50, output: 9.00 },
+  custom: { input: 0.15, output: 0.60 },
+}
+
+const activeModel = computed(() => {
+  if (aiSettings.value.model) {
+    return aiSettings.value.model
+  }
+  const defaults: Record<string, string> = {
+    openai: 'gpt-4o-mini',
+    claude: 'claude-sonnet-4-20250514',
+    gemini: 'gemini-3.5-flash',
+    custom: 'gpt-4o-mini',
+  }
+  return defaults[aiSettings.value.provider] || 'gpt-4o-mini'
+})
+
+function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classify' | null = 'group') {
+  const type = countType === 'classify' ? 'classify' : 'group'
+  const tabs = type === 'group' ? unpinnedTabsCount(w) : newTabsCount(w)
+  if (tabs === 0) {
+    return { tokens: 0, costStr: 'Free' }
+  }
   const batches = Math.ceil(tabs / (aiSettings.value.batchSize || 20))
-  const promptTokens = Math.ceil((getSystemPrompt().length + getGroupingPrompt().length) / 4)
+  const promptLen = getSystemPrompt().length + (type === 'group' ? getGroupingPrompt().length : getClassifyPrompt(w).length)
+  const promptTokens = Math.ceil(promptLen / 4)
   const inputTokens = batches * promptTokens + tabs * 20
   const outputTokens = batches * 50
   const totalTokens = inputTokens + outputTokens
   
   const provider = aiSettings.value.provider
-  let cost = 0
-  if (provider === 'openai') {
-    cost = (inputTokens * 0.15 + outputTokens * 0.6) / 1000000
-  } else if (provider === 'claude') {
-    cost = (inputTokens * 3 + outputTokens * 15) / 1000000
-  } else if (provider === 'gemini') {
-    cost = (inputTokens * 0.075 + outputTokens * 0.3) / 1000000
+  const model = activeModel.value
+  
+  let rates = MODEL_PRICING[model]
+  if (!rates) {
+    rates = PROVIDER_DEFAULTS[provider] || PROVIDER_DEFAULTS.openai
   }
   
+  const cost = (inputTokens * rates.input + outputTokens * rates.output) / 1000000
+  
   let costStr = ''
-  if (cost === 0) costStr = 'Free / Unknown'
+  if (cost === 0) costStr = 'Free'
   else if (cost < 0.0001) costStr = '< $0.0001'
   else costStr = `~$${cost.toFixed(4)}`
   
@@ -161,6 +336,22 @@ function estimateCostAndTokens(w: WindowGroupsInfo) {
 function newTabsCount(w: WindowGroupsInfo): number {
   const group = w.groups.find((g) => g.groupName === 'New Tabs')
   return group ? group.tabs.length : 0
+}
+
+async function handleCancelGroup(windowId: number) {
+  try {
+    await chrome.runtime.sendMessage({ action: 'CANCEL_OPERATION', payload: { windowId } })
+  } catch (err) {
+    console.error('Failed to cancel grouping:', err)
+  }
+}
+
+async function handleCancelClassify(windowId: number) {
+  try {
+    await chrome.runtime.sendMessage({ action: 'CANCEL_OPERATION', payload: { windowId } })
+  } catch (err) {
+    console.error('Failed to cancel classification:', err)
+  }
 }
 
 async function handleClassifyNew(windowId: number) {
@@ -260,24 +451,54 @@ async function openSearchOverlay() {
   await chrome.runtime.sendMessage({ action: 'TOGGLE_SEARCH_OVERLAY' })
   window.close()
 }
+
+const activeHoverAction = ref<'group' | 'classify' | null>(null)
+const hoveredActionWindowId = ref<number | null>(null)
+
+function getClassifyPrompt(w: WindowGroupsInfo) {
+  const existingGroupNames = w.groups.filter(g => g.groupName !== 'New Tabs').map(g => g.groupName)
+  const groupListStr = existingGroupNames.length > 0 
+    ? existingGroupNames.map((n) => `"${n}"`).join(', ')
+    : 'None'
+  return `I have these existing tab groups: ${groupListStr}.
+
+New tabs to classify:
+1. [Example Tab] example.com
+
+For each tab, decide which existing group it belongs to. If none fit, use "NEW" and suggest a name and color.`
+}
 </script>
 
 <template>
   <SettingsView v-if="currentView === 'settings'" @back="handleSettingsBack" />
 
-  <div v-else :style="{ width: windowWidth + 'px', height: Math.max(240, Math.min(600, windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
+  <div v-else :style="{ width: Math.max(360, windowWidth) + 'px', height: Math.max(240, Math.min(600, windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->
     <header class="flex items-center justify-between px-4 py-3" style="box-shadow: 0 0.5px 0 var(--border);">
-      <div class="flex items-center gap-2.5">
-        <img src="/icons/icon-32.png" alt="" class="w-5 h-5" />
-        <h1 class="text-[15px] font-semibold tracking-tight" style="color: var(--text-primary);">TabPilot</h1>
-        <span class="text-[10px] tabular-nums px-1.5 py-0.5 rounded-full" style="color: var(--text-tertiary); background: var(--bg-secondary);">{{ totalTabs }}</span>
+      <div class="flex items-center gap-2.5 flex-1 min-w-0 flex-wrap py-0.5">
+        <img src="/icons/icon-32.png" alt="" class="w-5 h-5 shrink-0" />
+        <h1 class="text-[15px] font-semibold tracking-tight shrink-0" style="color: var(--text-primary);">TabPilot</h1>
+        <span class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: var(--hover); border: 1px solid var(--border);">
+          {{ totalTabs }} tabs · {{ totalGroups }} groups · {{ totalWindows }} windows
+        </span>
+        <span v-if="exactDuplicatesCount > 0 || possibleDuplicatesCount > 0" class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0 flex items-center gap-1" style="color: var(--text-primary); background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3);">
+          <svg class="w-3 h-3" style="color: #ef4444;" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+          </svg>
+          <button v-if="exactDuplicatesCount > 0" class="hover:underline focus:outline-none" @click="closeExactDuplicates" title="Close all exact duplicates">
+            {{ exactDuplicatesCount }} exact dupes
+          </button>
+          <span v-if="exactDuplicatesCount > 0 && possibleDuplicatesCount > 0">·</span>
+          <button v-if="possibleDuplicatesCount > 0" class="hover:underline focus:outline-none" @click="organizePossibleDuplicates" title="Group and view possible duplicates">
+            {{ possibleDuplicatesCount }} possible dupes
+          </button>
+        </span>
       </div>
       <div class="flex items-center gap-0.5">
         <!-- Search -->
         <button
           @click="openSearchOverlay"
-          class="w-7 h-7 flex items-center justify-center rounded-full"
+          class="w-7 h-7 flex items-center justify-center rounded-sm"
           style="color: var(--text-secondary);"
           title="Open Search (Ctrl+Shift+F)"
         >
@@ -288,7 +509,7 @@ async function openSearchOverlay() {
         <!-- Theme toggle -->
         <button
           @click="toggleTheme"
-          class="w-7 h-7 flex items-center justify-center rounded-full"
+          class="w-7 h-7 flex items-center justify-center rounded-sm"
           style="color: var(--text-secondary);"
           :title="themeMode === 'dark' ? 'Switch to Light' : 'Switch to Dark'"
         >
@@ -303,7 +524,7 @@ async function openSearchOverlay() {
         </button>
         <!-- Settings -->
         <button
-          class="w-7 h-7 flex items-center justify-center rounded-full"
+          class="w-7 h-7 flex items-center justify-center rounded-sm"
           style="color: var(--text-secondary);"
           @click="currentView = 'settings'"
           :title="getMessage('settings')"
@@ -337,16 +558,16 @@ async function openSearchOverlay() {
     </div>
 
     <!-- All windows groups -->
-    <div v-else class="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+    <div v-else class="flex-1 overflow-y-auto">
       <div
         v-for="(w, idx) in allWindows"
         :key="w.windowId"
-        class="rounded-xl"
-        style="background: var(--bg-secondary); box-shadow: var(--shadow-card);"
+        class="rounded-none border-b"
+        style="background: var(--bg-secondary); border-color: var(--border);"
       >
         <!-- Window section header (clickable to collapse/expand) -->
         <div
-          class="flex items-center gap-2 px-3.5 py-2.5 cursor-pointer select-none"
+          class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none"
           @click="toggleWindowSection(w.windowId)"
         >
           <svg
@@ -374,65 +595,117 @@ async function openSearchOverlay() {
         <!-- Collapsible content -->
         <template v-if="!isWindowSectionCollapsed(w.windowId)">
           <!-- Action buttons -->
-          <div class="flex items-center gap-1.5 px-3.5 pb-2">
-            <div class="relative group">
+          <div class="flex items-center px-3.5 pb-2 relative">
+            <div class="flex items-center gap-1.5">
               <button
-                class="px-3 py-[4px] text-[11px] font-medium rounded-btn"
-                style="background: var(--accent); color: #fff;"
-                :disabled="groupingWindowId === w.windowId"
-                @click="handleGroup(w.windowId)"
+                class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group"
+                :style="groupingWindowId === w.windowId
+                  ? { background: 'var(--group-red)', color: '#fff' }
+                  : { background: 'var(--accent)', color: '#fff' }"
+                @click="groupingWindowId === w.windowId ? handleCancelGroup(w.windowId) : handleGroup(w.windowId)"
+                @mouseenter="activeHoverAction = 'group'; hoveredActionWindowId = w.windowId"
+                @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
               >
                 <span v-if="groupingWindowId === w.windowId" class="inline-flex items-center gap-1">
-                  <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full" />
-                  {{ getMessage('grouping') }}
+                  <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
+                  <span>Grouping with {{ activeModel }}...</span>
                 </span>
                 <span v-else>{{ getMessage('groupTabs') }}</span>
               </button>
+              <button
+                class="px-3 py-[4px] text-[11px] rounded-btn"
+                style="color: var(--text-secondary); background: var(--hover);"
+                @click="handleUngroup(w.windowId)"
+              >
+                {{ getMessage('ungroupAll') }}
+              </button>
+              <button
+                v-if="newTabsCount(w) > 0"
+                class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group"
+                :style="classifyingWindowId === w.windowId
+                  ? { background: 'var(--group-red)', color: '#fff' }
+                  : { background: 'var(--accent-soft)', color: 'var(--accent)' }"
+                @click="classifyingWindowId === w.windowId ? handleCancelClassify(w.windowId) : handleClassifyNew(w.windowId)"
+                @mouseenter="activeHoverAction = 'classify'; hoveredActionWindowId = w.windowId"
+                @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
+              >
+                <span v-if="classifyingWindowId === w.windowId" class="inline-flex items-center gap-1">
+                  <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
+                  <span>Classifying with {{ activeModel }}...</span>
+                </span>
+                <span v-else>{{ getMessage('classifyNewTabs') }} ({{ newTabsCount(w) }})</span>
+              </button>
 
-              <!-- Tooltip -->
-              <div v-if="aiSettings.enabled && aiSettings.apiKey" class="absolute left-0 top-full mt-1.5 hidden group-hover:block w-[280px] p-2.5 rounded-xl shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
-                <div class="font-semibold mb-1" style="color: var(--accent);">AI Grouping Preview</div>
-                
-                <div class="mb-1 text-[9px] uppercase font-bold tracking-wider mt-2" style="color: var(--text-tertiary);">System Prompt</div>
-                <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
-                  {{ getSystemPrompt() }}
-                </div>
-                
-                <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">User Prompt</div>
-                <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
-                  {{ getGroupingPrompt() }}
-                </div>
-                
-                <div class="flex items-center justify-between mt-2 pt-2 border-t" style="border-color: var(--border);">
-                  <span class="text-[10px] font-medium" style="color: var(--text-secondary);">
-                    Est. Requests: <span class="font-bold tabular-nums" style="color: var(--text-primary);">{{ Math.ceil(unpinnedTabsCount(w) / (aiSettings.batchSize || 20)) }}</span>
-                    <span class="opacity-50 mx-1">|</span>
-                    <span class="font-bold tabular-nums" style="color: var(--text-primary);">~{{ estimateCostAndTokens(w).tokens }}</span> tok
-                  </span>
-                  <span class="text-[10px] font-bold tabular-nums" style="color: var(--text-primary);">{{ estimateCostAndTokens(w).costStr }}</span>
-                </div>
+              <!-- Tooltip (Shows on hover of Group Tabs or Classify New inside relative actions container) -->
+              <div v-if="groupingWindowId !== w.windowId && classifyingWindowId !== w.windowId && hoveredActionWindowId === w.windowId && activeHoverAction !== null" class="absolute left-3.5 top-full mt-1.5 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+                <template v-if="aiSettings.enabled && aiSettings.apiKey">
+                  <div class="font-semibold mb-1" style="color: var(--accent);">
+                    {{ activeHoverAction === 'group' ? 'AI Grouping Preview' : 'AI Classification Preview' }}
+                  </div>
+                  <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
+                    <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
+                    <span class="opacity-40">•</span>
+                    <span>Batch Size: <span class="font-semibold" style="color: var(--text-secondary);">{{ aiSettings.batchSize || 20 }}</span></span>
+                  </div>
+                  
+                  <div class="mb-1 text-[9px] uppercase font-bold tracking-wider mt-2" style="color: var(--text-tertiary);">System Prompt</div>
+                  <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
+                    {{ getSystemPrompt() }}
+                  </div>
+                  
+                  <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">User Prompt</div>
+                  <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
+                    {{ activeHoverAction === 'group' ? getGroupingPrompt() : getClassifyPrompt(w) }}
+                  </div>
+                  
+                  <div class="flex items-center justify-between mt-2 pt-2 border-t" style="border-color: var(--border);">
+                    <span class="text-[10px] font-medium" style="color: var(--text-secondary);">
+                      Est. Requests: <span class="font-bold tabular-nums" style="color: var(--text-primary);">
+                        {{ activeHoverAction === 'group' ? Math.ceil(unpinnedTabsCount(w) / (aiSettings.batchSize || 20)) : Math.ceil(newTabsCount(w) / (aiSettings.batchSize || 20)) }}
+                      </span>
+                      <span class="opacity-50 mx-1">|</span>
+                      <span class="font-bold tabular-nums" style="color: var(--text-primary);">~{{ estimateCostAndTokens(w, activeHoverAction).tokens }}</span> tok
+                    </span>
+                    <span class="text-[10px] font-bold tabular-nums" style="color: var(--text-primary);">{{ estimateCostAndTokens(w, activeHoverAction).costStr }}</span>
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="font-semibold mb-1" style="color: var(--accent);">
+                    {{ activeHoverAction === 'group' ? 'Rule-based Grouping Preview' : 'Rule-based Classification Preview' }}
+                  </div>
+                  <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
+                    <span>Mode: <span class="font-semibold" style="color: var(--text-secondary);">Local Rule Engine</span></span>
+                    <span class="opacity-40">•</span>
+                    <span>Privacy: <span class="font-semibold" style="color: var(--text-secondary);">100% Offline</span></span>
+                  </div>
+                  
+                  <div class="mb-1 text-[9px] uppercase font-bold tracking-wider mt-2" style="color: var(--text-tertiary);">Description</div>
+                  <div class="text-[10px] mb-2 leading-relaxed" style="color: var(--text-secondary);">
+                    {{ activeHoverAction === 'group' 
+                      ? 'Tabs will be organized instantly using high-performance local heuristics. Priority is given to matching exact domains, parent domains, and tab title keywords.' 
+                      : 'New tabs will be classified instantly into matching existing groups using high-performance local heuristics (domain, parent domain, and keyword match).' }}
+                  </div>
+                  
+                  <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">Built-in Categories</div>
+                  <div class="text-[10px] mb-2 flex flex-wrap gap-1" style="color: var(--text-secondary);">
+                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Work</span>
+                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Development</span>
+                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Learning</span>
+                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Social</span>
+                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Entertainment</span>
+                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Shopping</span>
+                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Docs</span>
+                  </div>
+                  
+                  <div class="flex items-center justify-between mt-2 pt-2 border-t" style="border-color: var(--border);">
+                    <span class="text-[10px] font-medium" style="color: var(--text-secondary);">
+                      Est. Requests: <span class="font-bold tabular-nums" style="color: var(--text-primary);">0 (No API calls)</span>
+                    </span>
+                    <span class="text-[10px] font-bold tabular-nums" style="color: var(--group-green);">Free</span>
+                  </div>
+                </template>
               </div>
             </div>
-            <button
-              class="px-3 py-[4px] text-[11px] rounded-btn"
-              style="color: var(--text-secondary); background: var(--hover);"
-              @click="handleUngroup(w.windowId)"
-            >
-              {{ getMessage('ungroupAll') }}
-            </button>
-            <button
-              v-if="newTabsCount(w) > 0"
-              class="px-3 py-[4px] text-[11px] font-medium rounded-btn"
-              style="background: var(--accent-soft); color: var(--accent);"
-              :disabled="classifyingWindowId === w.windowId"
-              @click="handleClassifyNew(w.windowId)"
-            >
-              <span v-if="classifyingWindowId === w.windowId" class="inline-flex items-center gap-1">
-                <span class="animate-spin w-2.5 h-2.5 border border-current/60 border-t-transparent rounded-full" />
-                {{ getMessage('classifyingNewTabs') }}
-              </span>
-              <span v-else>{{ getMessage('classifyNewTabs') }} ({{ newTabsCount(w) }})</span>
-            </button>
             <div class="flex-1" />
             <!-- Toolbar icons -->
             <div v-if="w.hasGroups" class="flex items-center gap-0">

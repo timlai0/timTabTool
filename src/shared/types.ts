@@ -88,7 +88,7 @@ export interface WindowGroupsInfo {
   titlesHidden: boolean
 }
 
-export type MessageAction =
+type MessageAction =
   | 'GROUP_TABS'
   | 'UNGROUP_ALL'
   | 'CLOSE_GROUP'
@@ -105,6 +105,7 @@ export type MessageAction =
   | 'TOGGLE_SEARCH_OVERLAY'
   | 'SWITCH_TAB'
   | 'OPEN_URL'
+  | 'CANCEL_OPERATION'
 
 export interface ExtensionMessage {
   action: MessageAction

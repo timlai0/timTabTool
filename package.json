@@ -1,6 +1,6 @@
 {
   "name": "tabpilot",
-  "version": "1.0.1",
+  "version": "1.0.6",
   "description": "Autopilot for your browser tabs. Smart grouping, instant search, optional AI — all local, all private.",
   "type": "module",
   "scripts": {

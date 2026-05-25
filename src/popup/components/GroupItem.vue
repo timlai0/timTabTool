@@ -48,7 +48,7 @@ async function handleCloseGroup() {
         @click="collapsed = false"
       >
         <span
-          class="min-w-[22px] h-[22px] rounded-md flex items-center justify-center text-white text-[10px] font-bold px-1 tabular-nums"
+          class="min-w-[22px] h-[22px] rounded-sm flex items-center justify-center text-white text-[10px] font-bold px-1 tabular-nums"
           :style="{ background: groupColorVar }"
         >
           {{ group.tabs.length }}
@@ -76,7 +76,7 @@ async function handleCloseGroup() {
         class="w-full flex items-center gap-2.5 px-3.5 py-2 text-left group/row"
         @click="collapsed = true"
       >
-        <span class="w-[3px] h-4 rounded-full shrink-0" :style="{ background: groupColorVar }" />
+        <span class="w-[3px] h-4 rounded-sm shrink-0" :style="{ background: groupColorVar }" />
         <span class="text-xs font-medium flex-1 truncate" style="color: var(--text-primary);">
           {{ displayLabel }}
         </span>
@@ -114,7 +114,7 @@ async function handleCloseGroup() {
           @click="collapsed = true"
         >
           <div
-            class="absolute left-1.5 top-1 bottom-1 w-[3px] rounded-full transition-all duration-200"
+            class="absolute left-1.5 top-1 bottom-1 w-[3px] rounded-sm transition-all duration-200"
             :style="{ background: groupColorVar }"
           />
         </div>

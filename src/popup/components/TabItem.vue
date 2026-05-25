@@ -22,11 +22,11 @@ function getFaviconUrl(tab: TabInfo): string {
 
 <template>
   <button
-    class="tab-row w-full flex items-center gap-2.5 px-2 py-[5px] rounded-lg text-left group"
+    class="tab-row w-full flex items-center gap-2.5 px-2 py-[5px] rounded-sm text-left group"
     @click="switchToTab(tab.id)"
     :title="tab.url"
   >
-    <div class="w-4 h-4 shrink-0 rounded flex items-center justify-center overflow-hidden" style="background: var(--bg-secondary);">
+    <div class="w-4 h-4 shrink-0 rounded-sm flex items-center justify-center overflow-hidden" style="background: var(--bg-secondary);">
       <img
         v-if="getFaviconUrl(tab)"
         :src="getFaviconUrl(tab)"

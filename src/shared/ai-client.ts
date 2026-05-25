@@ -22,9 +22,11 @@ const MAX_GROUP_NAME_LENGTH = 40
  */
 export class AIClient {
   private config: AIConfig
+  private signal?: AbortSignal
 
-  constructor(config: AIConfig) {
+  constructor(config: AIConfig, signal?: AbortSignal) {
     this.config = config
+    this.signal = signal
   }
 
   /**
@@ -293,6 +295,7 @@ Only output the JSON array.`
           model: 'text-embedding-3-small',
           input: texts,
         }),
+        signal: this.signal,
       })
 
       if (!response.ok) return null
@@ -347,6 +350,7 @@ Only output the JSON array.`
         max_tokens: 4096,
         ...(jsonMode && { response_format: { type: 'json_object' } }),
       }),
+      signal: this.signal,
     })
 
     if (!response.ok) {
@@ -378,6 +382,7 @@ Only output the JSON array.`
         system: this.systemPrompt,
         messages,
       }),
+      signal: this.signal,
     })
 
     if (!response.ok) {
@@ -413,6 +418,7 @@ Only output the JSON array.`
             ...(jsonMode && { responseMimeType: 'application/json' }),
           },
         }),
+        signal: this.signal,
       },
     )
 

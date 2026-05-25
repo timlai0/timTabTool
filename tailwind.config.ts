@@ -32,8 +32,8 @@ export default {
         'card': 'var(--shadow-card)',
       },
       borderRadius: {
-        'card': '12px',
-        'btn': '8px',
+        'card': '2px',
+        'btn': '2px',
       },
       transitionTimingFunction: {
         'apple': 'cubic-bezier(0.25, 0.1, 0.25, 1)',

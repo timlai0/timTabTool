@@ -16,6 +16,7 @@ import {
   debouncedCacheRebuild,
   handleTabGroupUpdated,
   handleTabGroupRemoved,
+  cancelActiveOperation,
 } from './tab-manager'
 import { searchTabs } from './searcher'
 import { recordTabVisit, getHistoryEntries } from './storage'
@@ -167,6 +168,12 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
     case 'CLASSIFY_NEW_TABS': {
       const windowId = await resolveWindowId(message.payload)
       await classifyNewTabs(windowId)
+      return { ok: true }
+    }
+
+    case 'CANCEL_OPERATION': {
+      const windowId = await resolveWindowId(message.payload)
+      cancelActiveOperation(windowId)
       return { ok: true }
     }
 

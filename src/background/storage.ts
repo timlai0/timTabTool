@@ -6,7 +6,7 @@ const MAX_HISTORY_ENTRIES = 500
 /**
  * Load tab history from storage.
  */
-export async function loadHistory(): Promise<Map<string, TabHistoryEntry>> {
+async function loadHistory(): Promise<Map<string, TabHistoryEntry>> {
   const data = await chrome.storage.local.get(STORAGE_KEYS.TAB_HISTORY)
   const entries = (data[STORAGE_KEYS.TAB_HISTORY] ?? []) as TabHistoryEntry[]
   const map = new Map<string, TabHistoryEntry>()
@@ -50,20 +50,6 @@ export async function recordTabVisit(url: string, title: string, favIconUrl?: st
   await saveHistory(history)
 }
 
-/**
- * Mark a tab as closed in history.
- */
-export async function markTabClosed(url: string): Promise<void> {
-  if (!url) return
-  const history = await loadHistory()
-  const entry = history.get(url)
-  if (entry) {
-    entry.closed = true
-    entry.lastAccessed = Date.now()
-    history.set(url, entry)
-    await saveHistory(history)
-  }
-}
 
 /**
  * Get all history entries.

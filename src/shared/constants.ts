@@ -38,6 +38,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   smartGroupTitle: true,
   theme: 'system',
   windowWidth: 360,
+  windowHeight: 600,
 }
 
 export const STORAGE_KEYS = {

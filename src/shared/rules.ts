@@ -159,7 +159,7 @@ export const DOMAIN_RULES: Record<string, GroupCategory> = {
  * Matched against tab title (case-insensitive).
  * Order matters: first match wins.
  */
-export interface KeywordRule {
+interface KeywordRule {
   pattern: RegExp
   category: GroupCategory
 }

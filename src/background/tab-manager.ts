@@ -15,6 +15,9 @@ const previewCacheMap = new Map<number, GroupedTabs[]>()
 /** Which windows have AI-generated groups (for cache restore behavior). */
 const cacheIsAIGroupedMap = new Map<number, boolean>()
 
+/** Tracks active AbortControllers for cancellation. Key: windowId */
+export const activeAbortControllers = new Map<number, AbortController>()
+
 // --- Smart group title state ---
 // Maps Chrome groupId → stored display title (used to enforce persistent titles)
 const groupTitleMap = new Map<number, string>()
@@ -278,7 +281,7 @@ export async function autoGroupNewTab(tab: chrome.tabs.Tab): Promise<void> {
 /**
  * Update the extension badge to show how many tabs are in the "New Tabs" group.
  */
-export async function updateNewTabsBadge(windowId: number): Promise<void> {
+async function updateNewTabsBadge(windowId: number): Promise<void> {
   const tabs = await chrome.tabs.query({ windowId })
   const groups = await chrome.tabGroups.query({ windowId })
   const newTabsGroup = groups.find(
@@ -452,66 +455,89 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
  * Group all tabs in the given window using Chrome Tab Groups API.
  */
 export async function groupAllTabs(windowId: number): Promise<void> {
-  const tabs = await chrome.tabs.query({ windowId, windowType: 'normal' })
-  const unpinnedTabs = tabs.filter((t) => !t.pinned)
+  const existing = activeAbortControllers.get(windowId)
+  if (existing) {
+    existing.abort()
+  }
 
-  const settings = await getSettings()
+  const controller = new AbortController()
+  activeAbortControllers.set(windowId, controller)
 
-  await ungroupAllTabs(windowId)
+  try {
+    const tabs = await chrome.tabs.query({ windowId, windowType: 'normal' })
+    const unpinnedTabs = tabs.filter((t) => !t.pinned)
 
-  const hideTitles = titlesHiddenMap.get(windowId) ?? false
+    const settings = await getSettings()
 
-  if (settings.ai.enabled && settings.ai.apiKey) {
-    try {
-      const freeGroups = await groupTabsFreelyWithAI(unpinnedTabs, settings.ai)
-      for (const group of freeGroups) {
-        if (group.tabIds.length === 0) continue
-        const groupId = await retryTabOperation(() =>
-          chrome.tabs.group({ tabIds: group.tabIds as [number, ...number[]] }),
-        )
-        groupTitleMap.set(groupId, group.name)
-        await retryTabOperation(() =>
-          chrome.tabGroups.update(groupId, {
-            title: hideTitles ? '' : group.name,
-            color: group.color,
-          }),
-        )
+    await ungroupAllTabs(windowId)
+
+    const hideTitles = titlesHiddenMap.get(windowId) ?? false
+
+    if (settings.ai.enabled && settings.ai.apiKey) {
+      try {
+        const freeGroups = await groupTabsFreelyWithAI(unpinnedTabs, settings.ai, controller.signal)
+        if (controller.signal.aborted) return
+        for (const group of freeGroups) {
+          if (controller.signal.aborted) return
+          if (group.tabIds.length === 0) continue
+          const groupId = await retryTabOperation(() =>
+            chrome.tabs.group({ tabIds: group.tabIds as [number, ...number[]] }),
+          )
+          groupTitleMap.set(groupId, group.name)
+          await retryTabOperation(() =>
+            chrome.tabGroups.update(groupId, {
+              title: hideTitles ? '' : group.name,
+              color: group.color,
+            }),
+          )
+        }
+        previewCacheMap.set(windowId, sortGroups(freeGroupsToGroupedTabs(freeGroups, tabs)))
+        cacheIsAIGroupedMap.set(windowId, true)
+        await updateNewTabsBadge(windowId)
+        return
+      } catch (err) {
+        if (controller.signal.aborted) {
+          console.log('[TabPilot] Grouping aborted by user')
+          return
+        }
+        console.error('[TabPilot] AI free grouping failed, falling back to rules:', err)
+        // Fall through to rule engine
       }
-      previewCacheMap.set(windowId, sortGroups(freeGroupsToGroupedTabs(freeGroups, tabs)))
-      cacheIsAIGroupedMap.set(windowId, true)
-      await updateNewTabsBadge(windowId)
-      return
-    } catch (err) {
-      console.error('[TabPilot] AI free grouping failed, falling back to rules:', err)
-      // Fall through to rule engine
+    }
+
+    if (controller.signal.aborted) return
+
+    const groups = classifyTabs(unpinnedTabs)
+    for (const [category, tabIds] of groups) {
+      if (controller.signal.aborted) return
+      if (tabIds.length === 0) continue
+
+      const def = GROUP_DEFINITIONS[category]
+      const title = getMessage(def.labelKey)
+      const shouldCollapse = category === 'other'
+      const groupId = await retryTabOperation(() =>
+        chrome.tabs.group({ tabIds: tabIds as [number, ...number[]] }),
+      )
+      groupTitleMap.set(groupId, title)
+
+      updatingGroups.add(groupId)
+      await retryTabOperation(() =>
+        chrome.tabGroups.update(groupId, {
+          title: hideTitles ? '' : title,
+          color: def.color,
+          collapsed: shouldCollapse,
+        }),
+      )
+      updatingGroups.delete(groupId)
+    }
+    previewCacheMap.set(windowId, sortGroups(ruleGroupsToGroupedTabs(groups, tabs)))
+    cacheIsAIGroupedMap.set(windowId, false)
+    await updateNewTabsBadge(windowId)
+  } finally {
+    if (activeAbortControllers.get(windowId) === controller) {
+      activeAbortControllers.delete(windowId)
     }
   }
-
-  const groups = classifyTabs(unpinnedTabs)
-  for (const [category, tabIds] of groups) {
-    if (tabIds.length === 0) continue
-
-    const def = GROUP_DEFINITIONS[category]
-    const title = getMessage(def.labelKey)
-    const shouldCollapse = category === 'other'
-    const groupId = await retryTabOperation(() =>
-      chrome.tabs.group({ tabIds: tabIds as [number, ...number[]] }),
-    )
-    groupTitleMap.set(groupId, title)
-
-    updatingGroups.add(groupId)
-    await retryTabOperation(() =>
-      chrome.tabGroups.update(groupId, {
-        title: hideTitles ? '' : title,
-        color: def.color,
-        collapsed: shouldCollapse,
-      }),
-    )
-    updatingGroups.delete(groupId)
-  }
-  previewCacheMap.set(windowId, sortGroups(ruleGroupsToGroupedTabs(groups, tabs)))
-  cacheIsAIGroupedMap.set(windowId, false)
-  await updateNewTabsBadge(windowId)
 }
 
 /**
@@ -519,85 +545,108 @@ export async function groupAllTabs(windowId: number): Promise<void> {
  * Uses AI to decide which group each tab belongs to, then moves them.
  */
 export async function classifyNewTabs(windowId: number): Promise<void> {
-  const settings = await getSettings()
-  if (!settings.ai.enabled || !settings.ai.apiKey) {
-    throw new Error('AI is not configured')
+  const existing = activeAbortControllers.get(windowId)
+  if (existing) {
+    existing.abort()
   }
 
-  const allTabs = await chrome.tabs.query({ windowId })
-  const allGroups = await chrome.tabGroups.query({ windowId })
+  const controller = new AbortController()
+  activeAbortControllers.set(windowId, controller)
 
-  // Find the "New Tabs" group
-  const newTabsGroup = allGroups.find(
-    (g) => g.title === UNGROUPED_AI_GROUP_NAME || groupTitleMap.get(g.id) === UNGROUPED_AI_GROUP_NAME,
-  )
-  if (!newTabsGroup) return
+  try {
+    const settings = await getSettings()
+    if (!settings.ai.enabled || !settings.ai.apiKey) {
+      throw new Error('AI is not configured')
+    }
 
-  const newTabs = allTabs.filter((t) => t.groupId === newTabsGroup.id && t.id !== undefined)
-  if (newTabs.length === 0) return
+    const allTabs = await chrome.tabs.query({ windowId })
+    const allGroups = await chrome.tabGroups.query({ windowId })
 
-  // Build existing group name → groupId mapping (exclude "New Tabs")
-  const groupNameToId = new Map<string, number>()
-  for (const g of allGroups) {
-    if (g.id === newTabsGroup.id) continue
-    const name = groupTitleMap.get(g.id) || g.title
-    if (name) groupNameToId.set(name, g.id)
-  }
+    // Find the "New Tabs" group
+    const newTabsGroup = allGroups.find(
+      (g) => g.title === UNGROUPED_AI_GROUP_NAME || groupTitleMap.get(g.id) === UNGROUPED_AI_GROUP_NAME,
+    )
+    if (!newTabsGroup) return
 
-  const existingGroupNames = [...groupNameToId.keys()]
-  if (existingGroupNames.length === 0) return
+    const newTabs = allTabs.filter((t) => t.groupId === newTabsGroup.id && t.id !== undefined)
+    if (newTabs.length === 0) return
 
-  const client = new AIClient(settings.ai)
-  const classifications = await client.classifyNewTabsIntoGroups(
-    newTabs.map((t) => ({ url: t.url || '', title: t.title || '' })),
-    existingGroupNames,
-  )
+    // Build existing group name → groupId mapping (exclude "New Tabs")
+    const groupNameToId = new Map<string, number>()
+    for (const g of allGroups) {
+      if (g.id === newTabsGroup.id) continue
+      const name = groupTitleMap.get(g.id) || g.title
+      if (name) groupNameToId.set(name, g.id)
+    }
 
-  const hideTitles = titlesHiddenMap.get(windowId) ?? false
+    const existingGroupNames = [...groupNameToId.keys()]
+    if (existingGroupNames.length === 0) return
 
-  for (const item of classifications) {
-    const tab = newTabs[item.index]
-    if (!tab?.id) continue
+    const client = new AIClient(settings.ai, controller.signal)
+    const classifications = await client.classifyNewTabsIntoGroups(
+      newTabs.map((t) => ({ url: t.url || '', title: t.title || '' })),
+      existingGroupNames,
+    )
 
-    if (item.group !== 'NEW' && groupNameToId.has(item.group)) {
-      const targetGroupId = groupNameToId.get(item.group)!
-      await retryTabOperation(() =>
-        chrome.tabs.group({ tabIds: [tab.id!], groupId: targetGroupId }),
-      )
-    } else {
-      const name = item.newGroupName || 'Other'
-      const color = (item.newGroupColor as ChromeTabGroupColor) || 'grey'
-      // Check if we already created this new group in this batch
-      if (groupNameToId.has(name)) {
-        const targetGroupId = groupNameToId.get(name)!
+    if (controller.signal.aborted) return
+
+    const hideTitles = titlesHiddenMap.get(windowId) ?? false
+
+    for (const item of classifications) {
+      if (controller.signal.aborted) return
+      const tab = newTabs[item.index]
+      if (!tab?.id) continue
+
+      if (item.group !== 'NEW' && groupNameToId.has(item.group)) {
+        const targetGroupId = groupNameToId.get(item.group)!
         await retryTabOperation(() =>
           chrome.tabs.group({ tabIds: [tab.id!], groupId: targetGroupId }),
         )
       } else {
-        const groupId = await retryTabOperation(() =>
-          chrome.tabs.group({ tabIds: [tab.id!] }),
-        )
-        groupTitleMap.set(groupId, name)
-        updatingGroups.add(groupId)
-        try {
+        const name = item.newGroupName || 'Other'
+        const color = (item.newGroupColor as ChromeTabGroupColor) || 'grey'
+        // Check if we already created this new group in this batch
+        if (groupNameToId.has(name)) {
+          const targetGroupId = groupNameToId.get(name)!
           await retryTabOperation(() =>
-            chrome.tabGroups.update(groupId, {
-              title: hideTitles ? '' : name,
-              color,
-            }),
+            chrome.tabs.group({ tabIds: [tab.id!], groupId: targetGroupId }),
           )
-        } finally {
-          updatingGroups.delete(groupId)
+        } else {
+          const groupId = await retryTabOperation(() =>
+            chrome.tabs.group({ tabIds: [tab.id!] }),
+          )
+          groupTitleMap.set(groupId, name)
+          updatingGroups.add(groupId)
+          try {
+            await retryTabOperation(() =>
+              chrome.tabGroups.update(groupId, {
+                title: hideTitles ? '' : name,
+                color,
+              }),
+            )
+          } finally {
+            updatingGroups.delete(groupId)
+          }
+          groupNameToId.set(name, groupId)
         }
-        groupNameToId.set(name, groupId)
       }
     }
-  }
 
-  // Rebuild preview cache and clear badge
-  invalidatePreviewCache(windowId)
-  await getGroupsPreview(windowId)
-  await updateNewTabsBadge(windowId)
+    // Rebuild preview cache and clear badge
+    invalidatePreviewCache(windowId)
+    await getGroupsPreview(windowId)
+    await updateNewTabsBadge(windowId)
+  } catch (err) {
+    if (controller.signal.aborted) {
+      console.log('[TabPilot] Classification aborted by user')
+      return
+    }
+    throw err
+  } finally {
+    if (activeAbortControllers.get(windowId) === controller) {
+      activeAbortControllers.delete(windowId)
+    }
+  }
 }
 
 /**
@@ -608,6 +657,17 @@ export async function closeGroupTabs(tabIds: number[]): Promise<void> {
   await chrome.tabs.remove(tabIds)
   for (const id of tabIds) {
     cacheRemoveTab(id)
+  }
+}
+
+/**
+ * Cancel any running AI-enhanced grouping or classification for this window.
+ */
+export function cancelActiveOperation(windowId: number): void {
+  const controller = activeAbortControllers.get(windowId)
+  if (controller) {
+    controller.abort()
+    activeAbortControllers.delete(windowId)
   }
 }
 
