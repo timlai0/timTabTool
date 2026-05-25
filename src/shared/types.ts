@@ -122,6 +122,7 @@ type MessageAction =
   | 'SPLIT_CURRENT_GROUP'
   | 'MERGE_GROUP'
   | 'MERGE_CURRENT_GROUP'
+  | 'GET_SEARCH_OVERLAY_METRICS'
 
 export interface ExtensionMessage {
   action: MessageAction

@@ -260,7 +260,7 @@ function estimateMergeCost() {
         <!-- Split Tooltip -->
         <div
           v-if="showSplitTooltip && aiSettings.enabled && aiSettings.apiKey"
-          class="absolute left-3.5 right-[94px] top-0 mt-1 block p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
+          class="absolute right-3.5 top-full mt-1 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
           style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);"
         >
           <div class="font-semibold mb-1" style="color: var(--accent);">
@@ -298,7 +298,7 @@ function estimateMergeCost() {
         <!-- Merge Tooltip -->
         <div
           v-if="showMergeTooltip && aiSettings.enabled && aiSettings.apiKey"
-          class="absolute left-3.5 right-[94px] top-0 mt-1 block p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
+          class="absolute right-3.5 top-full mt-1 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
           style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);"
         >
           <div class="font-semibold mb-1" style="color: var(--accent);">
@@ -401,7 +401,7 @@ function estimateMergeCost() {
         <!-- Split Tooltip -->
         <div
           v-if="showSplitTooltip && aiSettings.enabled && aiSettings.apiKey"
-          class="absolute left-3.5 right-[94px] top-0 mt-1 block p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
+          class="absolute right-3.5 top-full mt-1 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
           style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);"
         >
           <div class="font-semibold mb-1" style="color: var(--accent);">
@@ -439,7 +439,7 @@ function estimateMergeCost() {
         <!-- Merge Tooltip -->
         <div
           v-if="showMergeTooltip && aiSettings.enabled && aiSettings.apiKey"
-          class="absolute left-3.5 right-[94px] top-0 mt-1 block p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
+          class="absolute right-3.5 top-full mt-1 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
           style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);"
         >
           <div class="font-semibold mb-1" style="color: var(--accent);">

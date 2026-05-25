@@ -587,3 +587,174 @@
   background: rgba(255, 69, 58, 0.15);
   color: #FF453A;
 }
+
+/* ─── Premium Layout Wrapper & Details Panel ─── */
+
+.atm-layout-wrapper {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 16px;
+  max-width: 920px;
+  height: 100%;
+  margin: 0 auto;
+  position: relative;
+  pointer-events: none;
+}
+
+.atm-container,
+.atm-details-panel {
+  pointer-events: auto;
+}
+
+.atm-details-panel {
+  width: 320px;
+  background: #FFFFFF;
+  border-radius: 4px;
+  box-shadow: 0 24px 80px -16px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  margin-top: 50px;
+  padding: 16px;
+  color: #1D1D1F;
+  max-height: calc(100% - 100px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: atm-fade-in 0.20s ease;
+}
+
+@keyframes atm-fade-in {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.atm-details-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #007AFF;
+}
+
+.atm-details-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #86868B;
+  border-bottom: 0.5px solid rgba(0, 0, 0, 0.06);
+  padding-bottom: 8px;
+}
+
+.atm-details-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #86868B;
+  margin-top: 4px;
+}
+
+.atm-details-section-body {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #1D1D1F;
+  background: #F5F5F7;
+  padding: 8px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.atm-details-est {
+  border-top: 0.5px solid rgba(0, 0, 0, 0.06);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.atm-details-est-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #1D1D1F;
+}
+
+.atm-details-est-label {
+  color: #86868B;
+}
+
+@media (max-width: 940px) {
+  .atm-details-panel {
+    display: none !important;
+  }
+}
+
+/* Dark mode overrides */
+@media (prefers-color-scheme: dark) {
+  .atm-details-panel {
+    background: #1C1C1E;
+    color: #F5F5F7;
+    box-shadow: 0 24px 80px -16px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  }
+  .atm-details-title {
+    color: #0A84FF;
+  }
+  .atm-details-meta {
+    color: #98989D;
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+  }
+  .atm-details-section-title {
+    color: #98989D;
+  }
+  .atm-details-section-body {
+    background: #2C2C2E;
+    color: #F5F5F7;
+  }
+  .atm-details-est {
+    border-top-color: rgba(255, 255, 255, 0.08);
+  }
+  .atm-details-est-row {
+    color: #F5F5F7;
+  }
+  .atm-details-est-label {
+    color: #98989D;
+  }
+}
+
+:host([data-theme="dark"]) .atm-details-panel {
+  background: #1C1C1E;
+  color: #F5F5F7;
+  box-shadow: 0 24px 80px -16px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+}
+
+:host([data-theme="dark"]) .atm-details-title {
+  color: #0A84FF;
+}
+
+:host([data-theme="dark"]) .atm-details-meta {
+  color: #98989D;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+:host([data-theme="dark"]) .atm-details-section-title {
+  color: #98989D;
+}
+
+:host([data-theme="dark"]) .atm-details-section-body {
+  background: #2C2C2E;
+  color: #F5F5F7;
+}
+
+:host([data-theme="dark"]) .atm-details-est {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+:host([data-theme="dark"]) .atm-details-est-row {
+  color: #F5F5F7;
+}
+
+:host([data-theme="dark"]) .atm-details-est-label {
+  color: #98989D;
+}
+

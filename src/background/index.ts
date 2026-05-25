@@ -345,6 +345,41 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       return getActiveOperations()
     }
 
+    case 'GET_SEARCH_OVERLAY_METRICS': {
+      const windowId = await resolveWindowId(message.payload)
+      const tabs = await chrome.tabs.query({ windowId })
+      const unpinnedTabsCount = tabs.filter(t => !t.pinned).length
+      
+      // Get current active tab group ID and tabs count
+      const [activeTab] = await chrome.tabs.query({ active: true, windowId })
+      let currentGroupTabsCount = 0
+      if (activeTab?.groupId !== undefined && activeTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+        currentGroupTabsCount = tabs.filter(t => t.groupId === activeTab.groupId).length
+      }
+
+      // Get new tabs count (tabs in the "New Tabs" group)
+      const allGroups = await chrome.tabGroups.query({ windowId })
+      const newTabsGroup = allGroups.find(
+        (g) => g.title === 'New Tabs'
+      )
+      const newTabsCount = newTabsGroup ? tabs.filter(t => t.groupId === newTabsGroup.id).length : 0
+
+      // Get AI Settings
+      const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
+      const saved = (data[STORAGE_KEYS.SETTINGS] ?? {}) as Partial<ExtensionSettings>
+      const aiSettings = { 
+        ...DEFAULT_SETTINGS.ai, 
+        ...saved?.ai,
+      }
+
+      return {
+        unpinnedTabsCount,
+        currentGroupTabsCount,
+        newTabsCount,
+        aiSettings,
+      }
+    }
+
     case 'CLEAR_OPERATION_ERROR': {
       const windowId = (message.payload as { windowId: number })?.windowId
       if (windowId) {

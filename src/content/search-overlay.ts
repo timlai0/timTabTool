@@ -34,6 +34,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let lastMouseX = -1
   let lastMouseY = -1
   let justOpened = false
+  let overlayMetrics: {
+    unpinnedTabsCount: number
+    currentGroupTabsCount: number
+    newTabsCount: number
+    aiSettings: any
+  } | null = null
 
   const COMMANDS = [
     {
@@ -111,6 +117,236 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       }
     }
   }, { passive: true })
+
+  const MODEL_PRICING = {
+    'gemini-3.1-pro-preview': { input: 2.00, output: 12.00 },
+    'gemini-3.5-flash': { input: 1.50, output: 9.00 },
+    'gemini-2.5-flash': { input: 0.50, output: 3.00 },
+    'gemini-3.1-flash-lite': { input: 0.25, output: 1.50 },
+    'gemini-2.5-flash-lite': { input: 0.10, output: 0.40 },
+    'gemini-2.0-flash-lite': { input: 0.075, output: 0.30 },
+    'gemini-flash-lite-latest': { input: 0.075, output: 0.30 },
+    'gemma-4-31b-it': { input: 0, output: 0 },
+    'gemma-4-26b-a4b-it': { input: 0, output: 0 },
+    'gpt-4o': { input: 2.50, output: 10.00 },
+    'gpt-4o-mini': { input: 0.15, output: 0.60 },
+    'claude-3-opus-20240229': { input: 15.00, output: 75.00 },
+    'claude-3-5-sonnet-20240620': { input: 3.00, output: 15.00 },
+    'claude-3-haiku-20240307': { input: 0.25, output: 1.25 },
+  }
+
+  const PROVIDER_DEFAULTS = {
+    openai: { input: 0.15, output: 0.60 },
+    claude: { input: 3.00, output: 15.00 },
+    gemini: { input: 1.50, output: 9.00 },
+    custom: { input: 0.15, output: 0.60 },
+  }
+
+  function getActiveModel(aiSettings: any) {
+    if (aiSettings.model) return aiSettings.model
+    const defaults: Record<string, string> = {
+      openai: 'gpt-4o-mini',
+      claude: 'claude-sonnet-4-20250514',
+      gemini: 'gemini-3.5-flash',
+      custom: 'gpt-4o-mini',
+    }
+    return defaults[aiSettings.provider] || 'gpt-4o-mini'
+  }
+
+  function estimateAICost(aiSettings: any, tabs: number, type: 'group' | 'split' | 'merge' | 'classify') {
+    if (tabs === 0) {
+      return { tokens: 0, costStr: 'Free' }
+    }
+    
+    let promptLen = 1000
+    if (aiSettings.customPrompt) promptLen += aiSettings.customPrompt.length
+    
+    if (type === 'group') {
+      if (aiSettings.groupingPrompt) promptLen += aiSettings.groupingPrompt.length
+    } else if (type === 'split') {
+      if (aiSettings.splitPrompt) promptLen += aiSettings.splitPrompt.length
+    } else if (type === 'merge') {
+      if (aiSettings.mergePrompt) promptLen += aiSettings.mergePrompt.length
+    } else if (type === 'classify') {
+      if (aiSettings.classifyPrompt) promptLen += aiSettings.classifyPrompt.length
+    }
+
+    const promptTokens = Math.ceil(promptLen / 4)
+    const inputTokens = promptTokens + tabs * 20
+    const outputTokens = type === 'group' ? Math.max(100, tabs * 20) : type === 'split' ? 100 : 50
+    const totalTokens = inputTokens + outputTokens
+    
+    const provider = aiSettings.provider
+    const model = getActiveModel(aiSettings)
+    
+    let rates = (MODEL_PRICING as any)[model]
+    if (!rates) {
+      rates = (PROVIDER_DEFAULTS as any)[provider] || PROVIDER_DEFAULTS.openai
+    }
+    
+    const cost = (inputTokens * rates.input + outputTokens * rates.output) / 1000000
+    let costStr = ''
+    if (cost === 0) costStr = 'Free'
+    else if (cost < 0.0001) costStr = '< $0.0001'
+    else costStr = `~$${cost.toFixed(4)}`
+    
+    return { tokens: totalTokens, costStr }
+  }
+
+  async function loadMetrics() {
+    try {
+      const res = await chrome.runtime.sendMessage({
+        action: 'GET_SEARCH_OVERLAY_METRICS'
+      })
+      if (res && typeof res === 'object') {
+        overlayMetrics = res
+      }
+    } catch (err) {
+      console.error('[TabPilot] Failed to load overlay metrics:', err)
+    }
+  }
+
+  function renderDetailsPanel(result: SearchResultItem | undefined) {
+    if (!shadow) return
+    const detailsPanel = shadow.querySelector('.atm-details-panel') as HTMLDivElement
+    if (!detailsPanel) return
+
+    if (!result || !result.isCommand || !result.commandAction) {
+      detailsPanel.style.display = 'none'
+      return
+    }
+
+    const action = result.commandAction
+    const isLocal = ['UNGROUP_ALL', 'EXPAND_ALL_GROUPS', 'COLLAPSE_ALL_GROUPS', 'TOGGLE_GROUP_TITLES'].includes(action)
+    
+    if (isLocal) {
+      let desc = ''
+      if (action === 'UNGROUP_ALL') desc = 'Ungroup all tabs in this window instantly, leaving all tabs active in a single flat list.'
+      else if (action === 'EXPAND_ALL_GROUPS') desc = 'Expand all collapsed Chrome tab groups in this window.'
+      else if (action === 'COLLAPSE_ALL_GROUPS') desc = 'Collapse all active Chrome tab groups in this window to clear up space.'
+      else if (action === 'TOGGLE_GROUP_TITLES') desc = 'Toggle group title visibility. When hidden, groups collapse to tiny color-coded dots, saving maximum tab bar horizontal space.'
+
+      detailsPanel.innerHTML = `
+        <div class="atm-details-title">${result.tab.title}</div>
+        <div class="atm-details-meta">
+          <span>Mode: <span style="font-weight:600;color:var(--text-secondary,#86868B);">Local Heuristics</span></span>
+          <span style="opacity:0.4;">•</span>
+          <span>Privacy: <span style="font-weight:600;color:var(--text-secondary,#86868B);">100% Offline</span></span>
+        </div>
+        <div class="atm-details-section-title">Description</div>
+        <div class="atm-details-section-body">${desc}</div>
+        <div class="atm-details-est">
+          <div class="atm-details-est-row">
+            <span class="atm-details-est-label">Est. Requests:</span>
+            <span style="font-weight:600;">0 (No API calls)</span>
+          </div>
+          <div class="atm-details-est-row">
+            <span class="atm-details-est-label">Cost:</span>
+            <span style="font-weight:700;color:#34C759;">Free</span>
+          </div>
+        </div>
+      `
+      detailsPanel.style.display = 'flex'
+      return
+    }
+
+    if (!overlayMetrics || !overlayMetrics.aiSettings) {
+      detailsPanel.innerHTML = `
+        <div class="atm-details-title">${result.tab.title}</div>
+        <div class="atm-details-meta">
+          <span>Loading AI Configuration...</span>
+        </div>
+      `
+      detailsPanel.style.display = 'flex'
+      return
+    }
+
+    const aiSettings = overlayMetrics.aiSettings
+    
+    if (!aiSettings.enabled || !aiSettings.apiKey) {
+      detailsPanel.innerHTML = `
+        <div class="atm-details-title">${result.tab.title}</div>
+        <div class="atm-details-meta">
+          <span style="color:#FF3B30;font-weight:600;">AI not configured</span>
+        </div>
+        <div class="atm-details-section-title">Instructions</div>
+        <div class="atm-details-section-body">AI is currently disabled or missing an API Key. Please enable AI and configure your connection credentials in TabPilot Settings first.</div>
+      `
+      detailsPanel.style.display = 'flex'
+      return
+    }
+
+    const model = getActiveModel(aiSettings)
+    let systemPrompt = aiSettings.customPrompt?.trim() 
+      ? `You are a helpful assistant that classifies browser tabs into categories. Be concise.\n\nUser Instructions:\n${aiSettings.customPrompt.trim()}`
+      : 'You are a helpful assistant that classifies browser tabs into categories. Be concise.'
+      
+    let userPrompt = ''
+    let titleStr = ''
+    let tabCount = 0
+    let estRequests = 1
+
+    if (action === 'GROUP_TABS') {
+      titleStr = 'AI Grouping Preview'
+      userPrompt = aiSettings.groupingPrompt || 'Organize these browser tabs into semantic, highly-related groups.'
+      tabCount = overlayMetrics.unpinnedTabsCount
+      const batchSize = aiSettings.batchSize || 30
+      estRequests = Math.max(1, Math.ceil(tabCount / batchSize))
+    } else if (action === 'SPLIT_CURRENT_GROUP') {
+      titleStr = 'AI Split Group Preview'
+      userPrompt = aiSettings.splitPrompt || 'You are splitting an existing group of highly related tabs. Create more specific and granular sub-groups based on finer details and relationships.'
+      tabCount = overlayMetrics.currentGroupTabsCount
+      estRequests = 1
+    } else if (action === 'MERGE_CURRENT_GROUP') {
+      titleStr = 'AI Merge Group Preview'
+      userPrompt = aiSettings.mergePrompt || 'Analyze the browser tabs of this group and decide if they should be merged into one of the other existing tab groups. Choose the best fitting existing group from the list. If none of the existing groups are a good fit and this group should remain separate, respond with "KEEP". Be conservative about merging; only merge if the topics are highly related.'
+      tabCount = overlayMetrics.currentGroupTabsCount
+      estRequests = 1
+    } else if (action === 'CLASSIFY_NEW_TABS') {
+      titleStr = 'AI Classification Preview'
+      userPrompt = aiSettings.classifyPrompt || 'You are classifying new tabs. Decide if each new tab belongs to one of the existing groups or if a new group should be created. Be conservative about creating new groups.'
+      tabCount = overlayMetrics.newTabsCount
+      const batchSize = aiSettings.batchSize || 30
+      estRequests = Math.max(1, Math.ceil(tabCount / batchSize))
+    }
+
+    const est = estimateAICost(aiSettings, tabCount, action === 'GROUP_TABS' ? 'group' : action === 'SPLIT_CURRENT_GROUP' ? 'split' : action === 'MERGE_CURRENT_GROUP' ? 'merge' : 'classify')
+
+    detailsPanel.innerHTML = `
+      <div class="atm-details-title">${titleStr}</div>
+      <div class="atm-details-meta">
+        <span>Model: <span style="font-weight:600;color:var(--text-secondary,#86868B);">${model}</span></span>
+        <span style="opacity:0.4;">•</span>
+        <span>Privacy: <span style="font-weight:600;color:var(--text-secondary,#86868B);">AI Analysis</span></span>
+      </div>
+      
+      <div class="atm-details-section-title">System Prompt</div>
+      <div class="atm-details-section-body">${escapeHtml(systemPrompt)}</div>
+      
+      <div class="atm-details-section-title">User Prompt</div>
+      <div class="atm-details-section-body">${escapeHtml(userPrompt)}</div>
+      
+      <div class="atm-details-est">
+        <div class="atm-details-est-row">
+          <span class="atm-details-est-label">Tabs to Process:</span>
+          <span style="font-weight:600;">${tabCount} tabs</span>
+        </div>
+        <div class="atm-details-est-row">
+          <span class="atm-details-est-label">Est. Requests:</span>
+          <span style="font-weight:600;">${estRequests} request${estRequests > 1 ? 's' : ''}</span>
+        </div>
+        <div class="atm-details-est-row">
+          <span class="atm-details-est-label">Total Tokens:</span>
+          <span style="font-weight:600;">~${est.tokens} tokens</span>
+        </div>
+        <div class="atm-details-est-row" style="margin-top:2px;border-top:0.5px dashed rgba(0,0,0,0.06);padding-top:2px;">
+          <span class="atm-details-est-label" style="font-weight:600;">Est. Cost:</span>
+          <span style="font-weight:700;color:#007AFF;">${est.costStr}</span>
+        </div>
+      </div>
+    `
+    detailsPanel.style.display = 'flex'
+  }
 
   function init() {
     if (hostEl) return
@@ -205,7 +441,17 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     container.appendChild(resultsList)
     container.appendChild(footer)
 
-    backdrop.appendChild(container)
+    const wrapper = document.createElement('div')
+    wrapper.className = 'atm-layout-wrapper'
+    wrapper.addEventListener('click', (e) => e.stopPropagation())
+    wrapper.appendChild(container)
+
+    const detailsPanel = document.createElement('div')
+    detailsPanel.className = 'atm-details-panel'
+    detailsPanel.style.display = 'none'
+    wrapper.appendChild(detailsPanel)
+
+    backdrop.appendChild(wrapper)
     shadow.appendChild(backdrop)
 
     document.documentElement.appendChild(hostEl)
@@ -238,6 +484,18 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     justOpened = true
     lastMouseX = mouseX
     lastMouseY = mouseY
+
+    // Reset details panel state and load fresh metrics
+    const detailsPanel = shadow.querySelector('.atm-details-panel') as HTMLDivElement
+    if (detailsPanel) detailsPanel.style.display = 'none'
+    overlayMetrics = null
+    loadMetrics().then(() => {
+      if (visible && selectedIndex !== -1 && shadow) {
+        const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
+        if (resultsList) updateSelection(resultsList)
+      }
+    })
+
     const input = shadow.querySelector('.atm-input') as HTMLInputElement
     const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
     if (input && resultsList) {
@@ -442,6 +700,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (selectedIndex !== -1 && items[selectedIndex]) {
       items[selectedIndex].scrollIntoView({ block: 'nearest' })
     }
+    renderDetailsPanel(results[selectedIndex])
   }
 
   function handleKeydown(e: KeyboardEvent, _input: HTMLInputElement, resultsList: HTMLDivElement) {
