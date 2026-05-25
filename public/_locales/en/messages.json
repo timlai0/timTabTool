@@ -234,5 +234,13 @@
   "fallbackToSort": {
     "message": "When AI fails, sort with fallback",
     "description": "Toggle in settings to physically sort tabs by domain and title on AI grouping failure"
+  },
+  "showRuleGroupsWhenUngrouped": {
+    "message": "Show Local Grouping Preview",
+    "description": "Toggle in settings to show local offline rule groups when tabs are not grouped in Chrome"
+  },
+  "showRuleGroupsWhenUngroupedDesc": {
+    "message": "Show local offline categories in the list when tabs are not currently grouped in Chrome",
+    "description": "Description of the local grouping preview toggle"
   }
 }

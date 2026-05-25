@@ -41,6 +41,17 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     aiSettings: any
   } | null = null
 
+  let progressContainer: HTMLDivElement | null = null
+  let progressStatus: HTMLSpanElement | null = null
+  let progressPercent: HTMLSpanElement | null = null
+  let progressCloseBtn: HTMLButtonElement | null = null
+  let progressFill: HTMLDivElement | null = null
+  let progressDetail: HTMLDivElement | null = null
+  let isAIOperating = false
+  let isExternalAI = false
+  let aiProgressInterval: ReturnType<typeof setInterval> | null = null
+  let aiProgressTimeout: ReturnType<typeof setTimeout> | null = null
+
   const COMMANDS = [
     {
       key: '/group',
@@ -315,7 +326,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     detailsPanel.innerHTML = `
       <div class="atm-details-title">${titleStr}</div>
       <div class="atm-details-meta">
-        <span>Model: <span style="font-weight:600;color:var(--text-secondary,#86868B);">${model}</span></span>
+        <span>Model: <span class="atm-details-model-name">${model}</span></span>
         <span style="opacity:0.4;">•</span>
         <span>Privacy: <span style="font-weight:600;color:var(--text-secondary,#86868B);">AI Analysis</span></span>
       </div>
@@ -403,6 +414,65 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     inputWrap.appendChild(searchIcon)
     inputWrap.appendChild(input)
     inputWrap.appendChild(shortcut)
+
+    // ─── Premium Integrated Progress Bar DOM ───
+    progressContainer = document.createElement('div')
+    progressContainer.className = 'atm-progress-container'
+    progressContainer.style.display = 'none'
+
+    const progressHeader = document.createElement('div')
+    progressHeader.className = 'atm-progress-header'
+
+    progressStatus = document.createElement('span')
+    progressStatus.className = 'atm-progress-status'
+    progressStatus.textContent = 'Preparing AI Command...'
+
+    const progressHeaderRight = document.createElement('div')
+    progressHeaderRight.style.display = 'flex'
+    progressHeaderRight.style.alignItems = 'center'
+    progressHeaderRight.style.gap = '8px'
+
+    progressPercent = document.createElement('span')
+    progressPercent.className = 'atm-progress-percent'
+    progressPercent.textContent = '0%'
+
+    progressCloseBtn = document.createElement('button')
+    progressCloseBtn.className = 'atm-progress-close-btn'
+    progressCloseBtn.style.display = 'none'
+    progressCloseBtn.textContent = 'Dismiss'
+    progressCloseBtn.addEventListener('click', async () => {
+      if (isAIOperating) {
+        try {
+          await chrome.runtime.sendMessage({ action: 'CANCEL_OPERATION' })
+        } catch (err) {
+          console.error('[TabPilot] Failed to send CANCEL_OPERATION:', err)
+        }
+      }
+      resetAIProgressState()
+    })
+
+    progressHeaderRight.appendChild(progressPercent)
+    progressHeaderRight.appendChild(progressCloseBtn)
+
+    progressHeader.appendChild(progressStatus)
+    progressHeader.appendChild(progressHeaderRight)
+
+    const progressBarBg = document.createElement('div')
+    progressBarBg.className = 'atm-progress-bar-bg'
+
+    progressFill = document.createElement('div')
+    progressFill.className = 'atm-progress-bar-fill'
+    progressBarBg.appendChild(progressFill)
+
+    progressDetail = document.createElement('div')
+    progressDetail.className = 'atm-progress-detail'
+    progressDetail.textContent = 'Ready'
+
+    progressContainer.appendChild(progressHeader)
+    progressContainer.appendChild(progressBarBg)
+    progressContainer.appendChild(progressDetail)
+
+    inputWrap.appendChild(progressContainer)
 
     const resultsList = document.createElement('div')
     resultsList.className = 'atm-results'
@@ -500,11 +570,320 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
   }
 
+  function resetAIProgressState() {
+    isAIOperating = false
+    isExternalAI = false
+    if (aiProgressInterval) {
+      clearInterval(aiProgressInterval)
+      aiProgressInterval = null
+    }
+    if (aiProgressTimeout) {
+      clearTimeout(aiProgressTimeout)
+      aiProgressTimeout = null
+    }
+    
+    if (shadow) {
+      const searchIcon = shadow.querySelector('.atm-search-icon') as HTMLDivElement
+      const input = shadow.querySelector('.atm-input') as HTMLInputElement
+      const shortcut = shadow.querySelector('.atm-shortcut') as HTMLSpanElement
+      const backdrop = shadow.querySelector('.atm-backdrop') as HTMLDivElement
+      const container = shadow.querySelector('.atm-container') as HTMLDivElement
+      const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
+      const detailsPanel = shadow.querySelector('.atm-details-panel') as HTMLDivElement
+      const footer = shadow.querySelector('.atm-footer') as HTMLDivElement
+      const inputWrap = shadow.querySelector('.atm-input-wrap') as HTMLDivElement
+      
+      if (searchIcon) searchIcon.style.display = 'block'
+      if (input) {
+        input.style.display = 'block'
+        setTimeout(() => input.focus(), 0)
+      }
+      if (shortcut) shortcut.style.display = 'inline'
+
+      // Restore progress-only mode styling modifications
+      if (backdrop) {
+        backdrop.style.background = ''
+        backdrop.style.backdropFilter = ''
+        ;(backdrop.style as any).webkitBackdropFilter = ''
+        backdrop.style.pointerEvents = ''
+      }
+      if (container) {
+        container.style.position = ''
+        container.style.top = ''
+        container.style.left = ''
+        container.style.transform = ''
+        container.style.width = ''
+        container.style.height = ''
+        container.style.borderRadius = ''
+        container.style.boxShadow = ''
+        container.style.pointerEvents = ''
+        container.style.background = ''
+        container.style.backdropFilter = ''
+        ;(container.style as any).webkitBackdropFilter = ''
+      }
+      if (inputWrap) {
+        inputWrap.style.borderBottom = ''
+        inputWrap.style.padding = ''
+      }
+      if (resultsList) resultsList.style.display = ''
+      if (detailsPanel) detailsPanel.style.display = ''
+      if (footer) footer.style.display = ''
+    }
+
+    if (progressContainer) progressContainer.style.display = 'none'
+    if (progressStatus) {
+      progressStatus.style.color = '' // reset color
+      progressStatus.textContent = 'Preparing AI Command...'
+    }
+    if (progressPercent) progressPercent.textContent = '0%'
+    if (progressFill) {
+      progressFill.style.width = '0%'
+      progressFill.style.backgroundColor = '' // reset color
+    }
+    if (progressDetail) progressDetail.textContent = 'Ready'
+    if (progressCloseBtn) progressCloseBtn.style.display = 'none'
+  }
+
+  function switchToProgressOnlyMode() {
+    if (!shadow) return
+    const backdrop = shadow.querySelector('.atm-backdrop') as HTMLDivElement
+    const container = shadow.querySelector('.atm-container') as HTMLDivElement
+    const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
+    const detailsPanel = shadow.querySelector('.atm-details-panel') as HTMLDivElement
+    const footer = shadow.querySelector('.atm-footer') as HTMLDivElement
+    const inputWrap = shadow.querySelector('.atm-input-wrap') as HTMLDivElement
+    
+    if (backdrop && container && resultsList && detailsPanel && footer) {
+      // Do not dim background - make backdrop fully transparent and click-through
+      backdrop.style.background = 'transparent'
+      backdrop.style.backdropFilter = 'none'
+      ;(backdrop.style as any).webkitBackdropFilter = 'none'
+      backdrop.style.pointerEvents = 'none'
+      
+      // Floating smaller progress box at the top
+      container.style.position = 'fixed'
+      container.style.top = '20px'
+      container.style.left = '50%'
+      container.style.transform = 'translateX(-50%)'
+      container.style.width = '360px'
+      container.style.height = 'auto'
+      container.style.borderRadius = '0' // Same unrounded design!
+      
+      const isDark = hostEl?.getAttribute('data-theme') === 'dark'
+      if (isDark) {
+        container.style.background = 'rgba(28, 28, 30, 0.82)'
+        container.style.boxShadow = '0 12px 30px rgba(0,0,0,0.3), 0 0 0 0.5px rgba(255,255,255,0.08)'
+      } else {
+        container.style.background = 'rgba(255, 255, 255, 0.82)'
+        container.style.boxShadow = '0 12px 30px rgba(0,0,0,0.1), 0 0 0 0.5px rgba(0,0,0,0.06)'
+      }
+      container.style.backdropFilter = 'blur(16px) saturate(180%)'
+      ;(container.style as any).webkitBackdropFilter = 'blur(16px) saturate(180%)'
+      container.style.pointerEvents = 'auto'
+      
+      resultsList.style.display = 'none'
+      detailsPanel.style.display = 'none'
+      footer.style.display = 'none'
+      
+      if (inputWrap) {
+        inputWrap.style.borderBottom = 'none'
+        inputWrap.style.padding = '14px 16px'
+      }
+    }
+  }
+
+  async function runAICommand(result: SearchResultItem) {
+    if (!shadow || !result.commandAction) return
+    
+    isAIOperating = true
+    
+    // Hide input elements, show progress
+    const searchIcon = shadow.querySelector('.atm-search-icon') as HTMLDivElement
+    const input = shadow.querySelector('.atm-input') as HTMLInputElement
+    const shortcut = shadow.querySelector('.atm-shortcut') as HTMLSpanElement
+    
+    if (searchIcon) searchIcon.style.display = 'none'
+    if (input) input.style.display = 'none'
+    if (shortcut) shortcut.style.display = 'none'
+    if (progressContainer) progressContainer.style.display = 'flex'
+    
+    if (progressCloseBtn) {
+      progressCloseBtn.textContent = 'Cancel'
+      progressCloseBtn.style.color = '' // Reverts to CSS-defined red color
+      progressCloseBtn.style.display = 'block'
+    }
+    if (progressStatus) {
+      progressStatus.style.color = '' // reset to default blue
+      progressStatus.textContent = 'Executing AI Command...'
+    }
+    if (progressFill) {
+      progressFill.style.width = '0%'
+      progressFill.style.backgroundColor = '' // reset to default blue
+    }
+    if (progressPercent) progressPercent.textContent = '0%'
+    if (progressDetail) progressDetail.textContent = 'Initializing...'
+
+    // Set up step messages based on action
+    let phases: { percent: number; text: string }[] = []
+    const action = result.commandAction
+    if (action === 'GROUP_TABS') {
+      phases = [
+        { percent: 10, text: 'Packaging tab data for analysis...' },
+        { percent: 25, text: 'Connecting to AI model (gemini-3.5-flash)...' },
+        { percent: 45, text: 'Analyzing page titles and semantic categories...' },
+        { percent: 65, text: 'Generating intelligent group structure...' },
+        { percent: 85, text: 'Preparing Chrome tab groupings...' },
+        { percent: 95, text: 'Applying smart groups to your window...' }
+      ]
+    } else if (action === 'SPLIT_CURRENT_GROUP') {
+      phases = [
+        { percent: 15, text: 'Gathering tabs in the current group...' },
+        { percent: 35, text: 'Analyzing sub-topics and finer details...' },
+        { percent: 60, text: 'Structuring granular sub-groups...' },
+        { percent: 85, text: 'Splitting group and applying changes...' },
+        { percent: 95, text: 'Updating window layout...' }
+      ]
+    } else if (action === 'MERGE_CURRENT_GROUP') {
+      phases = [
+        { percent: 15, text: 'Gathering current group tabs...' },
+        { percent: 35, text: 'Analyzing alternative existing groups...' },
+        { percent: 60, text: 'Finding best semantic match...' },
+        { percent: 80, text: 'Merging group tabs into target...' },
+        { percent: 95, text: 'Updating tab layout...' }
+      ]
+    } else if (action === 'CLASSIFY_NEW_TABS') {
+      phases = [
+        { percent: 15, text: 'Identifying ungrouped new tabs...' },
+        { percent: 40, text: 'Comparing tabs with existing group topics...' },
+        { percent: 70, text: 'Classifying tabs into appropriate groups...' },
+        { percent: 90, text: 'Applying group classifications...' },
+        { percent: 95, text: 'Refreshing window grouping...' }
+      ]
+    } else {
+      phases = [
+        { percent: 20, text: 'Processing...' },
+        { percent: 50, text: 'Executing...' },
+        { percent: 90, text: 'Completing...' }
+      ]
+    }
+
+    let currentPercent = 0
+    let phaseIndex = 0
+
+    if (aiProgressInterval) clearInterval(aiProgressInterval)
+    aiProgressInterval = setInterval(() => {
+      if (!isAIOperating) return
+      
+      // Determine what phase we are in
+      const currentPhase = phases[phaseIndex]
+      if (currentPhase) {
+        if (currentPercent < currentPhase.percent) {
+          currentPercent += Math.floor(Math.random() * 3) + 1
+          if (currentPercent > currentPhase.percent) {
+            currentPercent = currentPhase.percent
+          }
+        } else {
+          // Advance to next phase
+          phaseIndex++
+        }
+      } else {
+        // We reached 95%, slowly creep up to 98%
+        if (currentPercent < 98) {
+          if (Math.random() > 0.7) {
+            currentPercent += 1
+          }
+        }
+      }
+
+      if (progressPercent) progressPercent.textContent = `${currentPercent}%`
+      if (progressFill) progressFill.style.width = `${currentPercent}%`
+      
+      // Show appropriate detail text
+      const activePhase = phases.find(p => currentPercent <= p.percent) || phases[phases.length - 1]
+      if (activePhase && progressDetail) {
+        progressDetail.textContent = activePhase.text
+      }
+    }, 150)
+
+    if (isExternalAI) {
+      // Triggered externally (e.g. from GUI popup). The background is already executing.
+      // We run the local simulated progress, and wait for complete/failed broadcasts!
+      return
+    }
+
+    try {
+      const res = await chrome.runtime.sendMessage({
+        action: result.commandAction
+      })
+
+      if (aiProgressInterval) {
+        clearInterval(aiProgressInterval)
+        aiProgressInterval = null
+      }
+
+      if (res && res.error) {
+        throw new Error(res.error)
+      }
+
+      // Success!
+      isAIOperating = false
+      if (progressPercent) progressPercent.textContent = '100%'
+      if (progressFill) {
+        progressFill.style.width = '100%'
+        progressFill.style.backgroundColor = '#34C759' // Glow green
+      }
+      if (progressStatus) {
+        progressStatus.textContent = 'Success!'
+        progressStatus.style.color = '#34C759'
+      }
+      if (progressDetail) {
+        progressDetail.textContent = 'Operation completed successfully.'
+      }
+
+      // Automatically close the overlay after 1.5 seconds
+      if (aiProgressTimeout) clearTimeout(aiProgressTimeout)
+      aiProgressTimeout = setTimeout(() => {
+        hide()
+      }, 1500)
+
+    } catch (err: any) {
+      isAIOperating = false
+      if (aiProgressInterval) {
+        clearInterval(aiProgressInterval)
+        aiProgressInterval = null
+      }
+
+      // Error handling
+      if (progressFill) {
+        progressFill.style.backgroundColor = '#FF3B30' // Red
+      }
+      if (progressStatus) {
+        progressStatus.textContent = 'AI Operation Failed'
+        progressStatus.style.color = '#FF3B30'
+      }
+      if (progressDetail) {
+        progressDetail.textContent = err.message || 'An unknown error occurred.'
+      }
+      if (progressCloseBtn) {
+        progressCloseBtn.textContent = 'Dismiss'
+        progressCloseBtn.style.color = '#FF3B30'
+        progressCloseBtn.style.display = 'block'
+      }
+    }
+  }
+
   function hide() {
     if (!hostEl) return
+    
+    if (isAIOperating) {
+      switchToProgressOnlyMode()
+      return
+    }
+
     visible = false
     hostEl.style.display = 'none'
     clearTimeout(debounceTimer)
+    resetAIProgressState()
   }
 
   function toggle() {
@@ -707,6 +1086,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       return
     }
 
+    if (isAIOperating) {
+      return
+    }
+
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       if (results.length > 0) {
@@ -768,6 +1151,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
   function activateResult(result: SearchResultItem) {
     if (result.isCommand && result.commandAction) {
+      const aiActions = ['GROUP_TABS', 'SPLIT_CURRENT_GROUP', 'MERGE_CURRENT_GROUP', 'CLASSIFY_NEW_TABS']
+      if (aiActions.includes(result.commandAction)) {
+        runAICommand(result)
+        return
+      }
+
       chrome.runtime.sendMessage({
         action: result.commandAction
       })
@@ -829,6 +1218,90 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.action === 'TOGGLE_SEARCH_OVERLAY') {
       toggle()
+    } else if (message?.action === 'START_AI_PROGRESS') {
+      if (isAIOperating) return
+      const commandAction = message.payload?.commandAction
+      if (commandAction) {
+        const titleMap: Record<string, string> = {
+          'GROUP_TABS': 'Group Tabs',
+          'SPLIT_CURRENT_GROUP': 'Split Current Group',
+          'MERGE_CURRENT_GROUP': 'Merge Group',
+          'CLASSIFY_NEW_TABS': 'Classify New Tabs'
+        }
+        const actionTitle = titleMap[commandAction] || 'AI Command'
+        
+        init()
+        if (hostEl && shadow) {
+          visible = true
+          hostEl.style.display = 'block'
+          syncThemeAttribute()
+          switchToProgressOnlyMode()
+          
+          isExternalAI = true
+          runAICommand({
+            tab: { title: actionTitle, url: 'Executing from GUI...' },
+            score: 0,
+            isOpen: false,
+            isCommand: true,
+            commandAction: commandAction
+          })
+        }
+      }
+    } else if (message?.action === 'AI_OPERATION_COMPLETE') {
+      if (isAIOperating && isExternalAI) {
+        if (aiProgressInterval) {
+          clearInterval(aiProgressInterval)
+          aiProgressInterval = null
+        }
+        isAIOperating = false
+        isExternalAI = false
+        
+        if (progressPercent) progressPercent.textContent = '100%'
+        if (progressFill) {
+          progressFill.style.width = '100%'
+          progressFill.style.backgroundColor = '#34C759'
+        }
+        if (progressStatus) {
+          progressStatus.textContent = 'Success!'
+          progressStatus.style.color = '#34C759'
+        }
+        if (progressDetail) {
+          progressDetail.textContent = 'Operation completed successfully.'
+        }
+        if (progressCloseBtn) {
+          progressCloseBtn.style.display = 'none'
+        }
+
+        if (aiProgressTimeout) clearTimeout(aiProgressTimeout)
+        aiProgressTimeout = setTimeout(() => {
+          hide()
+        }, 1500)
+      }
+    } else if (message?.action === 'AI_OPERATION_FAILED') {
+      if (isAIOperating && isExternalAI) {
+        if (aiProgressInterval) {
+          clearInterval(aiProgressInterval)
+          aiProgressInterval = null
+        }
+        isAIOperating = false
+        isExternalAI = false
+
+        if (progressFill) {
+          progressFill.style.backgroundColor = '#FF3B30'
+        }
+        if (progressStatus) {
+          progressStatus.textContent = 'AI Operation Failed'
+          progressStatus.style.color = '#FF3B30'
+        }
+        if (progressDetail) {
+          progressDetail.textContent = message.payload?.error || 'An unknown error occurred.'
+        }
+        if (progressCloseBtn) {
+          progressCloseBtn.textContent = 'Dismiss'
+          progressCloseBtn.style.color = '#FF3B30'
+          progressCloseBtn.style.display = 'block'
+        }
+      }
     }
   })
 }

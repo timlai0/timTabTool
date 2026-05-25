@@ -70,6 +70,7 @@ export interface AIConfig {
   splitPrompt?: string
   classifyPrompt?: string
   mergePrompt?: string
+  maxRetries?: number
 }
 
 export type GroupIndicatorStyle = 'header' | 'bar'
@@ -86,6 +87,7 @@ export interface ExtensionSettings {
   theme: ThemeMode
   windowWidth: number
   windowHeight: number
+  showRuleGroupsWhenUngrouped: boolean
 }
 
 export interface WindowGroupsInfo {

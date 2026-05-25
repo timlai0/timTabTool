@@ -285,7 +285,7 @@ export async function autoGroupNewTab(tab: chrome.tabs.Tab): Promise<void> {
     )
   } else {
     const groupId = await retryTabOperation(() =>
-      chrome.tabs.group({ tabIds: [tab.id!] }),
+      chrome.tabs.group({ tabIds: [tab.id!], createProperties: { windowId } }),
     )
     groupTitleMap.set(groupId, UNGROUPED_AI_GROUP_NAME)
     updatingGroups.add(groupId)
@@ -332,7 +332,20 @@ async function rebuildCache(windowId: number): Promise<void> {
     previewCacheMap.set(windowId, sortGroups(fromChrome))
     cacheIsAIGroupedMap.set(windowId, fromChrome.some((g) => !!g.groupName))
   } else {
-    previewCacheMap.set(windowId, sortGroups(ruleGroupsToGroupedTabs(classifyTabs(tabs), tabs)))
+    const settings = await getSettings()
+    if (settings.showRuleGroupsWhenUngrouped === false) {
+      const tabInfos = tabs
+        .map((t) => chromeTabToTabInfo(t))
+        .filter((t): t is TabInfo => t !== null)
+      previewCacheMap.set(windowId, [
+        {
+          category: 'other' as GroupCategory,
+          tabs: tabInfos,
+        }
+      ])
+    } else {
+      previewCacheMap.set(windowId, sortGroups(ruleGroupsToGroupedTabs(classifyTabs(tabs), tabs)))
+    }
     cacheIsAIGroupedMap.set(windowId, false)
   }
 }
@@ -467,7 +480,19 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
         ]
       } else {
         console.error('[TabPilot] AI free grouping failed in preview, falling back to rule engine. Error:', err)
-        result = ruleGroupsToGroupedTabs(classifyTabs(tabs), tabs)
+        if (settings.showRuleGroupsWhenUngrouped === false) {
+          const tabInfos = tabs
+            .map((t) => chromeTabToTabInfo(t))
+            .filter((t): t is TabInfo => t !== null)
+          result = [
+            {
+              category: 'other' as GroupCategory,
+              tabs: tabInfos,
+            }
+          ]
+        } else {
+          result = ruleGroupsToGroupedTabs(classifyTabs(tabs), tabs)
+        }
       }
       cacheIsAIGroupedMap.set(windowId, false)
     }
@@ -477,7 +502,19 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
       result = fromChrome
       cacheIsAIGroupedMap.set(windowId, fromChrome.some((g) => !!g.groupName))
     } else {
-      result = ruleGroupsToGroupedTabs(classifyTabs(tabs), tabs)
+      if (settings.showRuleGroupsWhenUngrouped === false) {
+        const tabInfos = tabs
+          .map((t) => chromeTabToTabInfo(t))
+          .filter((t): t is TabInfo => t !== null)
+        result = [
+          {
+            category: 'other' as GroupCategory,
+            tabs: tabInfos,
+          }
+        ]
+      } else {
+        result = ruleGroupsToGroupedTabs(classifyTabs(tabs), tabs)
+      }
       cacheIsAIGroupedMap.set(windowId, false)
     }
   }
@@ -522,7 +559,10 @@ export async function groupAllTabs(windowId: number): Promise<void> {
           if (controller.signal.aborted) return
           if (group.tabIds.length === 0) continue
           const groupId = await retryTabOperation(() =>
-            chrome.tabs.group({ tabIds: group.tabIds as [number, ...number[]] }),
+            chrome.tabs.group({
+              tabIds: group.tabIds as [number, ...number[]],
+              createProperties: { windowId },
+            }),
           )
           groupTitleMap.set(groupId, group.name)
           await retryTabOperation(() =>
@@ -590,7 +630,10 @@ export async function groupAllTabs(windowId: number): Promise<void> {
       const title = getMessage(def.labelKey)
       const shouldCollapse = category === 'other'
       const groupId = await retryTabOperation(() =>
-        chrome.tabs.group({ tabIds: tabIds as [number, ...number[]] }),
+        chrome.tabs.group({
+          tabIds: tabIds as [number, ...number[]],
+          createProperties: { windowId },
+        }),
       )
       groupTitleMap.set(groupId, title)
 
@@ -693,7 +736,10 @@ export async function classifyNewTabs(windowId: number): Promise<void> {
           )
         } else {
           const groupId = await retryTabOperation(() =>
-            chrome.tabs.group({ tabIds: [tab.id!] }),
+            chrome.tabs.group({
+              tabIds: [tab.id!],
+              createProperties: { windowId },
+            }),
           )
           groupTitleMap.set(groupId, name)
           updatingGroups.add(groupId)
@@ -746,16 +792,25 @@ export async function closeGroupTabs(tabIds: number[]): Promise<void> {
  * Split a single tab group into more specific sub-groups using AI.
  */
 export async function splitGroup(groupId: number): Promise<void> {
-  const group = await chrome.tabGroups.get(groupId)
-  const windowId = group.windowId
+  let windowId: number
+  try {
+    const group = await chrome.tabGroups.get(groupId)
+    windowId = group.windowId
+  } catch (err) {
+    const currentWin = await chrome.windows.getCurrent()
+    windowId = currentWin.id || chrome.windows.WINDOW_ID_NONE
+  }
 
   const controller = new AbortController()
   activeAbortControllers.set(windowId, controller)
   activeOperationsMap.set(windowId, { type: 'group', error: null })
 
   try {
+    const group = await chrome.tabGroups.get(groupId)
     const tabs = await chrome.tabs.query({ groupId })
-    if (tabs.length === 0) return
+    if (tabs.length === 0) {
+      throw new Error('No active tabs found in target group to split.')
+    }
 
     const settings = await getSettings()
     if (!settings.ai.enabled || !settings.ai.apiKey) {
@@ -791,7 +846,10 @@ export async function splitGroup(groupId: number): Promise<void> {
       if (realTabIds.length === 0) continue
 
       const newGroupId = await retryTabOperation(() =>
-        chrome.tabs.group({ tabIds: realTabIds as [number, ...number[]] })
+        chrome.tabs.group({
+          tabIds: realTabIds as [number, ...number[]],
+          createProperties: { windowId },
+        })
       )
 
       groupTitleMap.set(newGroupId, subGroup.name)
@@ -820,16 +878,25 @@ export async function splitGroup(groupId: number): Promise<void> {
  * Merge a single tab group into another existing tab group using AI.
  */
 export async function mergeGroup(groupId: number): Promise<void> {
-  const group = await chrome.tabGroups.get(groupId)
-  const windowId = group.windowId
+  let windowId: number
+  try {
+    const group = await chrome.tabGroups.get(groupId)
+    windowId = group.windowId
+  } catch (err) {
+    const currentWin = await chrome.windows.getCurrent()
+    windowId = currentWin.id || chrome.windows.WINDOW_ID_NONE
+  }
 
   const controller = new AbortController()
   activeAbortControllers.set(windowId, controller)
   activeOperationsMap.set(windowId, { type: 'group', error: null })
 
   try {
+    const group = await chrome.tabGroups.get(groupId)
     const tabs = await chrome.tabs.query({ groupId })
-    if (tabs.length === 0) return
+    if (tabs.length === 0) {
+      throw new Error('No active tabs found in target group to merge.')
+    }
 
     const settings = await getSettings()
     if (!settings.ai.enabled || !settings.ai.apiKey) {

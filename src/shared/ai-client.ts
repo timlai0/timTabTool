@@ -25,6 +25,13 @@ export class AIClient {
   private config: AIConfig
   private signal?: AbortSignal
 
+  // Safety safeguards to prevent runaway token billing and mass API loops
+  private static globalRequestTimestamps: number[] = []
+  private instanceRequestCount = 0
+
+  static readonly MAX_REQUESTS_PER_RUN = 15
+  static readonly MAX_REQUESTS_PER_MINUTE = 30
+
   constructor(config: AIConfig, signal?: AbortSignal) {
     this.config = config
     this.signal = signal
@@ -155,7 +162,7 @@ Only output the JSON array, no other text.`
     
     let existingGroupsPrompt = ''
     if (existingGroupNames.length > 0) {
-      const coherenceInstruction = this.config.coherencePrompt?.trim() || 'You should prioritize placing tabs into these existing groups if they fit, rather than creating new, redundant groups.'
+      const coherenceInstruction = this.config.coherencePrompt?.trim() || 'You should try to place tabs into these existing groups if they are a strong semantic fit. However, if the existing groups are a poor fit or if the previous grouping structure seems bad, feel free to create a new group. Do not force tabs into mismatched groups.'
       existingGroupsPrompt = `\n\nExisting groups created in previous batches: ${existingGroupNames.map(name => `"${name}"`).join(', ')}.\n${coherenceInstruction}`
     }
 
@@ -380,6 +387,93 @@ Only output the JSON object.`
     return tabs.map((_, i) => ({ index: i, group: 'NEW', newGroupName: 'Uncategorized', newGroupColor: 'grey' }))
   }
 
+  private async executeWithRetry<T>(fn: () => Promise<T>): Promise<T> {
+    const maxRetries = this.config.maxRetries !== undefined ? this.config.maxRetries : 2
+    const isTest = typeof (globalThis as any).process !== 'undefined' && (globalThis as any).process?.env?.NODE_ENV === 'test'
+    let delay = isTest ? 1 : 1000
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // Enforce rate limiting and operation safeguards before calling the API
+        this.checkRequestSafeguards()
+        AIClient.recordGlobalRequest()
+        this.instanceRequestCount++
+
+        return await fn()
+      } catch (err) {
+        const errorMsg = (err as Error).message || String(err)
+
+        // Don't retry if aborted by user or blocked by safety safeguards
+        if (errorMsg.includes('AI safety safeguard')) {
+          throw err
+        }
+
+        if (this.signal?.aborted || errorMsg.includes('aborted') || errorMsg.includes('AbortError')) {
+          throw err
+        }
+
+        // Permanent API failures should not retry (e.g. prohibited content, 400 Bad Request, 401 Unauthorized, 403 Forbidden)
+        const isPermanent = 
+          errorMsg.includes('PROHIBITED_CONTENT') || 
+          errorMsg.includes('Prohibited Use policy') || 
+          errorMsg.includes('promptFeedback') ||
+          errorMsg.includes('API error 400') ||
+          errorMsg.includes('API error 401') ||
+          errorMsg.includes('API error 403')
+
+        if (isPermanent || attempt === maxRetries) {
+          throw err
+        }
+
+        console.warn(`[TabPilot] AI API call failed: ${errorMsg}. Retrying in ${delay}ms... (Attempt ${attempt + 1}/${maxRetries})`)
+
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            if (this.signal?.aborted) {
+              reject(new Error('aborted'))
+            } else {
+              resolve()
+            }
+          }, delay)
+
+          if (this.signal) {
+            this.signal.addEventListener('abort', () => {
+              clearTimeout(timeout)
+              reject(new Error('aborted'))
+            })
+          }
+        })
+
+        delay *= 2
+      }
+    }
+    throw new Error('executeWithRetry: unreachable')
+  }
+
+  /**
+   * Enforces safety budget limitations on AI API requests to prevent run-away billing.
+   */
+  private checkRequestSafeguards(): void {
+    // 1. Instance limit check (per operation run)
+    if (this.instanceRequestCount >= AIClient.MAX_REQUESTS_PER_RUN) {
+      throw new Error(`[TabPilot] AI safety safeguard: Single operation exceeded the safety limit of ${AIClient.MAX_REQUESTS_PER_RUN} requests to prevent run-away token billing. Please close some tabs or group in smaller batches.`)
+    }
+
+    // 2. Rolling window minute limit check (global extension throttle)
+    const now = Date.now()
+    AIClient.globalRequestTimestamps = AIClient.globalRequestTimestamps.filter(
+      (t) => now - t < 60000
+    )
+
+    if (AIClient.globalRequestTimestamps.length >= AIClient.MAX_REQUESTS_PER_MINUTE) {
+      throw new Error(`[TabPilot] AI safety safeguard: Global rate limit exceeded (${AIClient.MAX_REQUESTS_PER_MINUTE} requests/min) to prevent run-away mass token consumption. Please wait a moment before trying again.`)
+    }
+  }
+
+  private static recordGlobalRequest(): void {
+    AIClient.globalRequestTimestamps.push(Date.now())
+  }
+
   /**
    * Generate embeddings for semantic search (OpenAI only).
    */
@@ -387,20 +481,25 @@ Only output the JSON object.`
     if (this.config.provider !== 'openai') return null
 
     try {
-      const response = await fetch(`${this.getBaseUrl()}/embeddings`, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify({
-          model: 'text-embedding-3-small',
-          input: texts,
-        }),
-        signal: this.signal,
+      return await this.executeWithRetry(async () => {
+        const response = await fetch(`${this.getBaseUrl()}/embeddings`, {
+          method: 'POST',
+          headers: this.getHeaders(),
+          body: JSON.stringify({
+            model: 'text-embedding-3-small',
+            input: texts,
+          }),
+          signal: this.signal,
+        })
+
+        if (!response.ok) {
+          const err = await response.text()
+          throw new Error(`API error ${response.status}: ${err}`)
+        }
+
+        const data = await response.json()
+        return data.data.map((d: { embedding: number[] }) => d.embedding)
       })
-
-      if (!response.ok) return null
-
-      const data = await response.json()
-      return data.data.map((d: { embedding: number[] }) => d.embedding)
     } catch (err) {
       console.error('[TabPilot] Failed to get embeddings:', err)
       return null
@@ -411,18 +510,20 @@ Only output the JSON object.`
    * Send a chat completion request.
    */
   private async chat(userMessage: string, jsonMode?: boolean): Promise<string> {
-    const { provider } = this.config
+    return this.executeWithRetry(async () => {
+      const { provider } = this.config
 
-    if (provider === 'claude') {
-      return this.chatClaude(userMessage, jsonMode)
-    }
+      if (provider === 'claude') {
+        return this.chatClaude(userMessage, jsonMode)
+      }
 
-    if (provider === 'gemini') {
-      return this.chatGemini(userMessage, jsonMode)
-    }
+      if (provider === 'gemini') {
+        return this.chatGemini(userMessage, jsonMode)
+      }
 
-    // OpenAI / Custom (OpenAI-compatible)
-    return this.chatOpenAI(userMessage, jsonMode)
+      // OpenAI / Custom (OpenAI-compatible)
+      return this.chatOpenAI(userMessage, jsonMode)
+    })
   }
 
   private get defaultModel(): string {

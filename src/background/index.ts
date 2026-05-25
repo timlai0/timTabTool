@@ -89,6 +89,83 @@ chrome.commands.onCommand.addListener(async (command) => {
   }
 })
 
+async function ensureContentScriptLoaded(tabId: number): Promise<void> {
+  let isLoaded = false
+  try {
+    const [checkResult] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => !!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__,
+    })
+    isLoaded = !!checkResult?.result
+  } catch {
+    // scripting.executeScript failed — tab may not support it
+  }
+
+  // Inject content script if not loaded
+  if (!isLoaded) {
+    const manifest = chrome.runtime.getManifest()
+    const contentScriptFiles = manifest.content_scripts?.[0]?.js || []
+    if (contentScriptFiles.length > 0) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: contentScriptFiles,
+      })
+    }
+  }
+}
+
+async function broadcastAIStart(windowId: number, action: string) {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, windowId })
+    const activeTab = tabs[0]
+    if (activeTab?.id && activeTab.url) {
+      if (activeTab.url.startsWith('chrome://') || activeTab.url.startsWith('chrome-extension://') || activeTab.url.startsWith('about:')) return
+      
+      await ensureContentScriptLoaded(activeTab.id)
+      await chrome.tabs.sendMessage(activeTab.id, {
+        action: 'START_AI_PROGRESS',
+        payload: { commandAction: action }
+      })
+    }
+  } catch (err) {
+    console.error('[TabPilot] Failed to broadcast AI start:', err)
+  }
+}
+
+async function broadcastAIComplete(windowId: number, action: string) {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, windowId })
+    const activeTab = tabs[0]
+    if (activeTab?.id && activeTab.url) {
+      if (activeTab.url.startsWith('chrome://') || activeTab.url.startsWith('chrome-extension://') || activeTab.url.startsWith('about:')) return
+      
+      await chrome.tabs.sendMessage(activeTab.id, {
+        action: 'AI_OPERATION_COMPLETE',
+        payload: { commandAction: action }
+      })
+    }
+  } catch (err) {
+    console.error('[TabPilot] Failed to broadcast AI complete:', err)
+  }
+}
+
+async function broadcastAIFailed(windowId: number, action: string, errorMsg: string) {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, windowId })
+    const activeTab = tabs[0]
+    if (activeTab?.id && activeTab.url) {
+      if (activeTab.url.startsWith('chrome://') || activeTab.url.startsWith('chrome-extension://') || activeTab.url.startsWith('about:')) return
+      
+      await chrome.tabs.sendMessage(activeTab.id, {
+        action: 'AI_OPERATION_FAILED',
+        payload: { commandAction: action, error: errorMsg }
+      })
+    }
+  } catch (err) {
+    console.error('[TabPilot] Failed to broadcast AI failed:', err)
+  }
+}
+
 async function toggleSearchOverlay() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -97,30 +174,7 @@ async function toggleSearchOverlay() {
     if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('about:')) return
 
     const tabId = tab.id
-
-    // Check if content script is already loaded
-    let isLoaded = false
-    try {
-      const [checkResult] = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => !!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__,
-      })
-      isLoaded = !!checkResult?.result
-    } catch {
-      // scripting.executeScript failed — tab may not support it
-    }
-
-    // Inject content script if not loaded
-    if (!isLoaded) {
-      const manifest = chrome.runtime.getManifest()
-      const contentScriptFiles = manifest.content_scripts?.[0]?.js || []
-      if (contentScriptFiles.length > 0) {
-        await chrome.scripting.executeScript({
-          target: { tabId },
-          files: contentScriptFiles,
-        })
-      }
-    }
+    await ensureContentScriptLoaded(tabId)
 
     // Toggle the overlay via executeScript
     await chrome.scripting.executeScript({
@@ -158,7 +212,14 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
   switch (message.action) {
     case 'GROUP_TABS': {
       const windowId = await resolveWindowId(message.payload)
-      await groupAllTabs(windowId)
+      await broadcastAIStart(windowId, 'GROUP_TABS')
+      try {
+        await groupAllTabs(windowId)
+        await broadcastAIComplete(windowId, 'GROUP_TABS')
+      } catch (err: any) {
+        await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
+        throw err
+      }
       return { ok: true }
     }
 
@@ -178,14 +239,30 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'SPLIT_GROUP': {
       const groupId = (message.payload as { groupId: number })?.groupId
       if (!groupId) throw new Error('Missing groupId')
-      await splitGroup(groupId)
+      const group = await chrome.tabGroups.get(groupId)
+      await broadcastAIStart(group.windowId, 'SPLIT_CURRENT_GROUP')
+      try {
+        await splitGroup(groupId)
+        await broadcastAIComplete(group.windowId, 'SPLIT_CURRENT_GROUP')
+      } catch (err: any) {
+        await broadcastAIFailed(group.windowId, 'SPLIT_CURRENT_GROUP', err.message || String(err))
+        throw err
+      }
       return { ok: true }
     }
 
     case 'MERGE_GROUP': {
       const groupId = (message.payload as { groupId: number })?.groupId
       if (!groupId) throw new Error('Missing groupId')
-      await mergeGroup(groupId)
+      const group = await chrome.tabGroups.get(groupId)
+      await broadcastAIStart(group.windowId, 'MERGE_CURRENT_GROUP')
+      try {
+        await mergeGroup(groupId)
+        await broadcastAIComplete(group.windowId, 'MERGE_CURRENT_GROUP')
+      } catch (err: any) {
+        await broadcastAIFailed(group.windowId, 'MERGE_CURRENT_GROUP', err.message || String(err))
+        throw err
+      }
       return { ok: true }
     }
 
@@ -193,7 +270,14 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       const windowId = await resolveWindowId(message.payload)
       const [activeTab] = await chrome.tabs.query({ active: true, windowId })
       if (activeTab?.groupId !== undefined && activeTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
-        await splitGroup(activeTab.groupId)
+        await broadcastAIStart(windowId, 'SPLIT_CURRENT_GROUP')
+        try {
+          await splitGroup(activeTab.groupId)
+          await broadcastAIComplete(windowId, 'SPLIT_CURRENT_GROUP')
+        } catch (err: any) {
+          await broadcastAIFailed(windowId, 'SPLIT_CURRENT_GROUP', err.message || String(err))
+          throw err
+        }
       } else {
         throw new Error('Active tab is not in a group')
       }
@@ -204,7 +288,14 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       const windowId = await resolveWindowId(message.payload)
       const [activeTab] = await chrome.tabs.query({ active: true, windowId })
       if (activeTab?.groupId !== undefined && activeTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
-        await mergeGroup(activeTab.groupId)
+        await broadcastAIStart(windowId, 'MERGE_CURRENT_GROUP')
+        try {
+          await mergeGroup(activeTab.groupId)
+          await broadcastAIComplete(windowId, 'MERGE_CURRENT_GROUP')
+        } catch (err: any) {
+          await broadcastAIFailed(windowId, 'MERGE_CURRENT_GROUP', err.message || String(err))
+          throw err
+        }
       } else {
         throw new Error('Active tab is not in a group')
       }
@@ -213,7 +304,14 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
 
     case 'CLASSIFY_NEW_TABS': {
       const windowId = await resolveWindowId(message.payload)
-      await classifyNewTabs(windowId)
+      await broadcastAIStart(windowId, 'CLASSIFY_NEW_TABS')
+      try {
+        await classifyNewTabs(windowId)
+        await broadcastAIComplete(windowId, 'CLASSIFY_NEW_TABS')
+      } catch (err: any) {
+        await broadcastAIFailed(windowId, 'CLASSIFY_NEW_TABS', err.message || String(err))
+        throw err
+      }
       return { ok: true }
     }
 

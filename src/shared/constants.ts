@@ -36,10 +36,11 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     groupingPrompt: DEFAULT_GROUPING_PROMPT,
     fallbackToSort: false,
     maxTokens: 16384,
-    coherencePrompt: 'You should prioritize placing tabs into these existing groups if they fit, rather than creating new, redundant groups.',
+    coherencePrompt: 'You should try to place tabs into these existing groups if they are a strong semantic fit. However, if the existing groups are a poor fit or if the previous grouping structure seems bad, feel free to create a new group. Do not force tabs into mismatched groups.',
     splitPrompt: DEFAULT_SPLIT_PROMPT,
     classifyPrompt: DEFAULT_CLASSIFY_PROMPT,
     mergePrompt: DEFAULT_MERGE_PROMPT,
+    maxRetries: 2,
   },
   language: 'auto',
   groupOnStartup: false,
@@ -49,6 +50,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   theme: 'system',
   windowWidth: 360,
   windowHeight: 600,
+  showRuleGroupsWhenUngrouped: true,
 }
 
 export const STORAGE_KEYS = {

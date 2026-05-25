@@ -596,7 +596,7 @@
   border-top: 0.5px solid rgba(0, 0, 0, 0.06);
   padding: 14px 16px;
   color: #1D1D1F;
-  max-height: 220px;
+  max-height: 550px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -614,10 +614,21 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10px;
+  font-size: 10.5px;
   color: #86868B;
   border-bottom: 0.5px solid rgba(0, 0, 0, 0.06);
   padding-bottom: 6px;
+}
+
+.atm-details-model-name {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: #007AFF;
+  background: rgba(0, 122, 255, 0.08);
+  padding: 1px 6px;
+  border-radius: 4px;
+  display: inline-block;
+  margin-left: 2px;
 }
 
 .atm-details-section-title {
@@ -675,6 +686,10 @@
     color: #98989D;
     border-bottom-color: rgba(255, 255, 255, 0.08);
   }
+  .atm-details-model-name {
+    color: #0A84FF;
+    background: rgba(10, 132, 255, 0.15);
+  }
   .atm-details-section-title {
     color: #98989D;
   }
@@ -709,6 +724,11 @@
   border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
+:host([data-theme="dark"]) .atm-details-model-name {
+  color: #0A84FF;
+  background: rgba(10, 132, 255, 0.15);
+}
+
 :host([data-theme="dark"]) .atm-details-section-title {
   color: #98989D;
 }
@@ -729,5 +749,122 @@
 
 :host([data-theme="dark"]) .atm-details-est-label {
   color: #98989D;
+}
+
+/* ─── Premium Integrated Progress Bar ─── */
+
+.atm-progress-container {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+}
+
+.atm-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.atm-progress-status {
+  font-size: 13px;
+  font-weight: 600;
+  color: #007AFF;
+}
+
+.atm-progress-percent {
+  font-size: 11px;
+  font-weight: 500;
+  color: #86868B;
+}
+
+.atm-progress-close-btn {
+  font-size: 10px;
+  color: #FF3B30;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font-weight: 500;
+}
+
+.atm-progress-close-btn:hover {
+  opacity: 0.8;
+}
+
+.atm-progress-bar-bg {
+  width: 100%;
+  height: 6px;
+  background: #E5E5EA;
+  border-radius: 0;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.atm-progress-bar-fill {
+  width: 0%;
+  height: 100%;
+  background: #007AFF;
+  border-radius: 0;
+  transition: width 0.2s ease, background-color 0.2s ease;
+}
+
+.atm-progress-detail {
+  font-size: 11.5px;
+  color: #86868B;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.4;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+/* Dark mode overrides for progress container */
+@media (prefers-color-scheme: dark) {
+  .atm-progress-bar-bg {
+    background: #3A3A3C;
+  }
+  .atm-progress-status {
+    color: #0A84FF;
+  }
+  .atm-progress-bar-fill {
+    background: #0A84FF;
+  }
+  .atm-progress-percent {
+    color: #98989D;
+  }
+  .atm-progress-detail {
+    color: #98989D;
+  }
+  .atm-progress-close-btn {
+    color: #FF453A;
+  }
+}
+
+:host([data-theme="dark"]) .atm-progress-bar-bg {
+  background: #3A3A3C;
+}
+
+:host([data-theme="dark"]) .atm-progress-status {
+  color: #0A84FF;
+}
+
+:host([data-theme="dark"]) .atm-progress-bar-fill {
+  background: #0A84FF;
+}
+
+:host([data-theme="dark"]) .atm-progress-percent {
+  color: #98989D;
+}
+
+:host([data-theme="dark"]) .atm-progress-detail {
+  color: #98989D;
+}
+
+:host([data-theme="dark"]) .atm-progress-close-btn {
+  color: #FF453A;
 }
 

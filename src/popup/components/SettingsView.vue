@@ -22,6 +22,28 @@ const searchShortcut = ref('Ctrl+Shift+F')
 const advancedPromptsExpanded = ref(false)
 const connectionSettingsExpanded = ref(false)
 
+const copyText = ref('Copy Config')
+const pasteText = ref('Paste Config')
+const backupError = ref('')
+
+const vAutoresize = {
+  mounted: (el: HTMLTextAreaElement) => {
+    const resize = () => {
+      el.style.height = 'auto'
+      el.style.height = el.scrollHeight + 'px'
+    }
+    el.addEventListener('input', resize)
+    setTimeout(resize, 0)
+  },
+  updated: (el: HTMLTextAreaElement) => {
+    const resize = () => {
+      el.style.height = 'auto'
+      el.style.height = el.scrollHeight + 'px'
+    }
+    setTimeout(resize, 0)
+  }
+}
+
 const DEFAULT_ENDPOINTS: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
   claude: 'https://api.anthropic.com',
@@ -212,22 +234,84 @@ async function testConnection() {
     testing.value = false
   }
 }
+
+async function copyConfig() {
+  backupError.value = ''
+  try {
+    const rawConfig = toRaw(settings.value)
+    const jsonStr = JSON.stringify(rawConfig, null, 2)
+    await navigator.clipboard.writeText(jsonStr)
+    copyText.value = 'Config Copied!'
+    setTimeout(() => {
+      copyText.value = 'Copy Config'
+    }, 1500)
+  } catch (err: any) {
+    backupError.value = 'Failed to copy: ' + err.message
+  }
+}
+
+async function pasteConfig() {
+  backupError.value = ''
+  try {
+    const text = await navigator.clipboard.readText()
+    if (!text) {
+      throw new Error('Clipboard is empty')
+    }
+    const parsed = JSON.parse(text)
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new Error('Invalid configuration JSON')
+    }
+    
+    settings.value = {
+      ...DEFAULT_SETTINGS,
+      ...parsed,
+      ai: {
+        ...DEFAULT_SETTINGS.ai,
+        ...(parsed.ai || {})
+      }
+    }
+    
+    pasteText.value = 'Config Pasted!'
+    setTimeout(() => {
+      pasteText.value = 'Paste Config'
+    }, 1500)
+  } catch (err: any) {
+    backupError.value = 'Failed to paste: ' + err.message
+  }
+}
 </script>
 
 <template>
   <div :style="{ width: Math.max(360, settings.windowWidth) + 'px', height: Math.max(240, Math.min(600, settings.windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->
-    <header class="flex items-center gap-2.5 px-4 py-3" style="box-shadow: 0 0.5px 0 var(--border);">
+    <header class="flex items-center justify-between px-4 py-2.5" style="box-shadow: 0 0.5px 0 var(--border);">
+      <div class="flex items-center gap-2.5">
+        <button
+          @click="saveAndGoBack"
+          class="w-7 h-7 -ml-1 flex items-center justify-center rounded-sm"
+          style="color: var(--accent);"
+        >
+          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clip-rule="evenodd" />
+          </svg>
+        </button>
+        <h1 class="text-[15px] font-semibold tracking-tight" style="color: var(--text-primary);">{{ getMessage('settings') }}</h1>
+      </div>
+
+      <!-- Save settings header button -->
       <button
-        @click="saveAndGoBack"
-        class="w-7 h-7 -ml-1 flex items-center justify-center rounded-sm"
-        style="color: var(--accent);"
+        @click="saveSettings"
+        class="px-2.5 py-1 text-xs font-semibold rounded-sm transition-all flex items-center gap-1.5 focus:outline-none"
+        style="background: var(--accent); color: #fff;"
       >
-        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-          <path fill-rule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clip-rule="evenodd" />
-        </svg>
+        <span v-if="saved" class="inline-flex items-center gap-1">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clip-rule="evenodd" />
+          </svg>
+          {{ getMessage('saved') }}
+        </span>
+        <span v-else>{{ getMessage('save') }}</span>
       </button>
-      <h1 class="text-[15px] font-semibold tracking-tight" style="color: var(--text-primary);">{{ getMessage('settings') }}</h1>
     </header>
 
     <!-- Scrollable content -->
@@ -236,6 +320,9 @@ async function testConnection() {
       <!-- AI Configuration -->
       <div>
         <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5 flex items-center gap-1.5" style="color: var(--text-secondary);">
+          <svg class="w-3.5 h-3.5 opacity-80" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M5 2a1 1 0 011-1h1a1 1 0 011 1v1h1a1 1 0 110 2H8v1a1 1 0 11-2 0V6H5a1 1 0 01-1-1V3a1 1 0 011-1zm12 7a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0v-1h-1a1 1 0 110-2h1v-1a1 1 0 011-1zM11 5a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0V9H9a1 1 0 110-2h1V6a1 1 0 011-1zM4 11a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1z" clip-rule="evenodd" />
+          </svg>
           {{ getMessage('aiConfig') }}
           <span class="text-[9px] font-normal normal-case tracking-normal px-1.5 py-0.5 rounded-sm" style="background: var(--hover); color: var(--text-tertiary);">{{ getMessage('optional') }}</span>
         </h2>
@@ -308,11 +395,16 @@ async function testConnection() {
               class="w-full flex items-center justify-between px-3.5 py-3 cursor-pointer text-left setting-row focus:outline-none transition-all duration-200"
               style="background: var(--bg-primary);"
             >
-              <div class="flex flex-col">
-                <span class="text-xs font-semibold" style="color: var(--text-primary);">AI Provider & Connection Settings</span>
-                <span class="text-[10px] mt-0.5" style="color: var(--text-tertiary);">
-                  Configure API keys, model provider, endpoints, batch sizes, and max tokens
-                </span>
+              <div class="flex items-start gap-2.5">
+                <svg class="w-4 h-4 mt-0.5" style="color: var(--accent);" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM4.332 8.027a6.022 6.022 0 011.912-2.706C6.512 5.73 6.974 6 7.5 6A1.5 1.5 0 019 7.5V9a1 1 0 001 1h4a1 1 0 001-1v-.01a5.976 5.976 0 011.603 3.652A6.002 6.002 0 014.332 8.027zM9 14.93A5.99 5.99 0 0110 4c.326 0 .647.026.96.076a5.986 5.986 0 01-1.93 5.378A1 1 0 008.5 10v1.5a1.5 1.5 0 01-1.5 1.5H5.828A5.967 5.967 0 019 14.93z" clip-rule="evenodd" />
+                </svg>
+                <div class="flex flex-col">
+                  <span class="text-xs font-semibold" style="color: var(--text-primary);">AI Provider & Connection Settings</span>
+                  <span class="text-[10px] mt-0.5" style="color: var(--text-tertiary);">
+                    Configure API keys, model provider, endpoints, batch sizes, and max tokens
+                  </span>
+                </div>
               </div>
               <svg
                 class="w-4 h-4 transition-transform duration-200 transform"
@@ -400,6 +492,23 @@ async function testConnection() {
                 />
               </div>
 
+              <!-- Max Retries -->
+              <div class="px-3 py-2 setting-row">
+                <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
+                  Max API Retries
+                  <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                </label>
+                <input
+                  type="number"
+                  v-model.number="settings.ai.maxRetries"
+                  placeholder="2"
+                  min="0"
+                  max="10"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                />
+              </div>
+
               <!-- Test connection -->
               <div class="flex items-center gap-2.5 px-3.5 py-2.5 setting-row">
                 <button
@@ -422,11 +531,16 @@ async function testConnection() {
               class="w-full flex items-center justify-between px-3.5 py-3 cursor-pointer text-left setting-row focus:outline-none transition-all duration-200"
               style="background: var(--bg-primary);"
             >
-              <div class="flex flex-col">
-                <span class="text-xs font-semibold" style="color: var(--text-primary);">Advanced Prompt Instructions</span>
-                <span class="text-[10px] mt-0.5" style="color: var(--text-tertiary);">
-                  Configure tab grouping rules, coherence guidelines, and system prompts
-                </span>
+              <div class="flex items-start gap-2.5">
+                <svg class="w-4 h-4 mt-0.5" style="color: var(--accent);" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                </svg>
+                <div class="flex flex-col">
+                  <span class="text-xs font-semibold" style="color: var(--text-primary);">Advanced Prompt Instructions</span>
+                  <span class="text-[10px] mt-0.5" style="color: var(--text-tertiary);">
+                    Configure tab grouping rules, coherence guidelines, and system prompts
+                  </span>
+                </div>
               </div>
               <svg
                 class="w-4 h-4 transition-transform duration-200 transform"
@@ -476,8 +590,9 @@ async function testConnection() {
                 </div>
                 <textarea
                   v-model="settings.ai.groupingPrompt"
+                  v-autoresize
                   :placeholder="'Default:\n' + DEFAULT_GROUPING_PROMPT"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[220px] resize-y"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
                   style="background: var(--bg-secondary); color: var(--text-primary);"
                 ></textarea>
               </div>
@@ -513,8 +628,9 @@ async function testConnection() {
                 </div>
                 <textarea
                   v-model="settings.ai.coherencePrompt"
+                  v-autoresize
                   placeholder="Instructions on how to reuse existing groups..."
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[60px] resize-y"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
                   style="background: var(--bg-secondary); color: var(--text-primary);"
                 ></textarea>
               </div>
@@ -547,8 +663,9 @@ async function testConnection() {
                 </div>
                 <textarea
                   v-model="settings.ai.splitPrompt"
+                  v-autoresize
                   :placeholder="'Default:\n' + DEFAULT_SPLIT_PROMPT"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
                   style="background: var(--bg-secondary); color: var(--text-primary);"
                 ></textarea>
               </div>
@@ -581,8 +698,9 @@ async function testConnection() {
                 </div>
                 <textarea
                   v-model="settings.ai.classifyPrompt"
+                  v-autoresize
                   :placeholder="'Default:\n' + DEFAULT_CLASSIFY_PROMPT"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
                   style="background: var(--bg-secondary); color: var(--text-primary);"
                 ></textarea>
               </div>
@@ -615,8 +733,9 @@ async function testConnection() {
                 </div>
                 <textarea
                   v-model="settings.ai.mergePrompt"
+                  v-autoresize
                   :placeholder="'Default:\n' + DEFAULT_MERGE_PROMPT"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
                   style="background: var(--bg-secondary); color: var(--text-primary);"
                 ></textarea>
               </div>
@@ -656,8 +775,9 @@ async function testConnection() {
                 </div>
                 <textarea
                   v-model="settings.ai.customPrompt"
+                  v-autoresize
                   placeholder="E.g., Never use emojis. Always categorize by project."
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
                   style="background: var(--bg-secondary); color: var(--text-primary);"
                 ></textarea>
               </div>
@@ -674,7 +794,10 @@ async function testConnection() {
 
       <!-- Keyboard Shortcut -->
       <div>
-        <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5" style="color: var(--text-secondary);">
+        <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5 flex items-center gap-1.5" style="color: var(--text-secondary);">
+          <svg class="w-3.5 h-3.5 opacity-80" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M3 5a2 2 0 00-2 2v6a2 2 0 002 2h14a2 2 0 002-2V7a2 2 0 00-2-2H3zm0 2h14v6H3V7zm2 2a1 1 0 011-1h2a1 1 0 110 2H6a1 1 0 01-1-1zm6-1a1 1 0 100 2h2a1 1 0 100-2h-2zm-6 4a1 1 0 100 2h8a1 1 0 100-2H5z" clip-rule="evenodd" />
+          </svg>
           {{ getMessage('shortcutTitle') }}
         </h2>
         <div class="rounded-sm overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
@@ -696,7 +819,10 @@ async function testConnection() {
 
       <!-- Display Settings -->
       <div>
-        <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5" style="color: var(--text-secondary);">
+        <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5 flex items-center gap-1.5" style="color: var(--text-secondary);">
+          <svg class="w-3.5 h-3.5 opacity-80" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M4 2a2 2 0 00-2 2v11a3 3 0 106 0V4a2 2 0 00-2-2H4zm1 14a1 1 0 100-2 1 1 0 000 2zm5-1.757l4.9-4.9a2 2 0 000-2.828L13.485 5.1a2 2 0 00-2.828 0L9.757 8.1 10 14.243z" clip-rule="evenodd" />
+          </svg>
           {{ getMessage('displaySettings') }}
         </h2>
         <div class="rounded-sm overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
@@ -813,24 +939,67 @@ async function testConnection() {
               <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
             </div>
           </label>
+
+          <!-- Divider -->
+          <div class="mx-3.5" style="height: 0.5px; background: var(--border);" />
+
+          <!-- Offline grouping preview toggle -->
+          <label class="flex items-start gap-3 px-3 py-2 cursor-pointer">
+            <div class="flex-1">
+              <span class="text-xs block" style="color: var(--text-primary);">{{ getMessage('showRuleGroupsWhenUngrouped') }}</span>
+              <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
+                {{ getMessage('showRuleGroupsWhenUngroupedDesc') }}
+              </p>
+            </div>
+            <div class="relative mt-0.5">
+              <input
+                type="checkbox"
+                v-model="settings.showRuleGroupsWhenUngrouped"
+                class="sr-only peer"
+              />
+              <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+              <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+            </div>
+          </label>
         </div>
       </div>
 
-      <!-- Save button -->
-      <div class="pb-1">
-        <button
-          @click="saveSettings"
-          class="w-full py-2.5 text-[13px] font-semibold rounded-sm transition-all"
-          style="background: var(--accent); color: #fff;"
-        >
-          <span v-if="saved" class="inline-flex items-center gap-1.5">
-            <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clip-rule="evenodd" />
-            </svg>
-            {{ getMessage('saved') }}
-          </span>
-          <span v-else>{{ getMessage('save') }}</span>
-        </button>
+      <!-- Backup & Import -->
+      <div>
+        <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5 flex items-center gap-1.5" style="color: var(--text-secondary);">
+          <svg class="w-3.5 h-3.5 opacity-80" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M3 5a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm2 1h10v2H5V6zm0 4h10v4H5v-4z" clip-rule="evenodd" />
+          </svg>
+          Backup & Import
+        </h2>
+        <div class="rounded-sm overflow-hidden p-3 space-y-2" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
+          <div class="flex gap-2">
+            <button
+              @click="copyConfig"
+              class="flex-1 py-1.5 text-xs font-medium rounded-sm transition-all text-center flex items-center justify-center gap-1.5 focus:outline-none"
+              style="background: var(--bg-secondary); color: var(--text-primary); border: 0.5px solid var(--border);"
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
+                <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h8a2 2 0 00-2-2H5z" />
+              </svg>
+              {{ copyText }}
+            </button>
+            <button
+              @click="pasteConfig"
+              class="flex-1 py-1.5 text-xs font-medium rounded-sm transition-all text-center flex items-center justify-center gap-1.5 focus:outline-none"
+              style="background: var(--bg-secondary); color: var(--text-primary); border: 0.5px solid var(--border);"
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+              </svg>
+              {{ pasteText }}
+            </button>
+          </div>
+          <p v-if="backupError" class="text-[10px] text-center" style="color: var(--group-red);">
+            {{ backupError }}
+          </p>
+        </div>
       </div>
     </div>
   </div>

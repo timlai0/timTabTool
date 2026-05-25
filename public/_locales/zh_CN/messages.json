@@ -234,5 +234,13 @@
   "fallbackToSort": {
     "message": "AI 失败时使用排序备选",
     "description": "Toggle in settings to physically sort tabs by domain and title on AI grouping failure"
+  },
+  "showRuleGroupsWhenUngrouped": {
+    "message": "显示本地分组预览",
+    "description": "Toggle in settings to show local offline rule groups when tabs are not grouped in Chrome"
+  },
+  "showRuleGroupsWhenUngroupedDesc": {
+    "message": "当标签页在 Chrome 中未分组时，在列表中显示本地离线分类",
+    "description": "Description of the local grouping preview toggle"
   }
 }
