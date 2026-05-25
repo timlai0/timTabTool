@@ -41,7 +41,7 @@ const emit = defineEmits<{
       :collapse-trigger="collapseTrigger"
       @close-group="emit('close-group')"
       @split-group="emit('split-group')"
-      @error="(msg) => emit('error', msg)"
+      @error="(msg: string) => emit('error', msg)"
     />
   </div>
 </template>

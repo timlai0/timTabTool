@@ -69,6 +69,7 @@ export interface AIConfig {
   coherencePrompt?: string
   splitPrompt?: string
   classifyPrompt?: string
+  mergePrompt?: string
 }
 
 export type GroupIndicatorStyle = 'header' | 'bar'
@@ -119,6 +120,7 @@ type MessageAction =
   | 'CLEAR_OPERATION_ERROR'
   | 'SPLIT_GROUP'
   | 'SPLIT_CURRENT_GROUP'
+  | 'MERGE_GROUP'
 
 export interface ExtensionMessage {
   action: MessageAction

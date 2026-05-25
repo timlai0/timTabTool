@@ -817,6 +817,78 @@ export async function splitGroup(groupId: number): Promise<void> {
 }
 
 /**
+ * Merge a single tab group into another existing tab group using AI.
+ */
+export async function mergeGroup(groupId: number): Promise<void> {
+  const group = await chrome.tabGroups.get(groupId)
+  const windowId = group.windowId
+
+  const controller = new AbortController()
+  activeAbortControllers.set(windowId, controller)
+  activeOperationsMap.set(windowId, { type: 'group', error: null })
+
+  try {
+    const tabs = await chrome.tabs.query({ groupId })
+    if (tabs.length === 0) return
+
+    const settings = await getSettings()
+    if (!settings.ai.enabled || !settings.ai.apiKey) {
+      throw new Error('AI is not configured. Please enable and configure AI in Settings first.')
+    }
+
+    // Query other groups in this window
+    const allGroups = await chrome.tabGroups.query({ windowId })
+    const otherGroups = allGroups.filter((g) => g.id !== groupId)
+
+    if (otherGroups.length === 0) {
+      throw new Error('No other groups in this window to merge into.')
+    }
+
+    // Map group name -> other group ID
+    const groupNameToId = new Map<string, number>()
+    for (const g of otherGroups) {
+      const name = groupTitleMap.get(g.id) || g.title
+      if (name) groupNameToId.set(name, g.id)
+    }
+
+    const otherGroupNames = [...groupNameToId.keys()]
+    if (otherGroupNames.length === 0) {
+      throw new Error('No other named groups in this window to merge into.')
+    }
+
+    // Query AI for merging
+    const tabInputs = tabs.map((t) => ({ url: t.url || '', title: t.title || '' }))
+    const client = new AIClient(settings.ai, controller.signal)
+    
+    const mergeTarget = await client.decideMergeGroup(tabInputs, otherGroupNames)
+
+    if (controller.signal.aborted) return
+
+    if (mergeTarget !== 'KEEP' && groupNameToId.has(mergeTarget)) {
+      const targetGroupId = groupNameToId.get(mergeTarget)!
+      const tabIds = tabs.map((t) => t.id).filter((id): id is number => id !== undefined)
+      
+      await retryTabOperation(() =>
+        chrome.tabs.group({ tabIds: tabIds as [number, ...number[]], groupId: targetGroupId })
+      )
+    }
+
+    // Rebuild cache
+    invalidatePreviewCache(windowId)
+    await getGroupsPreview(windowId)
+    activeOperationsMap.delete(windowId)
+  } catch (err) {
+    console.error('[TabPilot] mergeGroup failed:', err)
+    activeOperationsMap.set(windowId, { type: 'group', error: (err as Error).message })
+    throw err
+  } finally {
+    if (activeAbortControllers.get(windowId) === controller) {
+      activeAbortControllers.delete(windowId)
+    }
+  }
+}
+
+/**
  * Cancel any running AI-enhanced grouping or classification for this window.
  */
 export function cancelActiveOperation(windowId: number): void {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, toRaw } from 'vue'
 import { getMessage } from '../../shared/i18n'
-import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT } from '../../shared/constants'
+import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT } from '../../shared/constants'
 import { getAutoBatchSize } from '../../shared/utils'
 import type { ExtensionSettings } from '../../shared/types'
 import { AIClient } from '../../shared/ai-client'
@@ -146,6 +146,9 @@ onMounted(async () => {
   if (!settings.value.ai.classifyPrompt) {
     settings.value.ai.classifyPrompt = DEFAULT_SETTINGS.ai.classifyPrompt
   }
+  if (!settings.value.ai.mergePrompt) {
+    settings.value.ai.mergePrompt = DEFAULT_SETTINGS.ai.mergePrompt
+  }
   if (!settings.value.ai.apiKey) {
     connectionSettingsExpanded.value = true
   }
@@ -166,6 +169,10 @@ function resetSplitPrompt() {
 
 function resetClassifyPrompt() {
   settings.value.ai.classifyPrompt = DEFAULT_CLASSIFY_PROMPT
+}
+
+function resetMergePrompt() {
+  settings.value.ai.mergePrompt = DEFAULT_MERGE_PROMPT
 }
 
 function resetSystemPrompt() {
@@ -575,6 +582,40 @@ async function testConnection() {
                 <textarea
                   v-model="settings.ai.classifyPrompt"
                   :placeholder="'Default:\n' + DEFAULT_CLASSIFY_PROMPT"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                ></textarea>
+              </div>
+
+              <!-- Merge Group Prompt -->
+              <div class="px-3 py-2 setting-row">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="flex items-center gap-1.5">
+                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                      Merge Group Prompt
+                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                    </label>
+                    <div class="relative group/help">
+                      <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                        <div class="font-bold mb-1" style="color: var(--accent);">Merge Group Prompt</div>
+                        Defines instructions for choosing an existing group to merge this tab group into.
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    v-if="settings.ai.mergePrompt !== DEFAULT_MERGE_PROMPT"
+                    @click="resetMergePrompt"
+                    class="text-[9px] hover:underline"
+                    style="color: var(--accent);"
+                    title="Restore default instructions"
+                  >
+                    Reset to Default
+                  </button>
+                </div>
+                <textarea
+                  v-model="settings.ai.mergePrompt"
+                  :placeholder="'Default:\n' + DEFAULT_MERGE_PROMPT"
                   class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
                   style="background: var(--bg-secondary); color: var(--text-primary);"
                 ></textarea>

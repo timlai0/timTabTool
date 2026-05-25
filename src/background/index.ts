@@ -20,6 +20,7 @@ import {
   getActiveOperations,
   clearOperationError,
   splitGroup,
+  mergeGroup,
 } from './tab-manager'
 import { searchTabs } from './searcher'
 import { recordTabVisit, getHistoryEntries } from './storage'
@@ -178,6 +179,13 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       const groupId = (message.payload as { groupId: number })?.groupId
       if (!groupId) throw new Error('Missing groupId')
       await splitGroup(groupId)
+      return { ok: true }
+    }
+
+    case 'MERGE_GROUP': {
+      const groupId = (message.payload as { groupId: number })?.groupId
+      if (!groupId) throw new Error('Missing groupId')
+      await mergeGroup(groupId)
       return { ok: true }
     }
 

@@ -24,6 +24,7 @@ Guidelines:
 
 export const DEFAULT_SPLIT_PROMPT = 'You are splitting an existing group of highly related tabs. Create more specific and granular sub-groups based on finer details and relationships.'
 export const DEFAULT_CLASSIFY_PROMPT = 'You are classifying new tabs. Decide if each new tab belongs to one of the existing groups or if a new group should be created. Be conservative about creating new groups.'
+export const DEFAULT_MERGE_PROMPT = 'Analyze the browser tabs of this group and decide if they should be merged into one of the other existing tab groups. Choose the best fitting existing group from the list. If none of the existing groups are a good fit and this group should remain separate, respond with "KEEP". Be conservative about merging; only merge if the topics are highly related.'
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   ai: {
@@ -38,6 +39,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     coherencePrompt: 'You should prioritize placing tabs into these existing groups if they fit, rather than creating new, redundant groups.',
     splitPrompt: DEFAULT_SPLIT_PROMPT,
     classifyPrompt: DEFAULT_CLASSIFY_PROMPT,
+    mergePrompt: DEFAULT_MERGE_PROMPT,
   },
   language: 'auto',
   groupOnStartup: false,

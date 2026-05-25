@@ -324,6 +324,58 @@ Only output the JSON array.`
     }
   }
 
+  /**
+   * Decide if the given group should be merged into one of the other existing groups.
+   * Returns the name of the target group to merge into, or "KEEP" if it should remain separate.
+   */
+  async decideMergeGroup(
+    tabs: { url: string; title: string }[],
+    existingGroupNames: string[],
+    stripTitles = false,
+  ): Promise<string> {
+    if (tabs.length === 0 || existingGroupNames.length === 0) return 'KEEP'
+
+    const tabDescriptions = tabs
+      .map((t, i) => this.formatTabForPrompt(t, i + 1, stripTitles))
+      .join('\n')
+
+    const mergePrompt = this.config.mergePrompt?.trim() || 'Analyze the browser tabs of this group and decide if they should be merged into one of the other existing tab groups. Choose the best fitting existing group from the list. If none of the existing groups are a good fit and this group should remain separate, respond with "KEEP". Be conservative about merging; only merge if the topics are highly related.'
+
+    const prompt = `${mergePrompt}
+
+Existing tab groups in this window: ${existingGroupNames.map((n) => `"${n}"`).join(', ')}.
+
+Tabs in the group to merge:
+${tabDescriptions}
+
+JSON format: {"mergeTarget":"existing group name or KEEP"}
+Only output the JSON object.`
+
+    try {
+      const response = await this.chat(prompt, true)
+      const cleaned = response.trim()
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
+      if (!jsonMatch) return 'KEEP'
+
+      const parsed = JSON.parse(jsonMatch[0].replace(/,\s*([}\]])/g, '$1')) as { mergeTarget: string }
+      const target = parsed.mergeTarget || 'KEEP'
+      const validNames = new Set(existingGroupNames.map(n => n.toLowerCase()))
+      if (target !== 'KEEP' && validNames.has(target.toLowerCase())) {
+        // Find matching target with original casing
+        return existingGroupNames.find(n => n.toLowerCase() === target.toLowerCase()) || 'KEEP'
+      }
+      return 'KEEP'
+    } catch (err) {
+      const msg = (err as Error).message
+      if (!stripTitles && (msg.includes('PROHIBITED_CONTENT') || msg.includes('Prohibited Use policy') || msg.includes('promptFeedback'))) {
+        console.warn('[TabPilot] Prompt blocked in merge analysis, retrying with URLs only...')
+        return this.decideMergeGroup(tabs, existingGroupNames, true)
+      }
+      console.error('[TabPilot] Failed to decide merge group. Error:', err)
+      return 'KEEP'
+    }
+  }
+
   private fallbackAllToNew(tabs: { url: string; title: string }[]): { index: number; group: string }[] {
     return tabs.map((_, i) => ({ index: i, group: 'NEW', newGroupName: 'Uncategorized', newGroupColor: 'grey' }))
   }
