@@ -437,21 +437,16 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     footer.appendChild(keybindsSpan)
     footer.appendChild(scoreInfoSpan)
 
-    container.appendChild(inputWrap)
-    container.appendChild(resultsList)
-    container.appendChild(footer)
-
-    const wrapper = document.createElement('div')
-    wrapper.className = 'atm-layout-wrapper'
-    wrapper.addEventListener('click', (e) => e.stopPropagation())
-    wrapper.appendChild(container)
-
     const detailsPanel = document.createElement('div')
     detailsPanel.className = 'atm-details-panel'
     detailsPanel.style.display = 'none'
-    wrapper.appendChild(detailsPanel)
 
-    backdrop.appendChild(wrapper)
+    container.appendChild(inputWrap)
+    container.appendChild(resultsList)
+    container.appendChild(detailsPanel)
+    container.appendChild(footer)
+
+    backdrop.appendChild(container)
     shadow.appendChild(backdrop)
 
     document.documentElement.appendChild(hostEl)
