@@ -5,7 +5,7 @@ const SYSTEM_PROMPT = 'You are a helpful assistant that classifies browser tabs 
 const DEFAULT_MODELS: Record<AIConfig['provider'], string> = {
   openai: 'gpt-4o-mini',
   claude: 'claude-sonnet-4-20250514',
-  gemini: 'gemini-2.5-flash',
+  gemini: 'gemini-3.5-flash',
   custom: 'gpt-4o-mini',
 }
 
@@ -15,7 +15,6 @@ const VALID_COLORS: ChromeTabGroupColor[] = [
 
 const MAX_GROUP_NAME_LENGTH = 40
 
-const BATCH_SIZE = 20
 
 /**
  * Unified AI client that supports OpenAI, Claude, Gemini, and custom endpoints.
@@ -93,13 +92,15 @@ Only output the JSON array, no other text.`
   ): Promise<AIGroupResult[]> {
     if (tabs.length === 0) return []
 
-    if (tabs.length <= BATCH_SIZE) {
+    const batchSize = this.config.batchSize || 20
+
+    if (tabs.length <= batchSize) {
       return this.groupTabsBatch(tabs, 0)
     }
 
     const allResults: AIGroupResult[] = []
-    for (let i = 0; i < tabs.length; i += BATCH_SIZE) {
-      const batch = tabs.slice(i, i + BATCH_SIZE)
+    for (let i = 0; i < tabs.length; i += batchSize) {
+      const batch = tabs.slice(i, i + batchSize)
       const batchResults = await this.groupTabsBatch(batch, i)
       allResults.push(...batchResults)
     }

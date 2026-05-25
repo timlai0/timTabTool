@@ -58,6 +58,7 @@ export interface AIConfig {
   apiKey: string
   endpoint?: string
   model?: string
+  batchSize?: number
 }
 
 export type GroupIndicatorStyle = 'header' | 'bar'

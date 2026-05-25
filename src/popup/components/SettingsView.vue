@@ -26,7 +26,7 @@ const modelPlaceholder = computed(() => {
   const placeholders: Record<string, string> = {
     openai: 'gpt-4o-mini',
     claude: 'claude-sonnet-4-20250514',
-    gemini: 'gemini-2.5-flash',
+    gemini: 'gemini-3.5-flash',
     custom: 'gpt-4o-mini',
   }
   return placeholders[settings.value.ai.provider] || 'gpt-4o-mini'
@@ -171,10 +171,40 @@ async function testConnection() {
                 {{ getMessage('model') }}
                 <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
               </label>
+              <datalist id="model-suggestions">
+                <template v-if="settings.ai.provider === 'gemini'">
+                  <option value="gemini-3.5-flash"></option>
+                  <option value="gemini-3.1-pro-preview"></option>
+                  <option value="gemini-3.1-flash-lite"></option>
+                  <option value="gemini-2.5-flash"></option>
+                </template>
+                <template v-else-if="settings.ai.provider === 'openai'">
+                  <option value="gpt-4o-mini"></option>
+                  <option value="gpt-4o"></option>
+                </template>
+              </datalist>
               <input
                 type="text"
                 v-model="settings.ai.model"
                 :placeholder="modelPlaceholder"
+                list="model-suggestions"
+                class="w-full text-xs rounded-lg border-0 py-2 px-2.5"
+                style="background: var(--bg-secondary); color: var(--text-primary);"
+              />
+            </div>
+
+            <!-- Batch Size -->
+            <div class="px-3.5 py-2.5 setting-row">
+              <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
+                {{ getMessage('batchSize') || 'Batch Size' }}
+                <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+              </label>
+              <input
+                type="number"
+                v-model.number="settings.ai.batchSize"
+                placeholder="20"
+                min="1"
+                max="1000"
                 class="w-full text-xs rounded-lg border-0 py-2 px-2.5"
                 style="background: var(--bg-secondary); color: var(--text-primary);"
               />

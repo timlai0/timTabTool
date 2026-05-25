@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     enabled: false,
     provider: 'openai',
     apiKey: '',
+    batchSize: 20,
   },
   language: 'auto',
   groupOnStartup: false,
