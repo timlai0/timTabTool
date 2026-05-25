@@ -19,6 +19,31 @@ const cacheIsAIGroupedMap = new Map<number, boolean>()
 /** Tracks active AbortControllers for cancellation. Key: windowId */
 export const activeAbortControllers = new Map<number, AbortController>()
 
+export interface OperationStatus {
+  type: 'group' | 'classify' | null
+  error: string | null
+}
+
+const activeOperationsMap = new Map<number, OperationStatus>()
+
+export function getActiveOperations(): Record<number, OperationStatus> {
+  const result: Record<number, OperationStatus> = {}
+  for (const [windowId, status] of activeOperationsMap.entries()) {
+    result[windowId] = status
+  }
+  return result
+}
+
+export function clearOperationError(windowId: number): void {
+  const status = activeOperationsMap.get(windowId)
+  if (status) {
+    status.error = null
+    if (status.type === null) {
+      activeOperationsMap.delete(windowId)
+    }
+  }
+}
+
 // --- Smart group title state ---
 // Maps Chrome groupId → stored display title (used to enforce persistent titles)
 const groupTitleMap = new Map<number, string>()
@@ -299,29 +324,9 @@ async function updateNewTabsBadge(windowId: number): Promise<void> {
 }
 
 async function rebuildCache(windowId: number): Promise<void> {
-  const previewCache = previewCacheMap.get(windowId)
-  const cacheIsAIGrouped = cacheIsAIGroupedMap.get(windowId) ?? false
-
-  if (cacheIsAIGrouped && previewCache && previewCache.length > 0) {
-    const tabs = await chrome.tabs.query({ windowId })
-    const tabMap = new Map(tabs.filter((t) => t.id !== undefined).map((t) => [t.id!, t]))
-
-    for (const group of previewCache) {
-      group.tabs = group.tabs
-        .map((t) => {
-          const fresh = tabMap.get(t.id)
-          return fresh ? (chromeTabToTabInfo(fresh) ?? t) : null
-        })
-        .filter((t): t is TabInfo => t !== null)
-    }
-    const filtered = previewCache.filter((g) => g.tabs.length > 0)
-    previewCacheMap.set(windowId, filtered)
-    return
-  }
-
   const tabs = await chrome.tabs.query({ windowId })
 
-  // Try to restore from Chrome tab groups (handles service worker restart)
+  // Try to restore from Chrome tab groups (handles manual groupings and service worker restarts)
   const fromChrome = await buildGroupsFromChrome(tabs)
   if (fromChrome) {
     previewCacheMap.set(windowId, sortGroups(fromChrome))
@@ -386,6 +391,7 @@ async function buildGroupsFromChrome(tabs: chrome.tabs.Tab[]): Promise<GroupedTa
       tabs: tabInfos,
       groupName: chromeGroup.title || groupTitleMap.get(gid) || undefined,
       groupColor: (chromeGroup.color as ChromeTabGroupColor) || 'grey',
+      groupId: gid,
     })
   }
 
@@ -492,6 +498,7 @@ export async function groupAllTabs(windowId: number): Promise<void> {
 
   const controller = new AbortController()
   activeAbortControllers.set(windowId, controller)
+  activeOperationsMap.set(windowId, { type: 'group', error: null })
 
   try {
     const tabs = await chrome.tabs.query({ windowId, windowType: 'normal' })
@@ -499,14 +506,18 @@ export async function groupAllTabs(windowId: number): Promise<void> {
 
     const settings = await getSettings()
 
-    await ungroupAllTabs(windowId)
-
     const hideTitles = titlesHiddenMap.get(windowId) ?? false
+    let aiError: Error | null = null
 
     if (settings.ai.enabled && settings.ai.apiKey) {
       try {
+        // Make the AI call first while tabs are untouched
         const freeGroups = await groupTabsFreelyWithAI(unpinnedTabs, settings.ai, controller.signal)
         if (controller.signal.aborted) return
+
+        // AI succeeded! We can now ungroup all tabs and apply AI groups safely
+        await ungroupAllTabs(windowId)
+
         for (const group of freeGroups) {
           if (controller.signal.aborted) return
           if (group.tabIds.length === 0) continue
@@ -524,14 +535,17 @@ export async function groupAllTabs(windowId: number): Promise<void> {
         previewCacheMap.set(windowId, sortGroups(freeGroupsToGroupedTabs(freeGroups, tabs)))
         cacheIsAIGroupedMap.set(windowId, true)
         await updateNewTabsBadge(windowId)
+        activeOperationsMap.delete(windowId)
         return
       } catch (err) {
         if (controller.signal.aborted) {
           console.log('[TabPilot] Grouping aborted by user')
           return
         }
+        aiError = err as Error
         if (settings.ai.fallbackToSort) {
           console.error('[TabPilot] AI free grouping failed, falling back to tab sorting. Error:', err)
+          await ungroupAllTabs(windowId)
           const sortedUnpinned = sortTabsByDomainAndTitleHelper(unpinnedTabs)
           const tabIds = sortedUnpinned.map((t) => t.id).filter((id): id is number => id !== undefined)
           if (tabIds.length > 0) {
@@ -550,12 +564,20 @@ export async function groupAllTabs(windowId: number): Promise<void> {
           ])
           cacheIsAIGroupedMap.set(windowId, false)
           await updateNewTabsBadge(windowId)
-          return
+          const finalErr = new Error(`AI Grouping failed: ${aiError.message}. Fell back to sorting tabs.`)
+          activeOperationsMap.set(windowId, { type: null, error: finalErr.message })
+          throw finalErr
         }
-        console.error('[TabPilot] AI free grouping failed, falling back to rule engine. Error:', err)
-        // Fall through to rule engine
+        console.error('[TabPilot] AI free grouping failed, no fallback enabled. Error:', err)
+        const finalErr = new Error(`AI Grouping failed: ${aiError.message}`)
+        activeOperationsMap.set(windowId, { type: null, error: finalErr.message })
+        throw finalErr
       }
     }
+
+    // --- Offline Rule Engine Grouping ---
+    // If AI is disabled or fallback is not running, we only ungroup and apply rule-based grouping here
+    await ungroupAllTabs(windowId)
 
     if (controller.signal.aborted) return
 
@@ -585,6 +607,11 @@ export async function groupAllTabs(windowId: number): Promise<void> {
     previewCacheMap.set(windowId, sortGroups(ruleGroupsToGroupedTabs(groups, tabs)))
     cacheIsAIGroupedMap.set(windowId, false)
     await updateNewTabsBadge(windowId)
+    activeOperationsMap.delete(windowId)
+  } catch (err) {
+    if (controller.signal.aborted) return
+    activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
+    throw err
   } finally {
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
@@ -604,6 +631,7 @@ export async function classifyNewTabs(windowId: number): Promise<void> {
 
   const controller = new AbortController()
   activeAbortControllers.set(windowId, controller)
+  activeOperationsMap.set(windowId, { type: 'classify', error: null })
 
   try {
     const settings = await getSettings()
@@ -688,11 +716,13 @@ export async function classifyNewTabs(windowId: number): Promise<void> {
     invalidatePreviewCache(windowId)
     await getGroupsPreview(windowId)
     await updateNewTabsBadge(windowId)
+    activeOperationsMap.delete(windowId)
   } catch (err) {
     if (controller.signal.aborted) {
       console.log('[TabPilot] Classification aborted by user')
       return
     }
+    activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
     if (activeAbortControllers.get(windowId) === controller) {
@@ -713,6 +743,80 @@ export async function closeGroupTabs(tabIds: number[]): Promise<void> {
 }
 
 /**
+ * Split a single tab group into more specific sub-groups using AI.
+ */
+export async function splitGroup(groupId: number): Promise<void> {
+  const group = await chrome.tabGroups.get(groupId)
+  const windowId = group.windowId
+
+  const controller = new AbortController()
+  activeAbortControllers.set(windowId, controller)
+  activeOperationsMap.set(windowId, { type: 'group', error: null })
+
+  try {
+    const tabs = await chrome.tabs.query({ groupId })
+    if (tabs.length === 0) return
+
+    const settings = await getSettings()
+    if (!settings.ai.enabled || !settings.ai.apiKey) {
+      throw new Error('AI is not configured. Please enable and configure AI in Settings first.')
+    }
+
+    const hideTitles = titlesHiddenMap.get(windowId) ?? false
+
+    // Query AI for sub-grouping
+    const tabInputs = tabs.map((t) => ({ url: t.url || '', title: t.title || '' }))
+    
+    // Append a context instruction to settings.ai.splitPrompt to guide the AI to split this specific group
+    const splitPrompt = `${settings.ai.splitPrompt || ''}\n\nContext: You are splitting an existing group of highly related tabs. Create more specific and granular sub-groups based on finer details.`
+    
+    const client = new AIClient({
+      ...settings.ai,
+      groupingPrompt: splitPrompt
+    }, controller.signal)
+
+    const subGroups = await client.groupTabsFreely(tabInputs)
+
+    if (controller.signal.aborted) return
+
+    // Apply the sub-groups to Chrome
+    for (const subGroup of subGroups) {
+      if (controller.signal.aborted) return
+      if (subGroup.tabIndices.length === 0) continue
+
+      const realTabIds = subGroup.tabIndices
+        .map((idx) => tabs[idx - 1]?.id) // AI Client uses 1-based index
+        .filter((id): id is number => id !== undefined)
+
+      if (realTabIds.length === 0) continue
+
+      const newGroupId = await retryTabOperation(() =>
+        chrome.tabs.group({ tabIds: realTabIds as [number, ...number[]] })
+      )
+
+      groupTitleMap.set(newGroupId, subGroup.name)
+      await retryTabOperation(() =>
+        chrome.tabGroups.update(newGroupId, {
+          title: hideTitles ? '' : subGroup.name,
+          color: subGroup.color || 'grey',
+        })
+      )
+    }
+
+    // Rebuild cache
+    invalidatePreviewCache(windowId)
+    await getGroupsPreview(windowId)
+    activeOperationsMap.delete(windowId)
+  } catch (err) {
+    console.error('[TabPilot] splitGroup failed:', err)
+    activeOperationsMap.set(windowId, { type: 'group', error: (err as Error).message })
+    throw err
+  } finally {
+    activeAbortControllers.delete(windowId)
+  }
+}
+
+/**
  * Cancel any running AI-enhanced grouping or classification for this window.
  */
 export function cancelActiveOperation(windowId: number): void {
@@ -721,6 +825,7 @@ export function cancelActiveOperation(windowId: number): void {
     controller.abort()
     activeAbortControllers.delete(windowId)
   }
+  activeOperationsMap.delete(windowId)
 }
 
 /**

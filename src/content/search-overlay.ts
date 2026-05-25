@@ -47,6 +47,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       title: 'Ungroup All',
       description: 'Ungroup all tabs in this window',
       action: 'UNGROUP_ALL'
+    },
+    {
+      key: '/split',
+      title: 'Split Current Group',
+      description: 'Split the current tab group using AI',
+      action: 'SPLIT_CURRENT_GROUP'
     }
   ]
 
@@ -291,7 +297,18 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       } else if (result.tab.url) {
         const favicon = document.createElement('img')
         favicon.className = 'atm-favicon'
-        favicon.src = `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(result.tab.url)}&size=16`
+        const isHttps = window.location.protocol === 'https:'
+        const isHttpFavicon = result.tab.favIconUrl?.startsWith('http://')
+        if (result.tab.favIconUrl && !(isHttps && isHttpFavicon)) {
+          favicon.src = result.tab.favIconUrl
+        } else {
+          const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('firefox')
+          if (isFirefox) {
+            favicon.src = `https://www.google.com/s2/favicons?sz=16&domain=${new URL(result.tab.url).hostname}`
+          } else {
+            favicon.src = `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(result.tab.url)}&size=16`
+          }
+        }
         favicon.alt = ''
         favicon.addEventListener('error', () => {
           favicon.replaceWith(createFaviconPlaceholder())

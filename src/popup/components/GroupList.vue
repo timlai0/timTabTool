@@ -15,6 +15,8 @@ withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'close-group': []
+  'split-group': []
+  'error': [msg: string]
 }>()
 </script>
 
@@ -38,6 +40,8 @@ const emit = defineEmits<{
       :expand-trigger="expandTrigger"
       :collapse-trigger="collapseTrigger"
       @close-group="emit('close-group')"
+      @split-group="emit('split-group')"
+      @error="(msg) => emit('error', msg)"
     />
   </div>
 </template>

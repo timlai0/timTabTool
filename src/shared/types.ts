@@ -30,6 +30,7 @@ export interface GroupedTabs {
   tabs: TabInfo[]
   groupName?: string
   groupColor?: ChromeTabGroupColor
+  groupId?: number
 }
 
 export interface AIGroupResult {
@@ -64,6 +65,10 @@ export interface AIConfig {
   customPrompt?: string
   groupingPrompt?: string
   fallbackToSort?: boolean
+  maxTokens?: number
+  coherencePrompt?: string
+  splitPrompt?: string
+  classifyPrompt?: string
 }
 
 export type GroupIndicatorStyle = 'header' | 'bar'
@@ -110,6 +115,10 @@ type MessageAction =
   | 'OPEN_URL'
   | 'CANCEL_OPERATION'
   | 'CLOSE_TAB'
+  | 'GET_ACTIVE_OPERATIONS'
+  | 'CLEAR_OPERATION_ERROR'
+  | 'SPLIT_GROUP'
+  | 'SPLIT_CURRENT_GROUP'
 
 export interface ExtensionMessage {
   action: MessageAction

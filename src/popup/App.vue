@@ -3,6 +3,7 @@ import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
 import { getMessage } from '../shared/i18n'
 import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT } from '../shared/constants'
 import { SYSTEM_PROMPT } from '../shared/ai-client'
+import { getAutoBatchSize } from '../shared/utils'
 import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInfo } from '../shared/types'
 import GroupList from './components/GroupList.vue'
 import SettingsView from './components/SettingsView.vue'
@@ -17,6 +18,16 @@ const indicatorStyle = ref<GroupIndicatorStyle>(DEFAULT_SETTINGS.groupIndicatorS
 const windowWidth = ref(DEFAULT_SETTINGS.windowWidth)
 const windowHeight = ref(DEFAULT_SETTINGS.windowHeight)
 const aiSettings = ref<ExtensionSettings['ai']>(DEFAULT_SETTINGS.ai)
+const errorMessage = ref<string | null>(null)
+
+function showError(msg: string) {
+  errorMessage.value = msg
+  setTimeout(() => {
+    if (errorMessage.value === msg) {
+      errorMessage.value = null
+    }
+  }, 10000)
+}
 
 // ─── Theme System ───
 
@@ -48,6 +59,10 @@ watch(themeMode, (mode) => applyTheme(mode))
 
 // ─── Data Loading ───
 
+const refreshPreviews = () => {
+  loadAllPreviews()
+}
+
 onMounted(async () => {
   const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
   const stored = data[STORAGE_KEYS.SETTINGS] as Partial<ExtensionSettings> | undefined
@@ -72,6 +87,14 @@ onMounted(async () => {
   applyTheme(themeMode.value)
   mediaQuery.addEventListener('change', onSystemThemeChange)
 
+  // Listen to Chrome events to dynamically update the popup in real-time
+  chrome.tabs.onCreated.addListener(refreshPreviews)
+  chrome.tabs.onRemoved.addListener(refreshPreviews)
+  chrome.tabs.onUpdated.addListener(refreshPreviews)
+  chrome.tabGroups.onCreated.addListener(refreshPreviews)
+  chrome.tabGroups.onUpdated.addListener(refreshPreviews)
+  chrome.tabGroups.onRemoved.addListener(refreshPreviews)
+
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
   currentWindowId.value = activeTab?.windowId ?? null
   await loadAllPreviews()
@@ -79,6 +102,13 @@ onMounted(async () => {
 
 onUnmounted(() => {
   mediaQuery.removeEventListener('change', onSystemThemeChange)
+  stopPollingStatus()
+  chrome.tabs.onCreated.removeListener(refreshPreviews)
+  chrome.tabs.onRemoved.removeListener(refreshPreviews)
+  chrome.tabs.onUpdated.removeListener(refreshPreviews)
+  chrome.tabGroups.onCreated.removeListener(refreshPreviews)
+  chrome.tabGroups.onUpdated.removeListener(refreshPreviews)
+  chrome.tabGroups.onRemoved.removeListener(refreshPreviews)
 })
 
 const totalTabs = computed(() =>
@@ -232,10 +262,97 @@ async function loadAllPreviews() {
       }
       windowTitlesHidden.value = titlesState
     }
+
+    // Query active operations and errors from the background
+    const activeOps = await chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' })
+    if (activeOps && typeof activeOps === 'object') {
+      let isAnyGrouping = false
+      let isAnyClassifying = false
+
+      for (const [widStr, status] of Object.entries(activeOps)) {
+        const wid = Number(widStr)
+        const opStatus = status as { type: 'group' | 'classify' | null; error: string | null }
+
+        if (opStatus.type === 'group') {
+          groupingWindowId.value = wid
+          isAnyGrouping = true
+        } else if (opStatus.type === 'classify') {
+          classifyingWindowId.value = wid
+          isAnyClassifying = true
+        }
+
+        if (opStatus.error) {
+          showError(opStatus.error)
+          await chrome.runtime.sendMessage({ action: 'CLEAR_OPERATION_ERROR', payload: { windowId: wid } })
+        }
+      }
+
+      if (!isAnyGrouping) groupingWindowId.value = null
+      if (!isAnyClassifying) classifyingWindowId.value = null
+
+      if (isAnyGrouping || isAnyClassifying) {
+        startPollingStatus()
+      }
+    }
   } catch (err) {
     console.error('Failed to load preview:', err)
   } finally {
     loading.value = false
+  }
+}
+
+let pollInterval: number | null = null
+
+function startPollingStatus() {
+  if (pollInterval) return
+  pollInterval = window.setInterval(async () => {
+    if (groupingWindowId.value !== null || classifyingWindowId.value !== null) {
+      try {
+        const activeOps = await chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' })
+        if (activeOps && typeof activeOps === 'object') {
+          let isAnyGrouping = false
+          let isAnyClassifying = false
+
+          for (const [widStr, status] of Object.entries(activeOps)) {
+            const wid = Number(widStr)
+            const opStatus = status as { type: 'group' | 'classify' | null; error: string | null }
+
+            if (opStatus.type === 'group') {
+              groupingWindowId.value = wid
+              isAnyGrouping = true
+            } else if (opStatus.type === 'classify') {
+              classifyingWindowId.value = wid
+              isAnyClassifying = true
+            }
+
+            if (opStatus.error) {
+              showError(opStatus.error)
+              await chrome.runtime.sendMessage({ action: 'CLEAR_OPERATION_ERROR', payload: { windowId: wid } })
+            }
+          }
+
+          if (!isAnyGrouping && groupingWindowId.value !== null) {
+            groupingWindowId.value = null
+            await loadAllPreviews()
+          }
+          if (!isAnyClassifying && classifyingWindowId.value !== null) {
+            classifyingWindowId.value = null
+            await loadAllPreviews()
+          }
+        }
+      } catch (err) {
+        console.error('Polling failed:', err)
+      }
+    } else {
+      stopPollingStatus()
+    }
+  }, 1500)
+}
+
+function stopPollingStatus() {
+  if (pollInterval) {
+    clearInterval(pollInterval)
+    pollInterval = null
   }
 }
 
@@ -306,9 +423,9 @@ function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classi
   const type = countType === 'classify' ? 'classify' : 'group'
   const tabs = type === 'group' ? unpinnedTabsCount(w) : newTabsCount(w)
   if (tabs === 0) {
-    return { tokens: 0, costStr: 'Free' }
+    return { tokens: 0, costStr: 'Free', tokensPerRequest: 0 }
   }
-  const batches = Math.ceil(tabs / (aiSettings.value.batchSize || 20))
+  const batches = Math.ceil(tabs / (aiSettings.value.batchSize || getAutoBatchSize(aiSettings.value.maxTokens)))
   const promptLen = getSystemPrompt().length + (type === 'group' ? getGroupingPrompt().length : getClassifyPrompt(w).length)
   const promptTokens = Math.ceil(promptLen / 4)
   const inputTokens = batches * promptTokens + tabs * 20
@@ -330,7 +447,7 @@ function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classi
   else if (cost < 0.0001) costStr = '< $0.0001'
   else costStr = `~$${cost.toFixed(4)}`
   
-  return { tokens: totalTokens, costStr }
+  return { tokens: totalTokens, costStr, tokensPerRequest: Math.round(totalTokens / batches) }
 }
 
 function newTabsCount(w: WindowGroupsInfo): number {
@@ -356,9 +473,15 @@ async function handleCancelClassify(windowId: number) {
 
 async function handleClassifyNew(windowId: number) {
   classifyingWindowId.value = windowId
+  startPollingStatus()
   try {
-    await chrome.runtime.sendMessage({ action: 'CLASSIFY_NEW_TABS', payload: { windowId } })
+    const res = await chrome.runtime.sendMessage({ action: 'CLASSIFY_NEW_TABS', payload: { windowId } })
+    if (res && typeof res === 'object' && 'error' in res) {
+      showError(String(res.error))
+    }
     await loadAllPreviews()
+  } catch (err) {
+    showError((err as Error).message)
   } finally {
     classifyingWindowId.value = null
   }
@@ -366,9 +489,15 @@ async function handleClassifyNew(windowId: number) {
 
 async function handleGroup(windowId: number) {
   groupingWindowId.value = windowId
+  startPollingStatus()
   try {
-    await chrome.runtime.sendMessage({ action: 'GROUP_TABS', payload: { windowId } })
+    const res = await chrome.runtime.sendMessage({ action: 'GROUP_TABS', payload: { windowId } })
+    if (res && typeof res === 'object' && 'error' in res) {
+      showError(String(res.error))
+    }
     await loadAllPreviews()
+  } catch (err) {
+    showError((err as Error).message)
   } finally {
     groupingWindowId.value = null
   }
@@ -434,6 +563,14 @@ function toggleWindowSection(windowId: number) {
   }
 }
 
+async function focusWindow(windowId: number) {
+  try {
+    await chrome.windows.update(windowId, { focused: true })
+  } catch (err) {
+    console.error('[TabPilot] Failed to focus window:', err)
+  }
+}
+
 const windowTitlesHidden = ref<Record<number, boolean>>({})
 
 function isTitlesHidden(windowId: number): boolean {
@@ -457,9 +594,17 @@ const hoveredActionWindowId = ref<number | null>(null)
 
 function getClassifyPrompt(w: WindowGroupsInfo) {
   const existingGroupNames = w.groups.filter(g => g.groupName !== 'New Tabs').map(g => g.groupName)
-  const groupListStr = existingGroupNames.length > 0 
-    ? existingGroupNames.map((n) => `"${n}"`).join(', ')
-    : 'None'
+  const uniqueNames = [...new Set(existingGroupNames.filter((n): n is string => !!n))]
+  
+  let groupListStr = 'None'
+  if (uniqueNames.length > 0) {
+    if (uniqueNames.length > 8) {
+      groupListStr = uniqueNames.slice(0, 8).map(n => `"${n}"`).join(', ') + `, ... and ${uniqueNames.length - 8} more`
+    } else {
+      groupListStr = uniqueNames.map((n) => `"${n}"`).join(', ')
+    }
+  }
+
   return `I have these existing tab groups: ${groupListStr}.
 
 New tabs to classify:
@@ -536,6 +681,29 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
       </div>
     </header>
 
+    <!-- Error Banner -->
+    <div
+      v-if="errorMessage"
+      class="mx-3 mt-2 p-2.5 rounded-sm flex items-start gap-2 shadow-xs border transition-all duration-300"
+      style="background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.25);"
+    >
+      <svg class="w-3.5 h-3.5 shrink-0 mt-0.5" style="color: #ef4444;" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+      </svg>
+      <div class="flex-1 text-[10.5px] leading-normal" style="color: var(--text-primary); font-weight: 500;">
+        {{ errorMessage }}
+      </div>
+      <button
+        @click="errorMessage = null"
+        class="w-4 h-4 flex items-center justify-center rounded-sm hover:bg-black/5 dark:hover:bg-white/5 shrink-0"
+        style="color: var(--text-secondary);"
+      >
+        <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+        </svg>
+      </button>
+    </div>
+
     <!-- Loading state -->
     <div v-if="loading" class="flex-1 flex items-center justify-center py-16">
       <div class="flex items-center gap-1.5">
@@ -583,8 +751,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             <path fill-rule="evenodd" d="M2 4.25A2.25 2.25 0 014.25 2h11.5A2.25 2.25 0 0118 4.25v8.5A2.25 2.25 0 0115.75 15h-3.105a3.501 3.501 0 01-5.29 0H4.25A2.25 2.25 0 012 12.75v-8.5zM4.25 3.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h3.105a.75.75 0 01.672.418 2.001 2.001 0 003.946 0 .75.75 0 01.672-.418h3.105a.75.75 0 00.75-.75v-8.5a.75.75 0 00-.75-.75H4.25z" clip-rule="evenodd" />
           </svg>
           <span
-            class="text-[11px] font-semibold flex-1 truncate"
+            class="text-[11px] font-semibold flex-1 truncate hover:underline"
             :style="{ color: w.windowId === currentWindowId ? 'var(--accent)' : 'var(--text-primary)' }"
+            @click.stop="focusWindow(w.windowId)"
+            title="Focus this window"
           >
             {{ windowLabel(w, idx) }}
           </span>
@@ -645,7 +815,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
                     <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
                     <span class="opacity-40">•</span>
-                    <span>Batch Size: <span class="font-semibold" style="color: var(--text-secondary);">{{ aiSettings.batchSize || 20 }}</span></span>
+                    <span>Batch Size: <span class="font-semibold" style="color: var(--text-secondary);">{{ aiSettings.batchSize || `${getAutoBatchSize(aiSettings.maxTokens)} (Auto)` }}</span></span>
                   </div>
                   
                   <div class="mb-1 text-[9px] uppercase font-bold tracking-wider mt-2" style="color: var(--text-tertiary);">System Prompt</div>
@@ -658,15 +828,19 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                     {{ activeHoverAction === 'group' ? getGroupingPrompt() : getClassifyPrompt(w) }}
                   </div>
                   
-                  <div class="flex items-center justify-between mt-2 pt-2 border-t" style="border-color: var(--border);">
-                    <span class="text-[10px] font-medium" style="color: var(--text-secondary);">
-                      Est. Requests: <span class="font-bold tabular-nums" style="color: var(--text-primary);">
-                        {{ activeHoverAction === 'group' ? Math.ceil(unpinnedTabsCount(w) / (aiSettings.batchSize || 20)) : Math.ceil(newTabsCount(w) / (aiSettings.batchSize || 20)) }}
+                  <div class="mt-2 pt-2 border-t flex flex-col gap-1.5" style="border-color: var(--border);">
+                    <div class="flex items-center justify-between text-[10px]">
+                      <span style="color: var(--text-secondary);">
+                        Est. Requests: <span class="font-bold tabular-nums" style="color: var(--text-primary);">
+                          {{ activeHoverAction === 'group' ? Math.ceil(unpinnedTabsCount(w) / (aiSettings.batchSize || getAutoBatchSize(aiSettings.maxTokens))) : Math.ceil(newTabsCount(w) / (aiSettings.batchSize || getAutoBatchSize(aiSettings.maxTokens))) }}
+                        </span>
                       </span>
-                      <span class="opacity-50 mx-1">|</span>
-                      <span class="font-bold tabular-nums" style="color: var(--text-primary);">~{{ estimateCostAndTokens(w, activeHoverAction).tokens }}</span> tok
-                    </span>
-                    <span class="text-[10px] font-bold tabular-nums" style="color: var(--text-primary);">{{ estimateCostAndTokens(w, activeHoverAction).costStr }}</span>
+                      <span class="font-bold tabular-nums" style="color: var(--text-primary);">{{ estimateCostAndTokens(w, activeHoverAction).costStr }}</span>
+                    </div>
+                    <div class="flex items-center justify-between text-[9px]" style="color: var(--text-tertiary);">
+                      <span>Total: <span class="font-semibold tabular-nums" style="color: var(--text-secondary);">~{{ estimateCostAndTokens(w, activeHoverAction).tokens }}</span> tokens</span>
+                      <span>Rate: <span class="font-semibold tabular-nums" style="color: var(--text-secondary);">~{{ estimateCostAndTokens(w, activeHoverAction).tokensPerRequest }}</span> tok/req</span>
+                    </div>
                   </div>
                 </template>
                 <template v-else>
@@ -745,6 +919,8 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
               :expand-trigger="expandTriggers[w.windowId] || 0"
               :collapse-trigger="collapseTriggers[w.windowId] || 0"
               @close-group="loadAllPreviews"
+              @split-group="loadAllPreviews"
+              @error="showError"
             />
           </div>
         </template>

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, toRaw } from 'vue'
 import { getMessage } from '../../shared/i18n'
-import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT } from '../../shared/constants'
+import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT } from '../../shared/constants'
+import { getAutoBatchSize } from '../../shared/utils'
 import type { ExtensionSettings } from '../../shared/types'
 import { AIClient } from '../../shared/ai-client'
 
@@ -18,6 +19,8 @@ const saved = ref(false)
 const testing = ref(false)
 const testResult = ref<{ ok: boolean; error?: string } | null>(null)
 const searchShortcut = ref('Ctrl+Shift+F')
+const advancedPromptsExpanded = ref(false)
+const connectionSettingsExpanded = ref(false)
 
 const DEFAULT_ENDPOINTS: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
@@ -26,26 +29,26 @@ const DEFAULT_ENDPOINTS: Record<string, string> = {
   custom: '',
 }
 
-const PREDEFINED_MODELS: Record<string, { id: string, name: string, complexity: string, costFactor: string }[]> = {
+const PREDEFINED_MODELS: Record<string, { id: string, name: string, complexity: string, costFactor: string, maxTokens: string }[]> = {
   gemini: [
-    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', complexity: 'High', costFactor: '100%' },
-    { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', complexity: 'Medium', costFactor: '75%' },
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', complexity: 'Medium', costFactor: '25%' },
-    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', complexity: 'Low', costFactor: '12%' },
-    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', complexity: 'Low', costFactor: '5%' },
-    { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', complexity: 'Low', costFactor: '4%' },
-    { id: 'gemini-flash-lite-latest', name: 'Gemini Flash Lite Latest', complexity: 'Low', costFactor: '4%' },
-    { id: 'gemma-4-31b-it', name: 'Gemma 4 31B', complexity: 'Low', costFactor: 'Free' },
-    { id: 'gemma-4-26b-a4b-it', name: 'Gemma 4 26B', complexity: 'Low', costFactor: 'Free' },
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', complexity: 'High', costFactor: '100%', maxTokens: '65K' },
+    { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', complexity: 'Medium', costFactor: '75%', maxTokens: '65K' },
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', complexity: 'Medium', costFactor: '25%', maxTokens: '65K' },
+    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', complexity: 'Low', costFactor: '12%', maxTokens: '65K' },
+    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', complexity: 'Low', costFactor: '5%', maxTokens: '65K' },
+    { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', complexity: 'Low', costFactor: '4%', maxTokens: '65K' },
+    { id: 'gemini-flash-lite-latest', name: 'Gemini Flash Lite Latest', complexity: 'Low', costFactor: '4%', maxTokens: '65K' },
+    { id: 'gemma-4-31b-it', name: 'Gemma 4 31B', complexity: 'Low', costFactor: 'Free', maxTokens: '8K' },
+    { id: 'gemma-4-26b-a4b-it', name: 'Gemma 4 26B', complexity: 'Low', costFactor: 'Free', maxTokens: '8K' },
   ],
   openai: [
-    { id: 'gpt-4o', name: 'GPT-4o', complexity: 'High', costFactor: '100%' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', complexity: 'Low', costFactor: '6%' },
+    { id: 'gpt-4o', name: 'GPT-4o', complexity: 'High', costFactor: '100%', maxTokens: '16K' },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', complexity: 'Low', costFactor: '6%', maxTokens: '16K' },
   ],
   claude: [
-    { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', complexity: 'High', costFactor: '100%' },
-    { id: 'claude-3-5-sonnet-20240620', name: 'Claude 3.5 Sonnet', complexity: 'Medium', costFactor: '20%' },
-    { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', complexity: 'Low', costFactor: '2%' },
+    { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', complexity: 'High', costFactor: '100%', maxTokens: '4K' },
+    { id: 'claude-3-5-sonnet-20240620', name: 'Claude 3.5 Sonnet', complexity: 'Medium', costFactor: '20%', maxTokens: '8K' },
+    { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', complexity: 'Low', costFactor: '2%', maxTokens: '4K' },
   ]
 }
 
@@ -84,6 +87,11 @@ const modelSelectValue = computed({
     } else {
       isCustomSelected.value = false
       settings.value.ai.model = newValue
+      const chosen = currentProviderModels.value.find(m => m.id === newValue)
+      if (chosen) {
+        const mapping: Record<string, number> = { '65K': 65536, '16K': 16384, '8K': 8192, '4K': 4096 }
+        settings.value.ai.maxTokens = mapping[chosen.maxTokens] || 16384
+      }
     }
   }
 })
@@ -132,6 +140,15 @@ onMounted(async () => {
   if (!settings.value.ai.groupingPrompt) {
     settings.value.ai.groupingPrompt = DEFAULT_SETTINGS.ai.groupingPrompt
   }
+  if (!settings.value.ai.splitPrompt) {
+    settings.value.ai.splitPrompt = DEFAULT_SETTINGS.ai.splitPrompt
+  }
+  if (!settings.value.ai.classifyPrompt) {
+    settings.value.ai.classifyPrompt = DEFAULT_SETTINGS.ai.classifyPrompt
+  }
+  if (!settings.value.ai.apiKey) {
+    connectionSettingsExpanded.value = true
+  }
   const commands = await chrome.commands.getAll()
   const searchCmd = commands.find((c) => c.name === 'open-search')
   if (searchCmd?.shortcut) {
@@ -141,6 +158,14 @@ onMounted(async () => {
 
 function resetGroupingPrompt() {
   settings.value.ai.groupingPrompt = DEFAULT_SETTINGS.ai.groupingPrompt
+}
+
+function resetSplitPrompt() {
+  settings.value.ai.splitPrompt = DEFAULT_SPLIT_PROMPT
+}
+
+function resetClassifyPrompt() {
+  settings.value.ai.classifyPrompt = DEFAULT_CLASSIFY_PROMPT
 }
 
 function resetSystemPrompt() {
@@ -155,7 +180,7 @@ async function saveSettings() {
   if (!settings.value.windowWidth || settings.value.windowWidth < 360) {
     settings.value.windowWidth = 360
   }
-  await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: settings.value })
+  await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: toRaw(settings.value) })
   saved.value = true
   setTimeout(() => { emit('back') }, 600)
 }
@@ -164,7 +189,7 @@ async function saveAndGoBack() {
   if (!settings.value.windowWidth || settings.value.windowWidth < 360) {
     settings.value.windowWidth = 360
   }
-  await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: settings.value })
+  await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: toRaw(settings.value) })
   emit('back')
 }
 
@@ -237,48 +262,9 @@ async function testConnection() {
               </div>
             </label>
 
-            <!-- Provider -->
-            <div class="px-3 py-2 setting-row">
-              <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('provider') }}</label>
-              <select
-                v-model="settings.ai.provider"
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-                style="background: var(--bg-secondary); color: var(--text-primary);"
-              >
-                <option value="openai">OpenAI</option>
-                <option value="claude">Claude (Anthropic)</option>
-                <option value="gemini">Gemini (Google)</option>
-                <option value="custom">Custom (OpenAI-compatible)</option>
-              </select>
-            </div>
-
-            <!-- API Key -->
-            <div class="px-3 py-2 setting-row">
-              <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('apiKey') }}</label>
-              <input
-                type="text"
-                v-model="settings.ai.apiKey"
-                placeholder="sk-... / AIza..."
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-                style="background: var(--bg-secondary); color: var(--text-primary);"
-              />
-            </div>
-
-            <!-- Endpoint -->
-            <div class="px-3 py-2 setting-row">
-              <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('endpoint') }}</label>
-              <input
-                type="url"
-                v-model="settings.ai.endpoint"
-                :placeholder="endpointPlaceholder"
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-                style="background: var(--bg-secondary); color: var(--text-primary);"
-              />
-            </div>
-
-            <!-- Model -->
-            <div class="px-3 py-2 setting-row">
-              <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
+            <!-- Model Selector (Always visible when AI enabled) -->
+            <div class="px-3.5 py-2.5 setting-row">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider mb-1" style="color: var(--text-secondary);">
                 {{ getMessage('model') }}
                 <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
               </label>
@@ -293,7 +279,7 @@ async function testConnection() {
                   :key="model.id" 
                   :value="model.id"
                 >
-                  {{ model.name }} ({{ model.complexity }}, {{ model.costFactor }})
+                  {{ model.name }} ({{ model.complexity }}, {{ model.costFactor }}, Max Output: {{ model.maxTokens }})
                 </option>
                 <option value="custom">Custom model name...</option>
               </select>
@@ -308,117 +294,332 @@ async function testConnection() {
               />
             </div>
 
-            <!-- Batch Size -->
-            <div class="px-3 py-2 setting-row">
-              <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
-                {{ getMessage('batchSize') || 'Batch Size' }}
-                <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-              </label>
-              <input
-                type="number"
-                v-model.number="settings.ai.batchSize"
-                placeholder="20"
-                min="1"
-                max="1000"
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-                style="background: var(--bg-secondary); color: var(--text-primary);"
-              />
-            </div>
-
-            <!-- Grouping Prompt -->
-            <div class="px-3 py-2 setting-row">
-              <div class="flex items-center justify-between mb-1">
-                <div class="flex items-center gap-1.5">
-                  <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                    Tab Grouping Prompt
-                    <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                  </label>
-                  <div class="relative group/help">
-                    <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                    <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
-                      <div class="font-bold mb-1" style="color: var(--accent);">Tab Grouping Prompt</div>
-                      Defines tab clustering logic and categories.
-                      
-                      <strong>When to use</strong>: To modify how tabs are grouped, sizes of groups, or target names.
-                      
-                      <strong>Examples</strong>:
-                      • "Limit maximum groups to 4."
-                      • "Create a dedicated group for Dev tools."
-                      • "Group only if at least 3 tabs match."
-                    </div>
-                  </div>
-                </div>
-                <button
-                  v-if="settings.ai.groupingPrompt !== DEFAULT_GROUPING_PROMPT"
-                  @click="resetGroupingPrompt"
-                  class="text-[9px] hover:underline"
-                  style="color: var(--accent);"
-                  title="Restore default instructions"
-                >
-                  Reset to Default
-                </button>
+            <!-- AI Provider & Connection Settings Toggle Header -->
+            <button
+              type="button"
+              @click="connectionSettingsExpanded = !connectionSettingsExpanded"
+              class="w-full flex items-center justify-between px-3.5 py-3 cursor-pointer text-left setting-row focus:outline-none transition-all duration-200"
+              style="background: var(--bg-primary);"
+            >
+              <div class="flex flex-col">
+                <span class="text-xs font-semibold" style="color: var(--text-primary);">AI Provider & Connection Settings</span>
+                <span class="text-[10px] mt-0.5" style="color: var(--text-tertiary);">
+                  Configure API keys, model provider, endpoints, batch sizes, and max tokens
+                </span>
               </div>
-              <textarea
-                v-model="settings.ai.groupingPrompt"
-                :placeholder="'Default:\n' + DEFAULT_GROUPING_PROMPT"
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[220px] resize-y"
-                style="background: var(--bg-secondary); color: var(--text-primary);"
-              ></textarea>
-            </div>
-
-            <!-- Custom Prompt -->
-            <div class="px-3 py-2 setting-row">
-              <div class="flex items-center justify-between mb-1">
-                <div class="flex items-center gap-1.5">
-                  <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                    Custom System Prompt Instructions
-                    <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                  </label>
-                  <div class="relative group/help">
-                    <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                    <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
-                      <div class="font-bold mb-1" style="color: var(--accent);">Custom System Prompt</div>
-                      Defines global behavior and style rules.
-                      
-                      <strong>When to use</strong>: To enforce global formatting, tone, language, or constraints.
-                      
-                      <strong>Examples</strong>:
-                      • "Always respond in German."
-                      • "Never use emojis."
-                      • "Omit the 'www.' prefix in group names."
-                    </div>
-                  </div>
-                </div>
-                <button
-                  v-if="settings.ai.customPrompt"
-                  @click="resetSystemPrompt"
-                  class="text-[9px] hover:underline"
-                  style="color: var(--accent);"
-                  title="Clear custom instructions"
-                >
-                  Clear
-                </button>
-              </div>
-              <textarea
-                v-model="settings.ai.customPrompt"
-                placeholder="E.g., Never use emojis. Always categorize by project."
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
-                style="background: var(--bg-secondary); color: var(--text-primary);"
-              ></textarea>
-            </div>
-
-            <!-- Test connection -->
-            <div class="flex items-center gap-2.5 px-3.5 py-2.5">
-              <button
-                @click="testConnection"
-                :disabled="testing || !settings.ai.apiKey"
-                class="px-3.5 py-1.5 text-[11px] font-medium rounded-sm disabled:opacity-40"
-                style="background: var(--bg-secondary); color: var(--text-primary);"
+              <svg
+                class="w-4 h-4 transition-transform duration-200 transform"
+                :class="{ 'rotate-180': connectionSettingsExpanded }"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                style="color: var(--text-secondary);"
               >
-                {{ testing ? getMessage('testing') : getMessage('testConnection') }}
-              </button>
-              <span v-if="testResult?.ok" class="text-[11px] font-medium" style="color: var(--group-green);">{{ getMessage('connected') }}</span>
-              <span v-else-if="testResult" class="text-[11px]" style="color: var(--group-red);">{{ testResult.error || getMessage('failed') }}</span>
+                <path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
+              </svg>
+            </button>
+
+            <!-- Collapsible Connection Settings Container -->
+            <div v-show="connectionSettingsExpanded">
+              <!-- Provider -->
+              <div class="px-3 py-2 setting-row">
+                <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('provider') }}</label>
+                <select
+                  v-model="settings.ai.provider"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                >
+                  <option value="openai">OpenAI</option>
+                  <option value="claude">Claude (Anthropic)</option>
+                  <option value="gemini">Gemini (Google)</option>
+                  <option value="custom">Custom (OpenAI-compatible)</option>
+                </select>
+              </div>
+
+              <!-- API Key -->
+              <div class="px-3 py-2 setting-row">
+                <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('apiKey') }}</label>
+                <input
+                  type="text"
+                  v-model="settings.ai.apiKey"
+                  placeholder="sk-... / AIza..."
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                />
+              </div>
+
+              <!-- Endpoint -->
+              <div class="px-3 py-2 setting-row">
+                <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('endpoint') }}</label>
+                <input
+                  type="url"
+                  v-model="settings.ai.endpoint"
+                  :placeholder="endpointPlaceholder"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                />
+              </div>
+
+              <!-- Batch Size -->
+              <div class="px-3 py-2 setting-row">
+                <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
+                  {{ getMessage('batchSize') || 'Batch Size' }}
+                  <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                </label>
+                <input
+                  type="number"
+                  v-model.number="settings.ai.batchSize"
+                  :placeholder="getAutoBatchSize(settings.ai.maxTokens).toString() + ' (Auto)'"
+                  min="1"
+                  max="1000"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                />
+              </div>
+
+              <!-- Max Tokens -->
+              <div class="px-3 py-2 setting-row">
+                <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
+                  Max Output Tokens
+                  <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                </label>
+                <input
+                  type="number"
+                  v-model.number="settings.ai.maxTokens"
+                  placeholder="16384"
+                  min="1"
+                  max="65536"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                />
+              </div>
+
+              <!-- Test connection -->
+              <div class="flex items-center gap-2.5 px-3.5 py-2.5 setting-row">
+                <button
+                  @click="testConnection"
+                  :disabled="testing || !settings.ai.apiKey"
+                  class="px-3.5 py-1.5 text-[11px] font-medium rounded-sm disabled:opacity-40"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                >
+                  {{ testing ? getMessage('testing') : getMessage('testConnection') }}
+                </button>
+                <span v-if="testResult?.ok" class="text-[11px] font-medium" style="color: var(--group-green);">{{ getMessage('connected') }}</span>
+                <span v-else-if="testResult" class="text-[11px]" style="color: var(--group-red);">{{ testResult.error || getMessage('failed') }}</span>
+              </div>
+            </div>
+
+            <!-- Advanced Prompt Instructions Toggle Header -->
+            <button
+              type="button"
+              @click="advancedPromptsExpanded = !advancedPromptsExpanded"
+              class="w-full flex items-center justify-between px-3.5 py-3 cursor-pointer text-left setting-row focus:outline-none transition-all duration-200"
+              style="background: var(--bg-primary);"
+            >
+              <div class="flex flex-col">
+                <span class="text-xs font-semibold" style="color: var(--text-primary);">Advanced Prompt Instructions</span>
+                <span class="text-[10px] mt-0.5" style="color: var(--text-tertiary);">
+                  Configure tab grouping rules, coherence guidelines, and system prompts
+                </span>
+              </div>
+              <svg
+                class="w-4 h-4 transition-transform duration-200 transform"
+                :class="{ 'rotate-180': advancedPromptsExpanded }"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                style="color: var(--text-secondary);"
+              >
+                <path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
+              </svg>
+            </button>
+
+            <!-- Collapsible Prompts Container -->
+            <div v-show="advancedPromptsExpanded">
+              <!-- Grouping Prompt -->
+              <div class="px-3 py-2 setting-row">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="flex items-center gap-1.5">
+                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                      Tab Grouping Prompt
+                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                    </label>
+                    <div class="relative group/help">
+                      <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                        <div class="font-bold mb-1" style="color: var(--accent);">Tab Grouping Prompt</div>
+                        Defines tab clustering logic and categories.
+                        
+                        <strong>When to use</strong>: To modify how tabs are grouped, sizes of groups, or target names.
+                        
+                        <strong>Examples</strong>:
+                        • "Limit maximum groups to 4."
+                        • "Create a dedicated group for Dev tools."
+                        • "Group only if at least 3 tabs match."
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    v-if="settings.ai.groupingPrompt !== DEFAULT_GROUPING_PROMPT"
+                    @click="resetGroupingPrompt"
+                    class="text-[9px] hover:underline"
+                    style="color: var(--accent);"
+                    title="Restore default instructions"
+                  >
+                    Reset to Default
+                  </button>
+                </div>
+                <textarea
+                  v-model="settings.ai.groupingPrompt"
+                  :placeholder="'Default:\n' + DEFAULT_GROUPING_PROMPT"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[220px] resize-y"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                ></textarea>
+              </div>
+
+              <!-- Coherence Prompt -->
+              <div class="px-3 py-2 setting-row">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="flex items-center gap-1.5">
+                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                      Batch Coherence Instructions
+                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                    </label>
+                    <div class="relative group/help">
+                      <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                        <div class="font-bold mb-1" style="color: var(--accent);">Batch Coherence</div>
+                        Injected into subsequent batches (batch 2+) alongside the list of group names created in previous batches.
+                        
+                        <strong>Default</strong>:
+                        "You should prioritize placing tabs into these existing groups if they fit, rather than creating new, redundant groups."
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    v-if="settings.ai.coherencePrompt !== DEFAULT_SETTINGS.ai.coherencePrompt"
+                    @click="settings.ai.coherencePrompt = DEFAULT_SETTINGS.ai.coherencePrompt"
+                    class="text-[9px] hover:underline"
+                    style="color: var(--accent);"
+                    title="Restore default instructions"
+                  >
+                    Reset to Default
+                  </button>
+                </div>
+                <textarea
+                  v-model="settings.ai.coherencePrompt"
+                  placeholder="Instructions on how to reuse existing groups..."
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[60px] resize-y"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                ></textarea>
+              </div>
+
+              <!-- Split Group Prompt -->
+              <div class="px-3 py-2 setting-row">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="flex items-center gap-1.5">
+                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                      Split Group Prompt
+                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                    </label>
+                    <div class="relative group/help">
+                      <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                        <div class="font-bold mb-1" style="color: var(--accent);">Split Group Prompt</div>
+                        Defines how highly related tab groups are divided into finer sub-groups.
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    v-if="settings.ai.splitPrompt !== DEFAULT_SPLIT_PROMPT"
+                    @click="resetSplitPrompt"
+                    class="text-[9px] hover:underline"
+                    style="color: var(--accent);"
+                    title="Restore default instructions"
+                  >
+                    Reset to Default
+                  </button>
+                </div>
+                <textarea
+                  v-model="settings.ai.splitPrompt"
+                  :placeholder="'Default:\n' + DEFAULT_SPLIT_PROMPT"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                ></textarea>
+              </div>
+
+              <!-- Add New Tabs Prompt -->
+              <div class="px-3 py-2 setting-row">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="flex items-center gap-1.5">
+                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                      Add New Tabs Prompt
+                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                    </label>
+                    <div class="relative group/help">
+                      <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                        <div class="font-bold mb-1" style="color: var(--accent);">Add New Tabs Prompt</div>
+                        Defines instructions for classifying new incoming tabs into existing groups.
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    v-if="settings.ai.classifyPrompt !== DEFAULT_CLASSIFY_PROMPT"
+                    @click="resetClassifyPrompt"
+                    class="text-[9px] hover:underline"
+                    style="color: var(--accent);"
+                    title="Restore default instructions"
+                  >
+                    Reset to Default
+                  </button>
+                </div>
+                <textarea
+                  v-model="settings.ai.classifyPrompt"
+                  :placeholder="'Default:\n' + DEFAULT_CLASSIFY_PROMPT"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                ></textarea>
+              </div>
+
+              <!-- Custom Prompt -->
+              <div class="px-3 py-2 setting-row">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="flex items-center gap-1.5">
+                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                      Custom System Prompt Instructions
+                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                    </label>
+                    <div class="relative group/help">
+                      <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                        <div class="font-bold mb-1" style="color: var(--accent);">Custom System Prompt</div>
+                        Defines global behavior and style rules.
+                        
+                        <strong>When to use</strong>: To enforce global formatting, tone, language, or constraints.
+                        
+                        <strong>Examples</strong>:
+                        • "Always respond in German."
+                        • "Never use emojis."
+                        • "Omit the 'www.' prefix in group names."
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    v-if="settings.ai.customPrompt"
+                    @click="resetSystemPrompt"
+                    class="text-[9px] hover:underline"
+                    style="color: var(--accent);"
+                    title="Clear custom instructions"
+                  >
+                    Clear
+                  </button>
+                </div>
+                <textarea
+                  v-model="settings.ai.customPrompt"
+                  placeholder="E.g., Never use emojis. Always categorize by project."
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 min-h-[80px] resize-y"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                ></textarea>
+              </div>
             </div>
           </template>
 

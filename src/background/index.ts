@@ -17,6 +17,9 @@ import {
   handleTabGroupUpdated,
   handleTabGroupRemoved,
   cancelActiveOperation,
+  getActiveOperations,
+  clearOperationError,
+  splitGroup,
 } from './tab-manager'
 import { searchTabs } from './searcher'
 import { recordTabVisit, getHistoryEntries } from './storage'
@@ -63,13 +66,19 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   }
 })
 
-// --- Smart group title: toggle title on collapse/expand ---
+// --- Smart group title: toggle title on collapse/expand + cache rebuild ---
+chrome.tabGroups.onCreated.addListener((group) => {
+  debouncedCacheRebuild(group.windowId)
+})
+
 chrome.tabGroups.onUpdated.addListener((group) => {
   handleTabGroupUpdated(group)
+  debouncedCacheRebuild(group.windowId)
 })
 
 chrome.tabGroups.onRemoved.addListener((group) => {
   handleTabGroupRemoved(group.id)
+  debouncedCacheRebuild(group.windowId)
 })
 
 // --- Command handler (keyboard shortcut) ---
@@ -162,6 +171,24 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'CLOSE_GROUP': {
       const tabIds = (message.payload as { tabIds: number[] })?.tabIds || []
       await closeGroupTabs(tabIds)
+      return { ok: true }
+    }
+
+    case 'SPLIT_GROUP': {
+      const groupId = (message.payload as { groupId: number })?.groupId
+      if (!groupId) throw new Error('Missing groupId')
+      await splitGroup(groupId)
+      return { ok: true }
+    }
+
+    case 'SPLIT_CURRENT_GROUP': {
+      const windowId = await resolveWindowId(message.payload)
+      const [activeTab] = await chrome.tabs.query({ active: true, windowId })
+      if (activeTab?.groupId !== undefined && activeTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+        await splitGroup(activeTab.groupId)
+      } else {
+        throw new Error('Active tab is not in a group')
+      }
       return { ok: true }
     }
 
@@ -291,6 +318,18 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       const url = (message.payload as { url: string })?.url
       if (url) {
         await chrome.tabs.create({ url })
+      }
+      return { ok: true }
+    }
+
+    case 'GET_ACTIVE_OPERATIONS': {
+      return getActiveOperations()
+    }
+
+    case 'CLEAR_OPERATION_ERROR': {
+      const windowId = (message.payload as { windowId: number })?.windowId
+      if (windowId) {
+        clearOperationError(windowId)
       }
       return { ok: true }
     }

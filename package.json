@@ -1,11 +1,13 @@
 {
   "name": "tabpilot",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Autopilot for your browser tabs. Smart grouping, instant search, optional AI — all local, all private.",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:firefox": "vite build --config vite.config.firefox.ts && node scripts/build-firefox.js",
+    "build:all": "npm run build && npm run build:firefox",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

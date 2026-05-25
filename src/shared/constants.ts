@@ -22,6 +22,9 @@ Guidelines:
 3. Use the same language as the tab titles.
 4. Group related items aggressively rather than fragmenting them.`
 
+export const DEFAULT_SPLIT_PROMPT = 'You are splitting an existing group of highly related tabs. Create more specific and granular sub-groups based on finer details and relationships.'
+export const DEFAULT_CLASSIFY_PROMPT = 'You are classifying new tabs. Decide if each new tab belongs to one of the existing groups or if a new group should be created. Be conservative about creating new groups.'
+
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   ai: {
     enabled: false,
@@ -31,6 +34,10 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     customPrompt: '',
     groupingPrompt: DEFAULT_GROUPING_PROMPT,
     fallbackToSort: false,
+    maxTokens: 16384,
+    coherencePrompt: 'You should prioritize placing tabs into these existing groups if they fit, rather than creating new, redundant groups.',
+    splitPrompt: DEFAULT_SPLIT_PROMPT,
+    classifyPrompt: DEFAULT_CLASSIFY_PROMPT,
   },
   language: 'auto',
   groupOnStartup: false,
