@@ -493,7 +493,10 @@ Only output the JSON object.`
         })
 
         if (!response.ok) {
-          const err = await response.text()
+          let err = await response.text()
+          if (!err.trim()) {
+            err = response.statusText || 'Unknown Error'
+          }
           throw new Error(`API error ${response.status}: ${err}`)
         }
 
@@ -555,7 +558,10 @@ Only output the JSON object.`
     })
 
     if (!response.ok) {
-      const err = await response.text()
+      let err = await response.text()
+      if (!err.trim()) {
+        err = response.statusText || 'Unknown Error'
+      }
       throw new Error(`API error ${response.status}: ${err}`)
     }
 
@@ -596,7 +602,10 @@ Only output the JSON object.`
     })
 
     if (!response.ok) {
-      const err = await response.text()
+      let err = await response.text()
+      if (!err.trim()) {
+        err = response.statusText || 'Unknown Error'
+      }
       throw new Error(`API error ${response.status}: ${err}`)
     }
 
@@ -639,7 +648,7 @@ Only output the JSON object.`
     )
 
     if (!response.ok) {
-      const errText = await response.text()
+      let errText = await response.text()
       try {
         const parsed = JSON.parse(errText)
         if (parsed.promptFeedback?.blockReason === 'PROHIBITED_CONTENT' || parsed.error?.message?.includes('PROHIBITED_CONTENT')) {
@@ -647,6 +656,9 @@ Only output the JSON object.`
         }
       } catch {
         // Not JSON
+      }
+      if (!errText.trim()) {
+        errText = response.statusText || 'Unknown Error'
       }
       throw new Error(`API error ${response.status}: ${errText}`)
     }
