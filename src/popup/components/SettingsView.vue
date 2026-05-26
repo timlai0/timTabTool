@@ -53,13 +53,19 @@ const DEFAULT_ENDPOINTS: Record<string, string> = {
 
 const PREDEFINED_MODELS: Record<string, { id: string, name: string, complexity: string, costFactor: string, maxTokens: string }[]> = {
   gemini: [
-    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', complexity: 'High', costFactor: '100%', maxTokens: '65K' },
     { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', complexity: 'Medium', costFactor: '75%', maxTokens: '65K' },
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', complexity: 'Medium', costFactor: '25%', maxTokens: '65K' },
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Preview)', complexity: 'High', costFactor: '100%', maxTokens: '65K' },
     { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', complexity: 'Low', costFactor: '12%', maxTokens: '65K' },
+    { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite (Preview)', complexity: 'Low', costFactor: '12%', maxTokens: '65K' },
+    { id: 'gemini-3.1-flash-live-preview', name: 'Gemini 3.1 Flash Live (Preview)', complexity: 'Low', costFactor: '37%', maxTokens: '65K' },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Preview)', complexity: 'Medium', costFactor: '25%', maxTokens: '65K' },
+    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro (Preview)', complexity: 'High', costFactor: '100%', maxTokens: '65K' },
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', complexity: 'High', costFactor: '62%', maxTokens: '65K' },
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', complexity: 'Medium', costFactor: '15%', maxTokens: '65K' },
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', complexity: 'Low', costFactor: '5%', maxTokens: '65K' },
-    { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', complexity: 'Low', costFactor: '4%', maxTokens: '65K' },
-    { id: 'gemini-flash-lite-latest', name: 'Gemini Flash Lite Latest', complexity: 'Low', costFactor: '4%', maxTokens: '65K' },
+    { id: 'gemini-2.5-flash-lite-preview-09-2025', name: 'Gemini 2.5 Flash Lite (Preview)', complexity: 'Low', costFactor: '5%', maxTokens: '65K' },
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', complexity: 'Medium', costFactor: '5%', maxTokens: '65K' },
+    { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', complexity: 'Low', costFactor: '3%', maxTokens: '65K' },
     { id: 'gemma-4-31b-it', name: 'Gemma 4 31B', complexity: 'Low', costFactor: 'Free', maxTokens: '8K' },
     { id: 'gemma-4-26b-a4b-it', name: 'Gemma 4 26B', complexity: 'Low', costFactor: 'Free', maxTokens: '8K' },
   ],
