@@ -1629,14 +1629,19 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
   function highlightText(text: string, query: string): string {
     if (!query || !text) return escapeHtml(text)
-    const terms = query.split(/\s+/).filter(Boolean)
-    let result = escapeHtml(text)
-    for (const term of terms) {
-      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const regex = new RegExp(`(${escaped})`, 'gi')
-      result = result.replace(regex, '<span class="atm-highlight">$1</span>')
-    }
-    return result
+    const terms = Array.from(new Set(query.split(/\s+/).filter(Boolean))).sort((a, b) => b.length - a.length)
+    if (terms.length === 0) return escapeHtml(text)
+
+    const escapedTerms = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi')
+    
+    const parts = text.split(regex)
+    return parts.map((part, i) => {
+      if (i % 2 === 1) {
+        return `<span class="atm-highlight">${escapeHtml(part)}</span>`
+      }
+      return escapeHtml(part)
+    }).join('')
   }
 
   function escapeHtml(str: string): string {
