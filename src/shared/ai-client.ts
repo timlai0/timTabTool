@@ -102,6 +102,9 @@ export class AIClient {
     if (model.includes('pro') || model.includes('preview') || model.includes('thinking') || model.includes('opus')) {
       // Reasoning/Pro models often use thought traces or elaborate reasoning which are billed as output tokens
       outputTokens += batches * 4500
+    } else if (model.includes('gemini-3') || model.includes('gemini-2')) {
+      // Newer Gemini Flash models also use thought tokens, but generally fewer than Pro models
+      outputTokens += batches * 2000
     }
     
     const totalTokens = inputTokens + outputTokens
