@@ -61,6 +61,7 @@ export interface AIConfig {
   apiKey: string
   endpoint?: string
   model?: string
+  sendFullUrl?: boolean
   batchSize?: number
   customPrompt?: string
   groupingPrompt?: string

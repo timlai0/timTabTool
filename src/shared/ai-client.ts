@@ -1,5 +1,5 @@
 import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory } from './types'
-import { DEFAULT_GROUPING_PROMPT } from './constants'
+import { DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS } from './constants'
 import { getAutoBatchSize } from './utils'
 
 export const SYSTEM_PROMPT = 'You are a helpful assistant that classifies browser tabs into categories. Be concise.'
@@ -35,6 +35,89 @@ export class AIClient {
   constructor(config: AIConfig, signal?: AbortSignal) {
     this.config = config
     this.signal = signal
+  }
+
+  /**
+   * Universal token and cost estimator for UI components.
+   * Calculates lengths exactly based on the built prompt structure.
+   */
+  static estimateCostAndTokens(
+    config: AIConfig,
+    tabsCount: number,
+    type: 'group' | 'split' | 'merge' | 'classify',
+    modelOverride?: string,
+    providerOverride?: string,
+    existingGroupNames: string[] = []
+  ) {
+    if (tabsCount === 0) {
+      return { tokens: 0, costStr: 'Free', tokensPerRequest: 0, requests: 0 }
+    }
+
+    const batchSize = config.batchSize || getAutoBatchSize(config.maxTokens)
+    const batches = Math.ceil(tabsCount / batchSize)
+
+    let systemPrompt = 'You are a helpful assistant that classifies browser tabs into categories. Be concise.'
+    if (config.customPrompt?.trim()) {
+      systemPrompt += `\n\nUser Instructions:\n${config.customPrompt.trim()}`
+    }
+
+    let userPrompt = ''
+    let baseUserPromptExtra = ''
+
+    if (type === 'group') {
+      userPrompt = config.groupingPrompt?.trim() || DEFAULT_GROUPING_PROMPT
+      if (existingGroupNames.length > 0) {
+        const coherenceInstruction = config.coherencePrompt?.trim() || 'You should try to place tabs into these existing groups if they are a strong semantic fit. However, if the existing groups are a poor fit or if the previous grouping structure seems bad, feel free to create a new group. Do not force tabs into mismatched groups.'
+        baseUserPromptExtra = `\n\nExisting groups created in previous batches: ${existingGroupNames.map(name => `"${name}"`).join(', ')}.\n${coherenceInstruction}`
+      }
+    } else if (type === 'split') {
+      userPrompt = config.splitPrompt?.trim() || 'You are splitting an existing group of highly related tabs. Create more specific and granular sub-groups based on finer details and relationships.'
+    } else if (type === 'merge') {
+      userPrompt = config.mergePrompt?.trim() || 'Analyze the browser tabs of this group and decide if they should be merged into one of the other existing tab groups. Choose the best fitting existing group from the list. If none of the existing groups are a good fit and this group should remain separate, respond with "KEEP". Be conservative about merging; only merge if the topics are highly related.'
+    } else if (type === 'classify') {
+      userPrompt = config.classifyPrompt?.trim() || 'You are classifying new tabs. Decide if each new tab belongs to one of the existing groups or if a new group should be created. Be conservative about creating new groups.'
+      if (existingGroupNames.length > 0) {
+        baseUserPromptExtra = '\n\nExisting Groups: ' + existingGroupNames.join(', ')
+      }
+    }
+
+    // Include the boilerplate formatting length
+    const formatInstructionLen = '\nColors: grey,blue,red,yellow,green,pink,purple,cyan\n\nTabs:\n\n\nJSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]'.length
+
+    const promptLen = systemPrompt.length + userPrompt.length + baseUserPromptExtra.length + formatInstructionLen
+    const promptTokens = Math.ceil(promptLen / 4)
+    const tokenMultiplier = config.sendFullUrl ? 55 : 20
+    
+    const inputTokens = batches * promptTokens + tabsCount * tokenMultiplier
+    const outputTokens = batches * 50
+    const totalTokens = inputTokens + outputTokens
+    
+    // Import MODEL_PRICING and PROVIDER_DEFAULTS dynamically to avoid circular dependencies if any
+    const provider = providerOverride || config.provider
+    
+    let model = modelOverride
+    if (!model) {
+      model = config.model || (provider === 'gemini' ? 'gemini-3.5-flash' : provider === 'claude' ? 'claude-sonnet-4-20250514' : 'gpt-4o-mini')
+    }
+    
+    let rates = MODEL_PRICING[model]
+    if (!rates) {
+      rates = PROVIDER_DEFAULTS[provider] || PROVIDER_DEFAULTS.openai
+    }
+    
+    const cost = (inputTokens * rates.input + outputTokens * rates.output) / 1000000
+    
+    let costStr = ''
+    if (cost === 0) costStr = 'Free'
+    else if (cost < 0.0001) costStr = '< $0.0001'
+    else costStr = `~$${cost.toFixed(4)}`
+    
+    return { 
+      tokens: totalTokens, 
+      costStr, 
+      tokensPerRequest: Math.round(totalTokens / batches),
+      requests: batches 
+    }
   }
 
   /**

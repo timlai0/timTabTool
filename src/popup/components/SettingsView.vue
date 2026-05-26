@@ -348,6 +348,20 @@ async function pasteConfig() {
           </label>
 
           <template v-if="settings.ai.enabled">
+            <!-- Send Full URL toggle -->
+            <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
+              <span class="text-xs flex-1" style="color: var(--text-primary);">Send Full URL (Higher Tokens)</span>
+              <div class="relative">
+                <input
+                  type="checkbox"
+                  v-model="settings.ai.sendFullUrl"
+                  class="sr-only peer"
+                />
+                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+              </div>
+            </label>
+
             <!-- Fallback to sort toggle -->
             <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
               <span class="text-xs flex-1" style="color: var(--text-primary);">{{ getMessage('fallbackToSort') }}</span>

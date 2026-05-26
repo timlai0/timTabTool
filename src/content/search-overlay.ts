@@ -1,4 +1,13 @@
 import cssText from './search-overlay.css?inline'
+import { AIClient } from '../shared/ai-client'
+
+interface CommandItem {
+  key: string
+  title: string
+  description: string
+  action: string
+  sendFullUrl?: boolean
+}
 
 interface SearchResultItem {
   tab: {
@@ -16,6 +25,7 @@ interface SearchResultItem {
   commandKey?: string
   commandAction?: string
   commandDescription?: string
+  sendFullUrl?: boolean
 }
 
 // Guard against multiple injections
@@ -227,19 +237,33 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
   const AI_ACTIONS = [
     { cmd: '/group', action: 'GROUP_TABS', name: 'AI Group Tabs', descPrefix: 'Group all tabs using' },
+    { cmd: '/group -full', action: 'GROUP_TABS', name: 'AI Group Tabs (Full URL)', descPrefix: 'Group all tabs with full URLs using', sendFullUrl: true },
     { cmd: '/classify', action: 'CLASSIFY_NEW_TABS', name: 'Classify New Tabs', descPrefix: 'Classify ungrouped tabs using' },
+    { cmd: '/classify -full', action: 'CLASSIFY_NEW_TABS', name: 'Classify New Tabs (Full URL)', descPrefix: 'Classify ungrouped tabs with full URLs using', sendFullUrl: true },
     { cmd: '/split', action: 'SPLIT_CURRENT_GROUP', name: 'Split Current Group', descPrefix: 'Split current group using' },
+    { cmd: '/split -full', action: 'SPLIT_CURRENT_GROUP', name: 'Split Current Group (Full URL)', descPrefix: 'Split current group with full URLs using', sendFullUrl: true },
     { cmd: '/merge', action: 'MERGE_CURRENT_GROUP', name: 'Merge Current Group', descPrefix: 'Merge current group using' },
+    { cmd: '/merge -full', action: 'MERGE_CURRENT_GROUP', name: 'Merge Current Group (Full URL)', descPrefix: 'Merge current group with full URLs using', sendFullUrl: true },
   ]
 
-  for (const { cmd, action, name, descPrefix } of AI_ACTIONS) {
+  for (const { cmd, action, name, descPrefix, sendFullUrl } of AI_ACTIONS) {
+    // Add base command without model
+    COMMANDS.push({
+      key: cmd,
+      title: name,
+      description: descPrefix + ' default model',
+      action: action,
+      ...(sendFullUrl ? { sendFullUrl: true } : {})
+    })
+
     for (const modelId of Object.keys(MODEL_PRICING)) {
       const displayName = MODEL_NAMES[modelId] || modelId
       COMMANDS.push({
         key: `${cmd} ${modelId}`,
         title: `${name} (${displayName})`,
         description: `${descPrefix} ${displayName}`,
-        action: action
+        action: action,
+        ...(sendFullUrl ? { sendFullUrl: true } : {})
       })
     }
   }
@@ -298,43 +322,24 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     modelOverride?: string,
     providerOverride?: string
   ) {
-    if (tabs === 0) {
-      return { tokens: 0, costStr: 'Free' }
-    }
-    
-    let promptLen = 1000
-    if (aiSettings.customPrompt) promptLen += aiSettings.customPrompt.length
-    
-    if (type === 'group') {
-      if (aiSettings.groupingPrompt) promptLen += aiSettings.groupingPrompt.length
-    } else if (type === 'split') {
-      if (aiSettings.splitPrompt) promptLen += aiSettings.splitPrompt.length
-    } else if (type === 'merge') {
-      if (aiSettings.mergePrompt) promptLen += aiSettings.mergePrompt.length
-    } else if (type === 'classify') {
-      if (aiSettings.classifyPrompt) promptLen += aiSettings.classifyPrompt.length
+    // If not enabled, return empty
+    if (!aiSettings || tabs === 0) {
+      return { tokens: 0, costStr: 'Free', requests: 0 }
     }
 
-    const promptTokens = Math.ceil(promptLen / 4)
-    const inputTokens = promptTokens + tabs * 20
-    const outputTokens = type === 'group' ? Math.max(100, tabs * 20) : type === 'split' ? 100 : 50
-    const totalTokens = inputTokens + outputTokens
-    
-    const provider = providerOverride || aiSettings.provider
-    const model = modelOverride || getActiveModel(aiSettings)
-    
-    let rates = (MODEL_PRICING as any)[model]
-    if (!rates) {
-      rates = (PROVIDER_DEFAULTS as any)[provider] || PROVIDER_DEFAULTS.openai
+    const est = AIClient.estimateCostAndTokens(
+      aiSettings,
+      tabs,
+      type,
+      modelOverride,
+      providerOverride
+    )
+
+    return {
+      tokens: est.tokens,
+      costStr: est.costStr,
+      requests: est.requests
     }
-    
-    const cost = (inputTokens * rates.input + outputTokens * rates.output) / 1000000
-    let costStr = ''
-    if (cost === 0) costStr = 'Free'
-    else if (cost < 0.0001) costStr = '< $0.0001'
-    else costStr = `~$${cost.toFixed(4)}`
-    
-    return { tokens: totalTokens, costStr }
   }
 
   async function loadMetrics() {
@@ -405,7 +410,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       return
     }
 
-    const aiSettings = overlayMetrics.aiSettings
+    const aiSettings = { ...overlayMetrics.aiSettings }
+    if (result.sendFullUrl) {
+      aiSettings.sendFullUrl = true
+    }
     
     if (!aiSettings.enabled || !aiSettings.apiKey) {
       detailsPanel.innerHTML = `
@@ -465,34 +473,23 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     let userPrompt = ''
     let titleStr = ''
     let tabCount = 0
-    let estRequests = 1
 
     if (isGroup) {
       titleStr = 'AI Grouping Preview'
       userPrompt = aiSettings.groupingPrompt || 'Organize these browser tabs into semantic, highly-related groups.'
       tabCount = overlayMetrics.unpinnedTabsCount
-      if (action === 'GROUP_TABS_SINGLE') {
-        estRequests = 1
-      } else {
-        const batchSize = aiSettings.batchSize || 30
-        estRequests = Math.max(1, Math.ceil(tabCount / batchSize))
-      }
     } else if (action === 'SPLIT_CURRENT_GROUP') {
       titleStr = 'AI Split Group Preview'
       userPrompt = aiSettings.splitPrompt || 'You are splitting an existing group of highly related tabs. Create more specific and granular sub-groups based on finer details and relationships.'
       tabCount = overlayMetrics.currentGroupTabsCount
-      estRequests = 1
     } else if (action === 'MERGE_CURRENT_GROUP') {
       titleStr = 'AI Merge Group Preview'
       userPrompt = aiSettings.mergePrompt || 'Analyze the browser tabs of this group and decide if they should be merged into one of the other existing tab groups. Choose the best fitting existing group from the list. If none of the existing groups are a good fit and this group should remain separate, respond with "KEEP". Be conservative about merging; only merge if the topics are highly related.'
       tabCount = overlayMetrics.currentGroupTabsCount
-      estRequests = 1
     } else if (isClassify) {
       titleStr = 'AI Classification Preview'
       userPrompt = aiSettings.classifyPrompt || 'You are classifying new tabs. Decide if each new tab belongs to one of the existing groups or if a new group should be created. Be conservative about creating new groups.'
       tabCount = overlayMetrics.newTabsCount
-      const batchSize = aiSettings.batchSize || 30
-      estRequests = Math.max(1, Math.ceil(tabCount / batchSize))
     }
 
     const typeStr = isGroup ? 'group' : (action === 'SPLIT_CURRENT_GROUP' ? 'split' : (action === 'MERGE_CURRENT_GROUP' ? 'merge' : 'classify'))
@@ -519,7 +516,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         </div>
         <div class="atm-details-est-row">
           <span class="atm-details-est-label">Est. Requests:</span>
-          <span style="font-weight:600;">${estRequests} request${estRequests > 1 ? 's' : ''}</span>
+          <span style="font-weight:600;">${est.requests} request${est.requests > 1 ? 's' : ''}</span>
         </div>
         <div class="atm-details-est-row">
           <span class="atm-details-est-label">Total Tokens:</span>
@@ -952,7 +949,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     if (result.commandKey && result.commandKey.includes(' ')) {
       const parts = result.commandKey.split(' ')
-      const possibleModel = parts[1]
+      const possibleModel = parts[parts.length - 1]
       if (possibleModel && (MODEL_PRICING as any)[possibleModel] !== undefined) {
         model = possibleModel
         if (model.startsWith('gemini') || model.startsWith('gemma')) {
@@ -967,6 +964,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     } else if (overlayMetrics?.aiSettings) {
       model = getActiveModel(overlayMetrics.aiSettings)
       provider = overlayMetrics.aiSettings.provider
+    }
+
+    if (result.sendFullUrl) {
+      payload = payload || {}
+      payload.sendFullUrl = true
     }
 
     const modelDisplayName = MODEL_NAMES[model] || model
@@ -1234,7 +1236,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         isCommand: true,
         commandKey: c.key,
         commandAction: c.action,
-        commandDescription: c.description
+        commandDescription: c.description,
+        sendFullUrl: c.sendFullUrl
       }))
       selectedIndex = results.length > 0 ? 0 : -1
       renderResults(resultsList, query)

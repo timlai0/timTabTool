@@ -2,7 +2,7 @@
 import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
 import { getMessage } from '../shared/i18n'
 import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT } from '../shared/constants'
-import { SYSTEM_PROMPT } from '../shared/ai-client'
+import { SYSTEM_PROMPT, AIClient } from '../shared/ai-client'
 import { getAutoBatchSize } from '../shared/utils'
 import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInfo } from '../shared/types'
 import GroupList from './components/GroupList.vue'
@@ -425,33 +425,24 @@ const activeModel = computed(() => {
 
 function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classify' | null = 'group') {
   const type = countType === 'classify' ? 'classify' : 'group'
-  const tabs = type === 'group' ? unpinnedTabsCount(w) : newTabsCount(w)
-  if (tabs === 0) {
-    return { tokens: 0, costStr: 'Free', tokensPerRequest: 0 }
-  }
-  const batches = Math.ceil(tabs / (aiSettings.value.batchSize || getAutoBatchSize(aiSettings.value.maxTokens)))
-  const promptLen = getSystemPrompt().length + (type === 'group' ? getGroupingPrompt().length : getClassifyPrompt(w).length)
-  const promptTokens = Math.ceil(promptLen / 4)
-  const inputTokens = batches * promptTokens + tabs * 20
-  const outputTokens = batches * 50
-  const totalTokens = inputTokens + outputTokens
+  const tabsCount = type === 'group' ? unpinnedTabsCount(w) : newTabsCount(w)
   
-  const provider = aiSettings.value.provider
-  const model = activeModel.value
+  const existingGroupNames = type === 'group' 
+    ? [] // Group mode doesn't load existing group names here
+    : w.groups
+      .filter(g => g.groupName && g.groupName !== 'New Tabs')
+      .map(g => g.groupName as string)
+      
+  const est = AIClient.estimateCostAndTokens(
+    aiSettings.value as any,
+    tabsCount,
+    type,
+    activeModel.value,
+    aiSettings.value.provider,
+    existingGroupNames
+  )
   
-  let rates = MODEL_PRICING[model]
-  if (!rates) {
-    rates = PROVIDER_DEFAULTS[provider] || PROVIDER_DEFAULTS.openai
-  }
-  
-  const cost = (inputTokens * rates.input + outputTokens * rates.output) / 1000000
-  
-  let costStr = ''
-  if (cost === 0) costStr = 'Free'
-  else if (cost < 0.0001) costStr = '< $0.0001'
-  else costStr = `~$${cost.toFixed(4)}`
-  
-  return { tokens: totalTokens, costStr, tokensPerRequest: Math.round(totalTokens / batches) }
+  return { tokens: est.tokens, costStr: est.costStr, tokensPerRequest: est.tokensPerRequest }
 }
 
 function newTabsCount(w: WindowGroupsInfo): number {
