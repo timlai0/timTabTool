@@ -576,6 +576,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
           return {
             windowId: wid,
             tabCount: tabs.length,
+            unpinnedTabCount: tabs.filter(t => !t.pinned).length,
             focused: !!win.focused,
             groups,
             hasGroups,

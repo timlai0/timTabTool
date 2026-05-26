@@ -93,6 +93,7 @@ export interface ExtensionSettings {
 export interface WindowGroupsInfo {
   windowId: number
   tabCount: number
+  unpinnedTabCount: number
   focused: boolean
   groups: GroupedTabs[]
   hasGroups: boolean

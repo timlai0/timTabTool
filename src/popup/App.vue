@@ -362,9 +362,7 @@ function windowLabel(w: WindowGroupsInfo, idx: number): string {
   return `${label}`
 }
 
-function unpinnedTabsCount(w: WindowGroupsInfo): number {
-  return w.groups.reduce((sum, g) => sum + g.tabs.length, 0)
-}
+// removed duplicate unpinnedTabsCount
 
 function getSystemPrompt() {
   if (aiSettings.value.customPrompt?.trim()) {
@@ -459,6 +457,10 @@ function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classi
 function newTabsCount(w: WindowGroupsInfo): number {
   const group = w.groups.find((g) => g.groupName === 'New Tabs')
   return group ? group.tabs.length : 0
+}
+
+function unpinnedTabsCount(w: WindowGroupsInfo): number {
+  return w.unpinnedTabCount
 }
 
 async function handleCancelGroup(windowId: number) {
