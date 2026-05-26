@@ -84,21 +84,30 @@ export class AIClient {
     // Include the boilerplate formatting length
     const formatInstructionLen = '\nColors: grey,blue,red,yellow,green,pink,purple,cyan\n\nTabs:\n\n\nJSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]'.length
 
+    let model = modelOverride
+    if (!model) {
+      model = config.model || (providerOverride || config.provider === 'gemini' ? 'gemini-3.5-flash' : config.provider === 'claude' ? 'claude-sonnet-4-20250514' : 'gpt-4o-mini')
+    }
+
     const promptLen = systemPrompt.length + userPrompt.length + baseUserPromptExtra.length + formatInstructionLen
     const promptTokens = Math.ceil(promptLen / 4)
-    const tokenMultiplier = config.sendFullUrl ? 55 : 20
+    
+    // Increase baseline token multiplier since URLs and Titles tend to consume more tokens than expected
+    const tokenMultiplier = config.sendFullUrl ? 110 : 35
     
     const inputTokens = batches * promptTokens + tabsCount * tokenMultiplier
-    const outputTokens = batches * 50
+    
+    // Estimate output tokens - JSON formatting takes space, plus thought tokens for reasoning models
+    let outputTokens = batches * 150 + tabsCount * 10
+    if (model.includes('pro') || model.includes('preview') || model.includes('thinking') || model.includes('opus')) {
+      // Reasoning/Pro models often use thought traces or elaborate reasoning which are billed as output tokens
+      outputTokens += batches * 4500
+    }
+    
     const totalTokens = inputTokens + outputTokens
     
     // Import MODEL_PRICING and PROVIDER_DEFAULTS dynamically to avoid circular dependencies if any
     const provider = providerOverride || config.provider
-    
-    let model = modelOverride
-    if (!model) {
-      model = config.model || (provider === 'gemini' ? 'gemini-3.5-flash' : provider === 'claude' ? 'claude-sonnet-4-20250514' : 'gpt-4o-mini')
-    }
     
     let rates = MODEL_PRICING[model]
     if (!rates) {
@@ -223,11 +232,25 @@ Only output the JSON array, no other text.`
   }
 
   private formatTabForPrompt(tab: { url: string; title: string }, index: number, stripTitles = false): string {
-    const domain = new URL(tab.url).hostname.replace(/^www\./, '')
+    let urlString = tab.url || ''
+    let domain = ''
+    try {
+      domain = new URL(urlString).hostname.replace(/^www\./, '')
+    } catch {
+      domain = urlString
+    }
+
     if (stripTitles) {
+      if (this.config.sendFullUrl) {
+        return `${index}. (URL: ${urlString})`
+      }
       return `${index}. (${domain})`
     }
+
     const shortTitle = tab.title.length > 40 ? tab.title.slice(0, 40) + '…' : tab.title
+    if (this.config.sendFullUrl) {
+      return `${index}. ${shortTitle} (URL: ${urlString})`
+    }
     return `${index}. ${shortTitle} (${domain})`
   }
 
