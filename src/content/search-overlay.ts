@@ -13,6 +13,7 @@ interface SearchResultItem {
   isOpen: boolean
   scoreDetails?: string
   isCommand?: boolean
+  commandKey?: string
   commandAction?: string
   commandDescription?: string
 }
@@ -52,23 +53,59 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let aiProgressInterval: ReturnType<typeof setInterval> | null = null
   let aiProgressTimeout: ReturnType<typeof setTimeout> | null = null
 
-  const COMMANDS = [
+  const MODEL_PRICING = {
+    'gemini-3.5-flash': { input: 1.50, output: 9.00 },
+    'gemini-3.1-pro-preview': { input: 2.00, output: 12.00 },
+    'gemini-3.1-flash-lite': { input: 0.25, output: 1.50 },
+    'gemini-3.1-flash-lite-preview': { input: 0.25, output: 1.50 },
+    'gemini-3.1-flash-live-preview': { input: 0.75, output: 4.50 },
+    'gemini-3-flash-preview': { input: 0.50, output: 3.00 },
+    'gemini-3-pro-preview': { input: 2.00, output: 12.00 },
+    'gemini-2.5-pro': { input: 1.25, output: 10.00 },
+    'gemini-2.5-flash': { input: 0.30, output: 2.50 },
+    'gemini-2.5-flash-lite': { input: 0.10, output: 0.40 },
+    'gemini-2.5-flash-lite-preview-09-2025': { input: 0.10, output: 0.40 },
+    'gemini-2.0-flash': { input: 0.10, output: 0.40 },
+    'gemini-2.0-flash-lite': { input: 0.075, output: 0.30 },
+    'gemma-4-31b-it': { input: 0, output: 0 },
+    'gemma-4-26b-a4b-it': { input: 0, output: 0 },
+    'gpt-4o': { input: 2.50, output: 10.00 },
+    'gpt-4o-mini': { input: 0.15, output: 0.60 },
+    'claude-3-opus-20240229': { input: 15.00, output: 75.00 },
+    'claude-3-5-sonnet-20240620': { input: 3.00, output: 15.00 },
+    'claude-3-haiku-20240307': { input: 0.25, output: 1.25 },
+  }
+
+  const PROVIDER_DEFAULTS = {
+    openai: { input: 0.15, output: 0.60 },
+    claude: { input: 3.00, output: 15.00 },
+    gemini: { input: 1.50, output: 9.00 },
+    custom: { input: 0.15, output: 0.60 },
+  }
+
+  const BASE_COMMANDS = [
     {
       key: '/group',
-      title: 'Group Tabs',
-      description: 'Organize all tabs in this window into smart groups',
+      title: 'AI Group Tabs',
+      description: 'Organize all tabs in this window into smart groups using AI',
       action: 'GROUP_TABS'
     },
     {
+      key: '/group single',
+      title: 'AI Group Tabs (Single Request)',
+      description: 'Group all tabs using AI in a single request (no batching)',
+      action: 'GROUP_TABS_SINGLE'
+    },
+    {
       key: '/ungroup',
-      title: 'Ungroup All',
-      description: 'Ungroup all tabs in this window',
+      title: 'Ungroup All Tabs',
+      description: 'Ungroup all tabs in this window instantly',
       action: 'UNGROUP_ALL'
     },
     {
       key: '/split',
       title: 'Split Current Group',
-      description: 'Split the current tab group using AI',
+      description: 'Split the current tab group into finer sub-groups using AI',
       action: 'SPLIT_CURRENT_GROUP'
     },
     {
@@ -100,8 +137,122 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       title: 'Toggle Group Titles',
       description: 'Toggle group title visibility in the tab bar',
       action: 'TOGGLE_GROUP_TITLES'
+    },
+    {
+      key: '/close-duplicates',
+      title: 'Close Duplicate Tabs',
+      description: 'Close all duplicate tabs in this window (retains first unique URL)',
+      action: 'CLOSE_DUPLICATES'
+    },
+    {
+      key: '/close-domain',
+      title: 'Close Domain Tabs',
+      description: 'Close all tabs in this window belonging to the current tab\'s domain',
+      action: 'CLOSE_DOMAIN'
+    },
+    {
+      key: '/isolate-domain',
+      title: 'Isolate Domain Tabs',
+      description: 'Move all tabs of the current tab\'s domain to a new browser window',
+      action: 'ISOLATE_DOMAIN'
+    },
+    {
+      key: '/sort-tabs',
+      title: 'Sort Tabs',
+      description: 'Sort all unpinned tabs in this window alphabetically by domain & title',
+      action: 'SORT_TABS'
+    },
+    {
+      key: '/merge-windows',
+      title: 'Merge Windows',
+      description: 'Merge all other browser windows into this focused window',
+      action: 'MERGE_WINDOWS'
+    },
+    {
+      key: '/mute-all',
+      title: 'Mute All Tabs',
+      description: 'Mute audio playback on all tabs in this window',
+      action: 'MUTE_ALL'
+    },
+    {
+      key: '/unmute-all',
+      title: 'Unmute All Tabs',
+      description: 'Unmute audio playback on all tabs in this window',
+      action: 'UNMUTE_ALL'
+    },
+    {
+      key: '/close-left',
+      title: 'Close Tabs to Left',
+      description: 'Close all unpinned tabs to the left of the current active tab',
+      action: 'CLOSE_LEFT'
+    },
+    {
+      key: '/close-right',
+      title: 'Close Tabs to Right',
+      description: 'Close all unpinned tabs to the right of the current active tab',
+      action: 'CLOSE_RIGHT'
+    },
+    {
+      key: '/model',
+      title: 'Set Default Model',
+      description: 'Set the default AI model for TabPilot groupings',
+      action: 'CHANGE_MODEL'
     }
   ]
+
+  const MODEL_NAMES: Record<string, string> = {
+    'gemini-3.5-flash': 'Gemini 3.5 Flash',
+    'gemini-3.1-pro-preview': 'Gemini 3.1 Pro (Preview)',
+    'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
+    'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash Lite (Preview)',
+    'gemini-3.1-flash-live-preview': 'Gemini 3.1 Flash Live (Preview)',
+    'gemini-3-flash-preview': 'Gemini 3 Flash (Preview)',
+    'gemini-3-pro-preview': 'Gemini 3 Pro (Preview)',
+    'gemini-2.5-pro': 'Gemini 2.5 Pro',
+    'gemini-2.5-flash': 'Gemini 2.5 Flash',
+    'gemini-2.5-flash-lite': 'Gemini 2.5 Flash Lite',
+    'gemini-2.5-flash-lite-preview-09-2025': 'Gemini 2.5 Flash Lite (Preview)',
+    'gemini-2.0-flash': 'Gemini 2.0 Flash',
+    'gemini-2.0-flash-lite': 'Gemini 2.0 Flash Lite',
+    'gemma-4-31b-it': 'Gemma 4 31B',
+    'gemma-4-26b-a4b-it': 'Gemma 4 26B',
+    'gpt-4o': 'GPT-4o',
+    'gpt-4o-mini': 'GPT-4o Mini',
+    'claude-3-opus-20240229': 'Claude 3 Opus',
+    'claude-3-5-sonnet-20240620': 'Claude 3.5 Sonnet',
+    'claude-3-haiku-20240307': 'Claude 3 Haiku',
+  }
+
+  const COMMANDS = [...BASE_COMMANDS]
+
+  const AI_ACTIONS = [
+    { cmd: '/group', action: 'GROUP_TABS', name: 'AI Group Tabs', descPrefix: 'Group all tabs using' },
+    { cmd: '/classify', action: 'CLASSIFY_NEW_TABS', name: 'Classify New Tabs', descPrefix: 'Classify ungrouped tabs using' },
+    { cmd: '/split', action: 'SPLIT_CURRENT_GROUP', name: 'Split Current Group', descPrefix: 'Split current group using' },
+    { cmd: '/merge', action: 'MERGE_CURRENT_GROUP', name: 'Merge Current Group', descPrefix: 'Merge current group using' },
+  ]
+
+  for (const { cmd, action, name, descPrefix } of AI_ACTIONS) {
+    for (const modelId of Object.keys(MODEL_PRICING)) {
+      const displayName = MODEL_NAMES[modelId] || modelId
+      COMMANDS.push({
+        key: `${cmd} ${modelId}`,
+        title: `${name} (${displayName})`,
+        description: `${descPrefix} ${displayName}`,
+        action: action
+      })
+    }
+  }
+
+  for (const modelId of Object.keys(MODEL_PRICING)) {
+    const displayName = MODEL_NAMES[modelId] || modelId
+    COMMANDS.push({
+      key: `/model ${modelId}`,
+      title: `Set Default Model (${displayName})`,
+      description: `Change the default model in Settings to ${displayName}`,
+      action: 'CHANGE_MODEL'
+    })
+  }
 
   window.addEventListener('mousemove', (e) => {
     mouseX = e.clientX
@@ -129,30 +280,6 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
   }, { passive: true })
 
-  const MODEL_PRICING = {
-    'gemini-3.1-pro-preview': { input: 2.00, output: 12.00 },
-    'gemini-3.5-flash': { input: 1.50, output: 9.00 },
-    'gemini-2.5-flash': { input: 0.50, output: 3.00 },
-    'gemini-3.1-flash-lite': { input: 0.25, output: 1.50 },
-    'gemini-2.5-flash-lite': { input: 0.10, output: 0.40 },
-    'gemini-2.0-flash-lite': { input: 0.075, output: 0.30 },
-    'gemini-flash-lite-latest': { input: 0.075, output: 0.30 },
-    'gemma-4-31b-it': { input: 0, output: 0 },
-    'gemma-4-26b-a4b-it': { input: 0, output: 0 },
-    'gpt-4o': { input: 2.50, output: 10.00 },
-    'gpt-4o-mini': { input: 0.15, output: 0.60 },
-    'claude-3-opus-20240229': { input: 15.00, output: 75.00 },
-    'claude-3-5-sonnet-20240620': { input: 3.00, output: 15.00 },
-    'claude-3-haiku-20240307': { input: 0.25, output: 1.25 },
-  }
-
-  const PROVIDER_DEFAULTS = {
-    openai: { input: 0.15, output: 0.60 },
-    claude: { input: 3.00, output: 15.00 },
-    gemini: { input: 1.50, output: 9.00 },
-    custom: { input: 0.15, output: 0.60 },
-  }
-
   function getActiveModel(aiSettings: any) {
     if (aiSettings.model) return aiSettings.model
     const defaults: Record<string, string> = {
@@ -164,7 +291,13 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     return defaults[aiSettings.provider] || 'gpt-4o-mini'
   }
 
-  function estimateAICost(aiSettings: any, tabs: number, type: 'group' | 'split' | 'merge' | 'classify') {
+  function estimateAICost(
+    aiSettings: any,
+    tabs: number,
+    type: 'group' | 'split' | 'merge' | 'classify',
+    modelOverride?: string,
+    providerOverride?: string
+  ) {
     if (tabs === 0) {
       return { tokens: 0, costStr: 'Free' }
     }
@@ -187,8 +320,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     const outputTokens = type === 'group' ? Math.max(100, tabs * 20) : type === 'split' ? 100 : 50
     const totalTokens = inputTokens + outputTokens
     
-    const provider = aiSettings.provider
-    const model = getActiveModel(aiSettings)
+    const provider = providerOverride || aiSettings.provider
+    const model = modelOverride || getActiveModel(aiSettings)
     
     let rates = (MODEL_PRICING as any)[model]
     if (!rates) {
@@ -287,7 +420,44 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       return
     }
 
-    const model = getActiveModel(aiSettings)
+    let model = getActiveModel(aiSettings)
+    let provider = aiSettings.provider
+
+    if (result.commandKey && result.commandKey.includes(' ')) {
+      const parts = result.commandKey.split(' ')
+      const possibleModel = parts[1]
+      if (possibleModel && (MODEL_PRICING as any)[possibleModel] !== undefined) {
+        model = possibleModel
+        if (model.startsWith('gemini') || model.startsWith('gemma')) {
+          provider = 'gemini'
+        } else if (model.startsWith('gpt')) {
+          provider = 'openai'
+        } else if (model.startsWith('claude')) {
+          provider = 'claude'
+        }
+      }
+    } else {
+      if (action.includes('GEMINI_FLASH') || action.includes('_GEMINI')) {
+        model = 'gemini-3.5-flash'
+        provider = 'gemini'
+      } else if (action.includes('GEMINI_2_5_FLASH')) {
+        model = 'gemini-2.5-flash'
+        provider = 'gemini'
+      } else if (action.includes('GPT_MINI') || action.includes('_GPT')) {
+        model = 'gpt-4o-mini'
+        provider = 'openai'
+      } else if (action.includes('GPT_4O')) {
+        model = 'gpt-4o'
+        provider = 'openai'
+      } else if (action.includes('CLAUDE_SONNET')) {
+        model = 'claude-3-5-sonnet-20240620'
+        provider = 'claude'
+      }
+    }
+
+    const isGroup = action === 'GROUP_TABS' || action.startsWith('GROUP_TABS_')
+    const isClassify = action === 'CLASSIFY_NEW_TABS' || action.startsWith('CLASSIFY_NEW_TABS_')
+
     let systemPrompt = aiSettings.customPrompt?.trim() 
       ? `You are a helpful assistant that classifies browser tabs into categories. Be concise.\n\nUser Instructions:\n${aiSettings.customPrompt.trim()}`
       : 'You are a helpful assistant that classifies browser tabs into categories. Be concise.'
@@ -297,12 +467,16 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     let tabCount = 0
     let estRequests = 1
 
-    if (action === 'GROUP_TABS') {
+    if (isGroup) {
       titleStr = 'AI Grouping Preview'
       userPrompt = aiSettings.groupingPrompt || 'Organize these browser tabs into semantic, highly-related groups.'
       tabCount = overlayMetrics.unpinnedTabsCount
-      const batchSize = aiSettings.batchSize || 30
-      estRequests = Math.max(1, Math.ceil(tabCount / batchSize))
+      if (action === 'GROUP_TABS_SINGLE') {
+        estRequests = 1
+      } else {
+        const batchSize = aiSettings.batchSize || 30
+        estRequests = Math.max(1, Math.ceil(tabCount / batchSize))
+      }
     } else if (action === 'SPLIT_CURRENT_GROUP') {
       titleStr = 'AI Split Group Preview'
       userPrompt = aiSettings.splitPrompt || 'You are splitting an existing group of highly related tabs. Create more specific and granular sub-groups based on finer details and relationships.'
@@ -313,7 +487,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       userPrompt = aiSettings.mergePrompt || 'Analyze the browser tabs of this group and decide if they should be merged into one of the other existing tab groups. Choose the best fitting existing group from the list. If none of the existing groups are a good fit and this group should remain separate, respond with "KEEP". Be conservative about merging; only merge if the topics are highly related.'
       tabCount = overlayMetrics.currentGroupTabsCount
       estRequests = 1
-    } else if (action === 'CLASSIFY_NEW_TABS') {
+    } else if (isClassify) {
       titleStr = 'AI Classification Preview'
       userPrompt = aiSettings.classifyPrompt || 'You are classifying new tabs. Decide if each new tab belongs to one of the existing groups or if a new group should be created. Be conservative about creating new groups.'
       tabCount = overlayMetrics.newTabsCount
@@ -321,12 +495,13 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       estRequests = Math.max(1, Math.ceil(tabCount / batchSize))
     }
 
-    const est = estimateAICost(aiSettings, tabCount, action === 'GROUP_TABS' ? 'group' : action === 'SPLIT_CURRENT_GROUP' ? 'split' : action === 'MERGE_CURRENT_GROUP' ? 'merge' : 'classify')
+    const typeStr = isGroup ? 'group' : (action === 'SPLIT_CURRENT_GROUP' ? 'split' : (action === 'MERGE_CURRENT_GROUP' ? 'merge' : 'classify'))
+    const est = estimateAICost(aiSettings, tabCount, typeStr, model, provider)
 
     detailsPanel.innerHTML = `
       <div class="atm-details-title">${titleStr}</div>
       <div class="atm-details-meta">
-        <span>Model: <span class="atm-details-model-name">${model}</span></span>
+        <span>Model: <span class="atm-details-model-name">${MODEL_NAMES[model] || model}</span></span>
         <span style="opacity:0.4;">•</span>
         <span>Privacy: <span style="font-weight:600;color:var(--text-secondary,#86868B);">AI Analysis</span></span>
       </div>
@@ -359,6 +534,44 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     detailsPanel.style.display = 'flex'
   }
 
+  function updateAutocomplete() {
+    if (!shadow) return
+    const ghost = shadow.querySelector('.atm-autocomplete-ghost') as HTMLDivElement
+    if (!ghost) return
+
+    const input = shadow.querySelector('.atm-input') as HTMLInputElement
+    if (!input) return
+
+    const query = input.value
+    if (!query.startsWith('/') || results.length === 0) {
+      ghost.innerHTML = ''
+      return
+    }
+
+    const selectedIdx = selectedIndex === -1 ? 0 : selectedIndex
+    const selected = results[selectedIdx]
+    if (!selected || !selected.isCommand || !selected.commandKey) {
+      ghost.innerHTML = ''
+      return
+    }
+
+    const key = selected.commandKey
+    if (key.toLowerCase().startsWith(query.toLowerCase())) {
+      const matchText = query
+      const suggestionTail = key.slice(query.length)
+      
+      const isDark = hostEl?.getAttribute('data-theme') === 'dark' || 
+        (!hostEl?.hasAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)
+      
+      const ghostColor = isDark ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)'
+      ghost.style.color = ghostColor
+
+      ghost.innerHTML = `<span style="color: transparent;">${escapeHtml(matchText)}</span><span style="opacity: 0.95;">${escapeHtml(suggestionTail)}</span>`
+    } else {
+      ghost.innerHTML = ''
+    }
+  }
+
   function init() {
     if (hostEl) return
 
@@ -386,21 +599,52 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     searchIcon.className = 'atm-search-icon'
     searchIcon.innerHTML = '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd" /></svg>'
 
+    const inputContainer = document.createElement('div')
+    inputContainer.className = 'atm-input-container'
+    inputContainer.style.position = 'relative'
+    inputContainer.style.flex = '1'
+    inputContainer.style.display = 'flex'
+    inputContainer.style.alignItems = 'center'
+
+    const ghost = document.createElement('div')
+    ghost.className = 'atm-autocomplete-ghost'
+    ghost.style.position = 'absolute'
+    ghost.style.left = '0'
+    ghost.style.top = '0'
+    ghost.style.pointerEvents = 'none'
+    ghost.style.fontSize = '16px'
+    ghost.style.fontFamily = 'inherit'
+    ghost.style.lineHeight = 'normal'
+    ghost.style.display = 'flex'
+    ghost.style.alignItems = 'center'
+    ghost.style.height = '100%'
+    ghost.style.whiteSpace = 'pre'
+    ghost.style.color = 'rgba(0, 0, 0, 0.3)'
+
     const input = document.createElement('input')
     input.className = 'atm-input'
     input.type = 'text'
     input.placeholder = 'Search tabs...'
+    input.style.background = 'transparent'
+    input.style.position = 'relative'
+    input.style.zIndex = '1'
+    input.style.width = '100%'
     input.addEventListener('input', () => {
       ignoreMouseHover = true
       clearTimeout(debounceTimer)
-      const query = input.value.trim()
-      if (!query) {
+      const query = input.value
+      updateAutocomplete()
+      if (!query.trim()) {
         doSearch('', resultsList)
         return
       }
-      debounceTimer = setTimeout(() => {
+      if (query.trimStart().startsWith('/')) {
         doSearch(query, resultsList)
-      }, 150)
+      } else {
+        debounceTimer = setTimeout(() => {
+          doSearch(query, resultsList)
+        }, 150)
+      }
     })
     input.addEventListener('keydown', (e) => {
       ignoreMouseHover = true
@@ -411,8 +655,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     shortcut.className = 'atm-shortcut'
     shortcut.textContent = 'ESC'
 
+    inputContainer.appendChild(ghost)
+    inputContainer.appendChild(input)
+
     inputWrap.appendChild(searchIcon)
-    inputWrap.appendChild(input)
+    inputWrap.appendChild(inputContainer)
     inputWrap.appendChild(shortcut)
 
     // ─── Premium Integrated Progress Bar DOM ───
@@ -472,8 +719,6 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     progressContainer.appendChild(progressBarBg)
     progressContainer.appendChild(progressDetail)
 
-    inputWrap.appendChild(progressContainer)
-
     const resultsList = document.createElement('div')
     resultsList.className = 'atm-results'
 
@@ -512,6 +757,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     detailsPanel.style.display = 'none'
 
     container.appendChild(inputWrap)
+    container.appendChild(progressContainer)
     container.appendChild(resultsList)
     container.appendChild(detailsPanel)
     container.appendChild(footer)
@@ -537,7 +783,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     } catch { /* ignore */ }
   }
 
-  function show() {
+  function show(initialQuery = '') {
     init()
     if (!hostEl || !shadow) return
     visible = true
@@ -564,8 +810,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     const input = shadow.querySelector('.atm-input') as HTMLInputElement
     const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
     if (input && resultsList) {
-      input.value = ''
-      doSearch('', resultsList)
+      input.value = initialQuery
+      doSearch(initialQuery, resultsList)
       setTimeout(() => input.focus(), 0)
     }
   }
@@ -583,51 +829,44 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
     
     if (shadow) {
-      const searchIcon = shadow.querySelector('.atm-search-icon') as HTMLDivElement
+      if (hostEl) {
+        hostEl.style.pointerEvents = ''
+      }
       const input = shadow.querySelector('.atm-input') as HTMLInputElement
-      const shortcut = shadow.querySelector('.atm-shortcut') as HTMLSpanElement
-      const backdrop = shadow.querySelector('.atm-backdrop') as HTMLDivElement
       const container = shadow.querySelector('.atm-container') as HTMLDivElement
+      const inputWrap = shadow.querySelector('.atm-input-wrap') as HTMLDivElement
+      const backdrop = shadow.querySelector('.atm-backdrop') as HTMLDivElement
       const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
       const detailsPanel = shadow.querySelector('.atm-details-panel') as HTMLDivElement
       const footer = shadow.querySelector('.atm-footer') as HTMLDivElement
-      const inputWrap = shadow.querySelector('.atm-input-wrap') as HTMLDivElement
       
-      if (searchIcon) searchIcon.style.display = 'block'
       if (input) {
-        input.style.display = 'block'
+        input.disabled = false
         setTimeout(() => input.focus(), 0)
       }
-      if (shortcut) shortcut.style.display = 'inline'
 
-      // Restore progress-only mode styling modifications
-      if (backdrop) {
-        backdrop.style.background = ''
-        backdrop.style.backdropFilter = ''
-        ;(backdrop.style as any).webkitBackdropFilter = ''
-        backdrop.style.pointerEvents = ''
-      }
       if (container) {
-        container.style.position = ''
-        container.style.top = ''
-        container.style.left = ''
-        container.style.transform = ''
-        container.style.width = ''
-        container.style.height = ''
-        container.style.borderRadius = ''
-        container.style.boxShadow = ''
+        container.style.opacity = ''
         container.style.pointerEvents = ''
         container.style.background = ''
-        container.style.backdropFilter = ''
-        ;(container.style as any).webkitBackdropFilter = ''
+        container.style.boxShadow = ''
+      }
+      if (backdrop) {
+        backdrop.style.background = ''
+        backdrop.style.pointerEvents = ''
+        backdrop.style.backdropFilter = ''
+        backdrop.style.webkitBackdropFilter = ''
+      }
+      if (progressContainer) {
+        progressContainer.style.pointerEvents = ''
       }
       if (inputWrap) {
-        inputWrap.style.borderBottom = ''
-        inputWrap.style.padding = ''
+        inputWrap.style.display = ''
+        inputWrap.style.visibility = ''
       }
-      if (resultsList) resultsList.style.display = ''
-      if (detailsPanel) detailsPanel.style.display = ''
-      if (footer) footer.style.display = ''
+      if (resultsList) resultsList.style.visibility = ''
+      if (detailsPanel) detailsPanel.style.visibility = ''
+      if (footer) footer.style.visibility = ''
     }
 
     if (progressContainer) progressContainer.style.display = 'none'
@@ -646,50 +885,35 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
   function switchToProgressOnlyMode() {
     if (!shadow) return
-    const backdrop = shadow.querySelector('.atm-backdrop') as HTMLDivElement
+    if (hostEl) {
+      hostEl.style.pointerEvents = 'none'
+    }
     const container = shadow.querySelector('.atm-container') as HTMLDivElement
+    if (container) {
+      container.style.opacity = '1'
+      container.style.pointerEvents = 'none'
+      container.style.background = 'transparent'
+      container.style.boxShadow = 'none'
+    }
+    const backdrop = shadow.querySelector('.atm-backdrop') as HTMLDivElement
+    if (backdrop) {
+      backdrop.style.background = 'transparent'
+      backdrop.style.pointerEvents = 'none'
+      backdrop.style.backdropFilter = 'none'
+      backdrop.style.webkitBackdropFilter = 'none'
+    }
+    if (progressContainer) {
+      progressContainer.style.pointerEvents = 'auto'
+    }
+    const inputWrap = shadow.querySelector('.atm-input-wrap') as HTMLDivElement
     const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
     const detailsPanel = shadow.querySelector('.atm-details-panel') as HTMLDivElement
     const footer = shadow.querySelector('.atm-footer') as HTMLDivElement
-    const inputWrap = shadow.querySelector('.atm-input-wrap') as HTMLDivElement
     
-    if (backdrop && container && resultsList && detailsPanel && footer) {
-      // Do not dim background - make backdrop fully transparent and click-through
-      backdrop.style.background = 'transparent'
-      backdrop.style.backdropFilter = 'none'
-      ;(backdrop.style as any).webkitBackdropFilter = 'none'
-      backdrop.style.pointerEvents = 'none'
-      
-      // Floating smaller progress box at the top
-      container.style.position = 'fixed'
-      container.style.top = '20px'
-      container.style.left = '50%'
-      container.style.transform = 'translateX(-50%)'
-      container.style.width = '360px'
-      container.style.height = 'auto'
-      container.style.borderRadius = '0' // Same unrounded design!
-      
-      const isDark = hostEl?.getAttribute('data-theme') === 'dark'
-      if (isDark) {
-        container.style.background = 'rgba(28, 28, 30, 0.82)'
-        container.style.boxShadow = '0 12px 30px rgba(0,0,0,0.3), 0 0 0 0.5px rgba(255,255,255,0.08)'
-      } else {
-        container.style.background = 'rgba(255, 255, 255, 0.82)'
-        container.style.boxShadow = '0 12px 30px rgba(0,0,0,0.1), 0 0 0 0.5px rgba(0,0,0,0.06)'
-      }
-      container.style.backdropFilter = 'blur(16px) saturate(180%)'
-      ;(container.style as any).webkitBackdropFilter = 'blur(16px) saturate(180%)'
-      container.style.pointerEvents = 'auto'
-      
-      resultsList.style.display = 'none'
-      detailsPanel.style.display = 'none'
-      footer.style.display = 'none'
-      
-      if (inputWrap) {
-        inputWrap.style.borderBottom = 'none'
-        inputWrap.style.padding = '14px 16px'
-      }
-    }
+    if (inputWrap) inputWrap.style.visibility = 'hidden'
+    if (resultsList) resultsList.style.visibility = 'hidden'
+    if (detailsPanel) detailsPanel.style.visibility = 'hidden'
+    if (footer) footer.style.visibility = 'hidden'
   }
 
   async function runAICommand(result: SearchResultItem) {
@@ -697,15 +921,13 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     
     isAIOperating = true
     
-    // Hide input elements, show progress
-    const searchIcon = shadow.querySelector('.atm-search-icon') as HTMLDivElement
+    // Disable search input, show progress
     const input = shadow.querySelector('.atm-input') as HTMLInputElement
-    const shortcut = shadow.querySelector('.atm-shortcut') as HTMLSpanElement
-    
-    if (searchIcon) searchIcon.style.display = 'none'
-    if (input) input.style.display = 'none'
-    if (shortcut) shortcut.style.display = 'none'
+    if (input) {
+      input.disabled = true
+    }
     if (progressContainer) progressContainer.style.display = 'flex'
+    switchToProgressOnlyMode()
     
     if (progressCloseBtn) {
       progressCloseBtn.textContent = 'Cancel'
@@ -723,13 +945,39 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (progressPercent) progressPercent.textContent = '0%'
     if (progressDetail) progressDetail.textContent = 'Initializing...'
 
+    // Extract overrides and display name
+    let model = 'gemini-3.5-flash'
+    let provider = 'gemini'
+    let payload: any = undefined
+
+    if (result.commandKey && result.commandKey.includes(' ')) {
+      const parts = result.commandKey.split(' ')
+      const possibleModel = parts[1]
+      if (possibleModel && (MODEL_PRICING as any)[possibleModel] !== undefined) {
+        model = possibleModel
+        if (model.startsWith('gemini') || model.startsWith('gemma')) {
+          provider = 'gemini'
+        } else if (model.startsWith('gpt')) {
+          provider = 'openai'
+        } else if (model.startsWith('claude')) {
+          provider = 'claude'
+        }
+        payload = { provider, model }
+      }
+    } else if (overlayMetrics?.aiSettings) {
+      model = getActiveModel(overlayMetrics.aiSettings)
+      provider = overlayMetrics.aiSettings.provider
+    }
+
+    const modelDisplayName = MODEL_NAMES[model] || model
+
     // Set up step messages based on action
     let phases: { percent: number; text: string }[] = []
     const action = result.commandAction
     if (action === 'GROUP_TABS') {
       phases = [
         { percent: 10, text: 'Packaging tab data for analysis...' },
-        { percent: 25, text: 'Connecting to AI model (gemini-3.5-flash)...' },
+        { percent: 25, text: `Connecting to AI model (${modelDisplayName})...` },
         { percent: 45, text: 'Analyzing page titles and semantic categories...' },
         { percent: 65, text: 'Generating intelligent group structure...' },
         { percent: 85, text: 'Preparing Chrome tab groupings...' },
@@ -813,7 +1061,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     try {
       const res = await chrome.runtime.sendMessage({
-        action: result.commandAction
+        action: result.commandAction,
+        payload: payload
       })
 
       if (aiProgressInterval) {
@@ -886,32 +1135,110 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     resetAIProgressState()
   }
 
-  function toggle() {
+  function toggle(initialQuery = '') {
     if (visible) {
       hide()
     } else {
-      show()
+      show(initialQuery)
     }
   }
 
   async function doSearch(query: string, resultsList: HTMLDivElement) {
     const trimmed = query.trim()
     if (trimmed.startsWith('/')) {
-      const matchText = trimmed.toLowerCase()
-      const matched = COMMANDS.filter(c => c.key.startsWith(matchText))
+      const matchText = query.trimStart().toLowerCase()
+      const trimmedMatchText = matchText.trimEnd()
+
+      // Count how many base commands start with trimmedMatchText
+      const matchingBaseCommands = COMMANDS.filter(c => {
+        if (!c.key.startsWith(trimmedMatchText)) return false
+        const hasSpace = c.key.includes(' ')
+        if (hasSpace) {
+          const parts = c.key.split(' ')
+          const possibleModel = parts[1]
+          if (possibleModel && (MODEL_PRICING as any)[possibleModel] !== undefined) {
+            return false // It's a model suggestion, not a base command
+          }
+        }
+        return true
+      })
+
+      const onlyOneBaseCommand = matchingBaseCommands.length === 1
+      const singleBaseCmd = onlyOneBaseCommand ? matchingBaseCommands[0].key : null
+
+      const matched = COMMANDS.filter(c => {
+        if (!c.key.startsWith(trimmedMatchText)) return false
+
+        // Hide model suggestions if the command is not completely entered yet.
+        // A model suggestion has a space, and the second part is a known model.
+        const hasSpace = c.key.includes(' ')
+        if (hasSpace) {
+          const parts = c.key.split(' ')
+          const possibleModel = parts[1]
+          if (possibleModel && (MODEL_PRICING as any)[possibleModel] !== undefined) {
+            const baseCmd = parts[0]
+
+            // 1. Only suggest models for the currently selected provider (only for AI actions, not /model)
+            if (baseCmd !== '/model') {
+              const activeProvider = overlayMetrics?.aiSettings?.provider || 'gemini'
+              let modelProvider = 'gemini'
+              if (possibleModel.startsWith('gemini') || possibleModel.startsWith('gemma')) {
+                modelProvider = 'gemini'
+              } else if (possibleModel.startsWith('gpt')) {
+                modelProvider = 'openai'
+              } else if (possibleModel.startsWith('claude')) {
+                modelProvider = 'claude'
+              }
+
+              if (activeProvider !== 'custom' && modelProvider !== activeProvider) {
+                return false
+              }
+            }
+
+            // 2. Only show if the user typed the base command followed by a space
+            // OR if there is exactly 1 matching base command starting with matchText (e.g. typing '/split' or '/spl')
+            const isFullyEnteredWithSpace = matchText.startsWith(baseCmd + ' ')
+            const isSingleMatchingCommand = singleBaseCmd === baseCmd
+
+            if (!isFullyEnteredWithSpace && !isSingleMatchingCommand) {
+              return false
+            }
+          }
+        }
+        return true
+      })
+      const currentDefaultModel = overlayMetrics?.aiSettings ? getActiveModel(overlayMetrics.aiSettings) : 'gemini-3.5-flash'
+      matched.sort((a, b) => {
+        const aParts = a.key.split(' ')
+        const bParts = b.key.split(' ')
+        if (aParts[0] === bParts[0]) {
+          const aModel = aParts[1]
+          const bModel = bParts[1]
+          if (aModel && bModel) {
+            const aIsDefault = aModel === currentDefaultModel
+            const bIsDefault = bModel === currentDefaultModel
+            if (aIsDefault && !bIsDefault) return -1
+            if (!aIsDefault && bIsDefault) return 1
+          }
+        }
+        return 0
+      })
+
       results = matched.map(c => ({
         tab: {
-          title: c.title,
-          url: c.description
+          title: c.key,
+          url: `${c.title} — ${c.description}`
         },
         score: 0,
         isOpen: false,
         isCommand: true,
+        commandKey: c.key,
         commandAction: c.action,
         commandDescription: c.description
       }))
-      selectedIndex = -1
+      selectedIndex = results.length > 0 ? 0 : -1
       renderResults(resultsList, query)
+      updateSelection(resultsList)
       return
     }
 
@@ -928,6 +1255,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     } catch (err) {
       console.error('[TabPilot] Search failed:', err)
     }
+    updateAutocomplete()
   }
 
   function renderResults(resultsList: HTMLDivElement, query: string) {
@@ -1075,6 +1403,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       items[selectedIndex].scrollIntoView({ block: 'nearest' })
     }
     renderDetailsPanel(results[selectedIndex])
+    updateAutocomplete()
   }
 
   function handleKeydown(e: KeyboardEvent, _input: HTMLInputElement, resultsList: HTMLDivElement) {
@@ -1088,6 +1417,20 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     if (isAIOperating) {
       return
+    }
+
+    if (e.key === 'ArrowRight') {
+      const selectedIdx = selectedIndex === -1 ? 0 : selectedIndex
+      const selected = results[selectedIdx]
+      if (selected && selected.isCommand && selected.commandKey) {
+        const query = _input.value
+        if (selected.commandKey.toLowerCase().startsWith(query.toLowerCase()) && query.toLowerCase() !== selected.commandKey.toLowerCase()) {
+          e.preventDefault()
+          _input.value = selected.commandKey + ' '
+          doSearch(_input.value, resultsList)
+          return
+        }
+      }
     }
 
     if (e.key === 'ArrowDown') {
@@ -1149,8 +1492,118 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
   }
 
+  async function runChangeModelCommand(result: SearchResultItem) {
+    if (!shadow || !result.commandKey) return
+    const parts = result.commandKey.split(' ')
+    const modelId = parts[1]
+    if (!modelId) return
+
+    isAIOperating = true
+
+    // Disable search input, show progress
+    const input = shadow.querySelector('.atm-input') as HTMLInputElement
+    if (input) {
+      input.disabled = true
+    }
+    if (progressContainer) progressContainer.style.display = 'flex'
+    switchToProgressOnlyMode()
+    if (progressPercent) progressPercent.textContent = '0%'
+    if (progressFill) progressFill.style.width = '0%'
+    if (progressStatus) {
+      progressStatus.textContent = 'Updating default model...'
+      progressStatus.style.color = ''
+    }
+
+    const displayName = MODEL_NAMES[modelId] || modelId
+    if (progressDetail) {
+      progressDetail.textContent = `Setting default model to ${displayName}...`
+    }
+
+    try {
+      // Step 1: Get settings
+      const settings = await chrome.runtime.sendMessage({ action: 'GET_SETTINGS' })
+      if (!settings || typeof settings !== 'object') {
+        throw new Error('Failed to load extension settings.')
+      }
+
+      // Step 2: Update model and provider
+      let provider = 'gemini'
+      let maxTokens = 16384
+      if (modelId.startsWith('gemini') || modelId.startsWith('gemma')) {
+        provider = 'gemini'
+        maxTokens = 65536
+      } else if (modelId.startsWith('gpt')) {
+        provider = 'openai'
+        maxTokens = 16384
+      } else if (modelId.startsWith('claude')) {
+        provider = 'claude'
+        maxTokens = modelId.includes('opus') || modelId.includes('haiku') ? 4096 : 8192
+      }
+
+      settings.ai.model = modelId
+      settings.ai.provider = provider
+      settings.ai.maxTokens = maxTokens
+
+      // Step 3: Save settings
+      await chrome.runtime.sendMessage({
+        action: 'SAVE_SETTINGS',
+        payload: settings
+      })
+
+      // Update local overlay metrics so autocomplete filtering refreshes immediately!
+      if (overlayMetrics && overlayMetrics.aiSettings) {
+        overlayMetrics.aiSettings.model = modelId
+        overlayMetrics.aiSettings.provider = provider
+      }
+
+      // Success!
+      isAIOperating = false
+      if (progressPercent) progressPercent.textContent = '100%'
+      if (progressFill) {
+        progressFill.style.width = '100%'
+        progressFill.style.backgroundColor = '#34C759'
+      }
+      if (progressStatus) {
+        progressStatus.textContent = 'Success!'
+        progressStatus.style.color = '#34C759'
+      }
+      if (progressDetail) {
+        progressDetail.textContent = `Default model is now set to ${displayName}.`
+      }
+
+      // Auto close after 1.5 seconds
+      if (aiProgressTimeout) clearTimeout(aiProgressTimeout)
+      aiProgressTimeout = setTimeout(() => {
+        hide()
+      }, 1500)
+
+    } catch (err: any) {
+      isAIOperating = false
+      if (progressFill) {
+        progressFill.style.backgroundColor = '#FF3B30'
+      }
+      if (progressStatus) {
+        progressStatus.textContent = 'Failed to update model'
+        progressStatus.style.color = '#FF3B30'
+      }
+      if (progressDetail) {
+        progressDetail.textContent = err.message || 'An unknown error occurred.'
+      }
+      if (progressCloseBtn) {
+        progressCloseBtn.textContent = 'Dismiss'
+        progressCloseBtn.style.color = '#FF3B30'
+        progressCloseBtn.style.display = 'block'
+      }
+    }
+  }
+
   function activateResult(result: SearchResultItem) {
     if (result.isCommand && result.commandAction) {
+      if (result.commandAction === 'CHANGE_MODEL') {
+        runChangeModelCommand(result)
+        return
+      }
+
       const aiActions = ['GROUP_TABS', 'SPLIT_CURRENT_GROUP', 'MERGE_CURRENT_GROUP', 'CLASSIFY_NEW_TABS']
       if (aiActions.includes(result.commandAction)) {
         runAICommand(result)
@@ -1212,12 +1665,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   }
 
   // Expose toggle function globally so background can call it via executeScript
-  ;(window as unknown as Record<string, () => void>).__ATM_TOGGLE_SEARCH__ = toggle
+  ;(window as unknown as Record<string, (q?: string) => void>).__ATM_TOGGLE_SEARCH__ = toggle
 
   // Also listen for messages (for tabs.sendMessage from background)
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.action === 'TOGGLE_SEARCH_OVERLAY') {
-      toggle()
+      toggle(message.payload?.initialQuery || '')
     } else if (message?.action === 'START_AI_PROGRESS') {
       if (isAIOperating) return
       const commandAction = message.payload?.commandAction

@@ -11,6 +11,10 @@
     "message": "Open Tab Search",
     "description": "Command to open the search overlay"
   },
+  "cmdOpenSearchSlash": {
+    "message": "Open Tab Search (Prefilled with /)",
+    "description": "Command to open the search overlay with slash prefilled"
+  },
   "groupTabs": {
     "message": "Group Tabs",
     "description": "Button label to group all tabs"

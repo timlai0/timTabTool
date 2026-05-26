@@ -44,6 +44,12 @@
         "default": "Ctrl+Shift+F"
       },
       "description": "__MSG_cmdOpenSearch__"
+    },
+    "open-search-slash": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+7"
+      },
+      "description": "__MSG_cmdOpenSearchSlash__"
     }
   },
   "icons": {

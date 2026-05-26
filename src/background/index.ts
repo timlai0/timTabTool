@@ -21,6 +21,15 @@ import {
   clearOperationError,
   splitGroup,
   mergeGroup,
+  closeDuplicateTabs,
+  closeDomainTabs,
+  isolateDomainTabs,
+  sortTabsByDomainAndTitle,
+  mergeAllWindows,
+  muteAllTabs,
+  unmuteAllTabs,
+  closeLeftTabs,
+  closeRightTabs,
 } from './tab-manager'
 import { searchTabs } from './searcher'
 import { recordTabVisit, getHistoryEntries } from './storage'
@@ -62,6 +71,25 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     if (tab.url && tab.title) {
       recordTabVisit(tab.url, tab.title, tab.favIconUrl)
     }
+    
+    // Broadcast active AI operation to the newly active tab
+    const ops = getActiveOperations()
+    const op = ops[activeInfo.windowId]
+    if (op && op.type) {
+      let commandAction = ''
+      if (op.type === 'group') commandAction = 'GROUP_TABS'
+      else if (op.type === 'classify') commandAction = 'CLASSIFY_NEW_TABS'
+      
+      if (commandAction && tab.id && tab.url) {
+        if (!tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://') && !tab.url.startsWith('about:')) {
+          await ensureContentScriptLoaded(tab.id)
+          await chrome.tabs.sendMessage(tab.id, {
+            action: 'START_AI_PROGRESS',
+            payload: { commandAction }
+          })
+        }
+      }
+    }
   } catch {
     // Tab may have been removed
   }
@@ -86,6 +114,8 @@ chrome.tabGroups.onRemoved.addListener((group) => {
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === 'open-search') {
     await toggleSearchOverlay()
+  } else if (command === 'open-search-slash') {
+    await toggleSearchOverlay('/')
   }
 })
 
@@ -166,7 +196,7 @@ async function broadcastAIFailed(windowId: number, action: string, errorMsg: str
   }
 }
 
-async function toggleSearchOverlay() {
+async function toggleSearchOverlay(initialQuery = '') {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
     if (!tab?.id || !tab.url) return
@@ -179,10 +209,11 @@ async function toggleSearchOverlay() {
     // Toggle the overlay via executeScript
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => {
-        const toggleFn = (window as unknown as Record<string, () => void>).__ATM_TOGGLE_SEARCH__
-        if (toggleFn) toggleFn()
+      func: (query) => {
+        const toggleFn = (window as unknown as Record<string, (q?: string) => void>).__ATM_TOGGLE_SEARCH__
+        if (toggleFn) toggleFn(query)
       },
+      args: [initialQuery],
     })
   } catch {
     // Tab doesn't support scripting (e.g. chrome:// pages)
@@ -208,13 +239,33 @@ async function resolveWindowId(payload: unknown): Promise<number> {
   return win.id ?? -1
 }
 
+function getAIOverrides(payload: unknown): { provider?: "openai" | "claude" | "gemini" | "custom"; model?: string } | undefined {
+  if (payload && typeof payload === 'object' && 'model' in payload) {
+    const p = payload as { provider?: unknown; model?: unknown }
+    const providerStr = typeof p.provider === 'string' ? p.provider : undefined
+    const model = typeof p.model === 'string' ? p.model : undefined
+    
+    let provider: "openai" | "claude" | "gemini" | "custom" | undefined = undefined
+    if (providerStr === "openai" || providerStr === "claude" || providerStr === "gemini" || providerStr === "custom") {
+      provider = providerStr
+    }
+
+    return {
+      provider,
+      model
+    }
+  }
+  return undefined
+}
+
 async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.MessageSender): Promise<unknown> {
   switch (message.action) {
     case 'GROUP_TABS': {
       const windowId = await resolveWindowId(message.payload)
       await broadcastAIStart(windowId, 'GROUP_TABS')
       try {
-        await groupAllTabs(windowId)
+        const overrides = getAIOverrides(message.payload)
+        await groupAllTabs(windowId, overrides)
         await broadcastAIComplete(windowId, 'GROUP_TABS')
       } catch (err: any) {
         await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
@@ -242,7 +293,8 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       const group = await chrome.tabGroups.get(groupId)
       await broadcastAIStart(group.windowId, 'SPLIT_CURRENT_GROUP')
       try {
-        await splitGroup(groupId)
+        const overrides = getAIOverrides(message.payload)
+        await splitGroup(groupId, overrides)
         await broadcastAIComplete(group.windowId, 'SPLIT_CURRENT_GROUP')
       } catch (err: any) {
         await broadcastAIFailed(group.windowId, 'SPLIT_CURRENT_GROUP', err.message || String(err))
@@ -257,7 +309,8 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       const group = await chrome.tabGroups.get(groupId)
       await broadcastAIStart(group.windowId, 'MERGE_CURRENT_GROUP')
       try {
-        await mergeGroup(groupId)
+        const overrides = getAIOverrides(message.payload)
+        await mergeGroup(groupId, overrides)
         await broadcastAIComplete(group.windowId, 'MERGE_CURRENT_GROUP')
       } catch (err: any) {
         await broadcastAIFailed(group.windowId, 'MERGE_CURRENT_GROUP', err.message || String(err))
@@ -272,7 +325,8 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       if (activeTab?.groupId !== undefined && activeTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
         await broadcastAIStart(windowId, 'SPLIT_CURRENT_GROUP')
         try {
-          await splitGroup(activeTab.groupId)
+          const overrides = getAIOverrides(message.payload)
+          await splitGroup(activeTab.groupId, overrides)
           await broadcastAIComplete(windowId, 'SPLIT_CURRENT_GROUP')
         } catch (err: any) {
           await broadcastAIFailed(windowId, 'SPLIT_CURRENT_GROUP', err.message || String(err))
@@ -290,7 +344,8 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       if (activeTab?.groupId !== undefined && activeTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
         await broadcastAIStart(windowId, 'MERGE_CURRENT_GROUP')
         try {
-          await mergeGroup(activeTab.groupId)
+          const overrides = getAIOverrides(message.payload)
+          await mergeGroup(activeTab.groupId, overrides)
           await broadcastAIComplete(windowId, 'MERGE_CURRENT_GROUP')
         } catch (err: any) {
           await broadcastAIFailed(windowId, 'MERGE_CURRENT_GROUP', err.message || String(err))
@@ -306,12 +361,171 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       const windowId = await resolveWindowId(message.payload)
       await broadcastAIStart(windowId, 'CLASSIFY_NEW_TABS')
       try {
-        await classifyNewTabs(windowId)
+        const overrides = getAIOverrides(message.payload)
+        await classifyNewTabs(windowId, overrides)
         await broadcastAIComplete(windowId, 'CLASSIFY_NEW_TABS')
       } catch (err: any) {
         await broadcastAIFailed(windowId, 'CLASSIFY_NEW_TABS', err.message || String(err))
         throw err
       }
+      return { ok: true }
+    }
+
+    case 'GROUP_TABS_SINGLE': {
+      const windowId = await resolveWindowId(message.payload)
+      await broadcastAIStart(windowId, 'GROUP_TABS')
+      try {
+        await groupAllTabs(windowId, { batchSize: 9999 })
+        await broadcastAIComplete(windowId, 'GROUP_TABS')
+      } catch (err: any) {
+        await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
+        throw err
+      }
+      return { ok: true }
+    }
+
+    case 'GROUP_TABS_GEMINI_FLASH': {
+      const windowId = await resolveWindowId(message.payload)
+      await broadcastAIStart(windowId, 'GROUP_TABS')
+      try {
+        await groupAllTabs(windowId, { provider: 'gemini', model: 'gemini-3.5-flash' })
+        await broadcastAIComplete(windowId, 'GROUP_TABS')
+      } catch (err: any) {
+        await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
+        throw err
+      }
+      return { ok: true }
+    }
+
+    case 'GROUP_TABS_GEMINI_2_5_FLASH': {
+      const windowId = await resolveWindowId(message.payload)
+      await broadcastAIStart(windowId, 'GROUP_TABS')
+      try {
+        await groupAllTabs(windowId, { provider: 'gemini', model: 'gemini-2.5-flash' })
+        await broadcastAIComplete(windowId, 'GROUP_TABS')
+      } catch (err: any) {
+        await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
+        throw err
+      }
+      return { ok: true }
+    }
+
+    case 'GROUP_TABS_GPT_MINI': {
+      const windowId = await resolveWindowId(message.payload)
+      await broadcastAIStart(windowId, 'GROUP_TABS')
+      try {
+        await groupAllTabs(windowId, { provider: 'openai', model: 'gpt-4o-mini' })
+        await broadcastAIComplete(windowId, 'GROUP_TABS')
+      } catch (err: any) {
+        await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
+        throw err
+      }
+      return { ok: true }
+    }
+
+    case 'GROUP_TABS_GPT_4O': {
+      const windowId = await resolveWindowId(message.payload)
+      await broadcastAIStart(windowId, 'GROUP_TABS')
+      try {
+        await groupAllTabs(windowId, { provider: 'openai', model: 'gpt-4o' })
+        await broadcastAIComplete(windowId, 'GROUP_TABS')
+      } catch (err: any) {
+        await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
+        throw err
+      }
+      return { ok: true }
+    }
+
+    case 'GROUP_TABS_CLAUDE_SONNET': {
+      const windowId = await resolveWindowId(message.payload)
+      await broadcastAIStart(windowId, 'GROUP_TABS')
+      try {
+        await groupAllTabs(windowId, { provider: 'claude', model: 'claude-3-5-sonnet-20240620' })
+        await broadcastAIComplete(windowId, 'GROUP_TABS')
+      } catch (err: any) {
+        await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
+        throw err
+      }
+      return { ok: true }
+    }
+
+    case 'CLASSIFY_NEW_TABS_GEMINI': {
+      const windowId = await resolveWindowId(message.payload)
+      await broadcastAIStart(windowId, 'CLASSIFY_NEW_TABS')
+      try {
+        await classifyNewTabs(windowId, { provider: 'gemini', model: 'gemini-3.5-flash' })
+        await broadcastAIComplete(windowId, 'CLASSIFY_NEW_TABS')
+      } catch (err: any) {
+        await broadcastAIFailed(windowId, 'CLASSIFY_NEW_TABS', err.message || String(err))
+        throw err
+      }
+      return { ok: true }
+    }
+
+    case 'CLASSIFY_NEW_TABS_GPT': {
+      const windowId = await resolveWindowId(message.payload)
+      await broadcastAIStart(windowId, 'CLASSIFY_NEW_TABS')
+      try {
+        await classifyNewTabs(windowId, { provider: 'openai', model: 'gpt-4o-mini' })
+        await broadcastAIComplete(windowId, 'CLASSIFY_NEW_TABS')
+      } catch (err: any) {
+        await broadcastAIFailed(windowId, 'CLASSIFY_NEW_TABS', err.message || String(err))
+        throw err
+      }
+      return { ok: true }
+    }
+
+    case 'CLOSE_DUPLICATES': {
+      const windowId = await resolveWindowId(message.payload)
+      await closeDuplicateTabs(windowId)
+      return { ok: true }
+    }
+
+    case 'CLOSE_DOMAIN': {
+      const windowId = await resolveWindowId(message.payload)
+      await closeDomainTabs(windowId)
+      return { ok: true }
+    }
+
+    case 'ISOLATE_DOMAIN': {
+      const windowId = await resolveWindowId(message.payload)
+      await isolateDomainTabs(windowId)
+      return { ok: true }
+    }
+
+    case 'SORT_TABS': {
+      const windowId = await resolveWindowId(message.payload)
+      await sortTabsByDomainAndTitle(windowId)
+      return { ok: true }
+    }
+
+    case 'MERGE_WINDOWS': {
+      const windowId = await resolveWindowId(message.payload)
+      await mergeAllWindows(windowId)
+      return { ok: true }
+    }
+
+    case 'MUTE_ALL': {
+      const windowId = await resolveWindowId(message.payload)
+      await muteAllTabs(windowId)
+      return { ok: true }
+    }
+
+    case 'UNMUTE_ALL': {
+      const windowId = await resolveWindowId(message.payload)
+      await unmuteAllTabs(windowId)
+      return { ok: true }
+    }
+
+    case 'CLOSE_LEFT': {
+      const windowId = await resolveWindowId(message.payload)
+      await closeLeftTabs(windowId)
+      return { ok: true }
+    }
+
+    case 'CLOSE_RIGHT': {
+      const windowId = await resolveWindowId(message.payload)
+      await closeRightTabs(windowId)
       return { ok: true }
     }
 
@@ -487,7 +701,8 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     }
 
     case 'TOGGLE_SEARCH_OVERLAY': {
-      await toggleSearchOverlay()
+      const payload = message.payload as { initialQuery?: string } | undefined
+      await toggleSearchOverlay(payload?.initialQuery || '')
       return { ok: true }
     }
 

@@ -11,6 +11,10 @@
     "message": "打开标签搜索",
     "description": "Command to open the search overlay"
   },
+  "cmdOpenSearchSlash": {
+    "message": "打开标签搜索 (预填 /)",
+    "description": "Command to open the search overlay with slash prefilled"
+  },
   "groupTabs": {
     "message": "一键分组",
     "description": "Button label to group all tabs"

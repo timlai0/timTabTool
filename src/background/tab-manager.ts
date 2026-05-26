@@ -527,7 +527,7 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
 /**
  * Group all tabs in the given window using Chrome Tab Groups API.
  */
-export async function groupAllTabs(windowId: number): Promise<void> {
+export async function groupAllTabs(windowId: number, aiOverrides?: Partial<ExtensionSettings['ai']>): Promise<void> {
   const existing = activeAbortControllers.get(windowId)
   if (existing) {
     existing.abort()
@@ -541,7 +541,16 @@ export async function groupAllTabs(windowId: number): Promise<void> {
     const tabs = await chrome.tabs.query({ windowId, windowType: 'normal' })
     const unpinnedTabs = tabs.filter((t) => !t.pinned)
 
-    const settings = await getSettings()
+    let settings = await getSettings()
+    if (aiOverrides) {
+      settings = {
+        ...settings,
+        ai: {
+          ...settings.ai,
+          ...aiOverrides,
+        }
+      }
+    }
 
     const hideTitles = titlesHiddenMap.get(windowId) ?? false
     let aiError: Error | null = null
@@ -666,7 +675,7 @@ export async function groupAllTabs(windowId: number): Promise<void> {
  * Classify new tabs (from the "New Tabs" group) into existing AI groups.
  * Uses AI to decide which group each tab belongs to, then moves them.
  */
-export async function classifyNewTabs(windowId: number): Promise<void> {
+export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<ExtensionSettings['ai']>): Promise<void> {
   const existing = activeAbortControllers.get(windowId)
   if (existing) {
     existing.abort()
@@ -677,7 +686,16 @@ export async function classifyNewTabs(windowId: number): Promise<void> {
   activeOperationsMap.set(windowId, { type: 'classify', error: null })
 
   try {
-    const settings = await getSettings()
+    let settings = await getSettings()
+    if (aiOverrides) {
+      settings = {
+        ...settings,
+        ai: {
+          ...settings.ai,
+          ...aiOverrides,
+        }
+      }
+    }
     if (!settings.ai.enabled || !settings.ai.apiKey) {
       throw new Error('AI is not configured')
     }
@@ -791,7 +809,7 @@ export async function closeGroupTabs(tabIds: number[]): Promise<void> {
 /**
  * Split a single tab group into more specific sub-groups using AI.
  */
-export async function splitGroup(groupId: number): Promise<void> {
+export async function splitGroup(groupId: number, aiOverrides?: Partial<ExtensionSettings['ai']>): Promise<void> {
   let windowId: number
   try {
     const group = await chrome.tabGroups.get(groupId)
@@ -827,6 +845,7 @@ export async function splitGroup(groupId: number): Promise<void> {
     
     const client = new AIClient({
       ...settings.ai,
+      ...aiOverrides,
       groupingPrompt: splitPrompt
     }, controller.signal)
 
@@ -877,7 +896,7 @@ export async function splitGroup(groupId: number): Promise<void> {
 /**
  * Merge a single tab group into another existing tab group using AI.
  */
-export async function mergeGroup(groupId: number): Promise<void> {
+export async function mergeGroup(groupId: number, aiOverrides?: Partial<ExtensionSettings['ai']>): Promise<void> {
   let windowId: number
   try {
     const group = await chrome.tabGroups.get(groupId)
@@ -925,7 +944,10 @@ export async function mergeGroup(groupId: number): Promise<void> {
 
     // Query AI for merging
     const tabInputs = tabs.map((t) => ({ url: t.url || '', title: t.title || '' }))
-    const client = new AIClient(settings.ai, controller.signal)
+    const client = new AIClient({
+      ...settings.ai,
+      ...aiOverrides
+    }, controller.signal)
     
     const mergeTarget = await client.decideMergeGroup(tabInputs, otherGroupNames)
 
@@ -1124,4 +1146,136 @@ export async function handleTabGroupUpdated(group: chrome.tabGroups.TabGroup): P
 export function handleTabGroupRemoved(groupId: number): void {
   groupTitleMap.delete(groupId)
   updatingGroups.delete(groupId)
+}
+
+// --- Window and Tab Management Utilities ---
+
+export async function closeDuplicateTabs(windowId: number): Promise<void> {
+  const tabs = await chrome.tabs.query({ windowId })
+  const seen = new Set<string>()
+  const dupIds: number[] = []
+  for (const tab of tabs) {
+    if (tab.id === undefined || !tab.url) continue
+    const url = tab.url
+    if (seen.has(url)) {
+      dupIds.push(tab.id)
+    } else {
+      seen.add(url)
+    }
+  }
+  if (dupIds.length > 0) {
+    await chrome.tabs.remove(dupIds)
+    for (const id of dupIds) cacheRemoveTab(id)
+  }
+}
+
+export async function closeDomainTabs(windowId: number): Promise<void> {
+  const [activeTab] = await chrome.tabs.query({ active: true, windowId })
+  if (!activeTab || !activeTab.url) return
+  const activeDomain = extractDomain(activeTab.url)
+  if (!activeDomain) return
+  const tabs = await chrome.tabs.query({ windowId })
+  const toClose: number[] = []
+  for (const tab of tabs) {
+    if (tab.id === undefined || !tab.url) continue
+    if (extractDomain(tab.url) === activeDomain) {
+      toClose.push(tab.id)
+    }
+  }
+  if (toClose.length > 0) {
+    await chrome.tabs.remove(toClose)
+    for (const id of toClose) cacheRemoveTab(id)
+  }
+}
+
+export async function isolateDomainTabs(windowId: number): Promise<void> {
+  const [activeTab] = await chrome.tabs.query({ active: true, windowId })
+  if (!activeTab || !activeTab.url) return
+  const activeDomain = extractDomain(activeTab.url)
+  if (!activeDomain) return
+  const tabs = await chrome.tabs.query({ windowId })
+  const toMove: number[] = []
+  for (const tab of tabs) {
+    if (tab.id === undefined || !tab.url) continue
+    if (extractDomain(tab.url) === activeDomain) {
+      toMove.push(tab.id)
+    }
+  }
+  if (toMove.length > 0) {
+    const newWindow = await chrome.windows.create({ focused: true })
+    if (newWindow && newWindow.id !== undefined) {
+      const newTabId = newWindow.tabs?.[0]?.id
+      await chrome.tabs.move(toMove, { windowId: newWindow.id, index: -1 })
+      if (newTabId) await chrome.tabs.remove(newTabId)
+    }
+  }
+}
+
+export async function sortTabsByDomainAndTitle(windowId: number): Promise<void> {
+  const tabs = await chrome.tabs.query({ windowId })
+  const unpinned = tabs.filter((t) => !t.pinned)
+  const sorted = sortTabsByDomainAndTitleHelper(unpinned)
+  const tabIds = sorted.map((t) => t.id).filter((id): id is number => id !== undefined)
+  const pinnedCount = tabs.length - unpinned.length
+  if (tabIds.length > 0) {
+    await retryTabOperation(() => chrome.tabs.move(tabIds, { index: pinnedCount }))
+  }
+  invalidatePreviewCache(windowId)
+}
+
+export async function mergeAllWindows(targetWindowId: number): Promise<void> {
+  const windows = await chrome.windows.getAll({ windowTypes: ['normal'] })
+  for (const win of windows) {
+    if (win.id === undefined || win.id === targetWindowId) continue
+    const tabs = await chrome.tabs.query({ windowId: win.id })
+    const tabIds = tabs.map((t) => t.id).filter((id): id is number => id !== undefined)
+    if (tabIds.length > 0) {
+      await chrome.tabs.move(tabIds, { windowId: targetWindowId, index: -1 })
+    }
+  }
+  invalidatePreviewCache()
+}
+
+export async function muteAllTabs(windowId: number): Promise<void> {
+  const tabs = await chrome.tabs.query({ windowId })
+  for (const tab of tabs) {
+    if (tab.id !== undefined) {
+      await chrome.tabs.update(tab.id, { muted: true })
+    }
+  }
+}
+
+export async function unmuteAllTabs(windowId: number): Promise<void> {
+  const tabs = await chrome.tabs.query({ windowId })
+  for (const tab of tabs) {
+    if (tab.id !== undefined) {
+      await chrome.tabs.update(tab.id, { muted: false })
+    }
+  }
+}
+
+export async function closeLeftTabs(windowId: number): Promise<void> {
+  const [activeTab] = await chrome.tabs.query({ active: true, windowId })
+  if (!activeTab || activeTab.index === undefined) return
+  const tabs = await chrome.tabs.query({ windowId })
+  const toClose = tabs
+    .filter((t) => t.index !== undefined && t.index < activeTab.index && t.id !== undefined && !t.pinned)
+    .map((t) => t.id!)
+  if (toClose.length > 0) {
+    await chrome.tabs.remove(toClose)
+    for (const id of toClose) cacheRemoveTab(id)
+  }
+}
+
+export async function closeRightTabs(windowId: number): Promise<void> {
+  const [activeTab] = await chrome.tabs.query({ active: true, windowId })
+  if (!activeTab || activeTab.index === undefined) return
+  const tabs = await chrome.tabs.query({ windowId })
+  const toClose = tabs
+    .filter((t) => t.index !== undefined && t.index > activeTab.index && t.id !== undefined && !t.pinned)
+    .map((t) => t.id!)
+  if (toClose.length > 0) {
+    await chrome.tabs.remove(toClose)
+    for (const id of toClose) cacheRemoveTab(id)
+  }
 }
