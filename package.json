@@ -1,7 +1,7 @@
 {
-  "name": "tabpilot",
+  "name": "timtabtool",
   "version": "1.0.7",
-  "description": "Autopilot for your browser tabs. Smart grouping, instant search, optional AI — all local, all private.",
+  "description": "Smart tab organization, MCP bridge, AI grouping — the ultimate browser tool.",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,7 +14,7 @@
     "typecheck": "vue-tsc --noEmit",
     "lint": "vue-tsc --noEmit"
   },
-  "keywords": ["chrome-extension", "tab-manager", "tab-groups", "tab-organizer", "ai", "tabpilot"],
+  "keywords": ["chrome-extension", "tab-manager", "tab-groups", "tab-organizer", "ai", "timtabtool"],
   "author": "Florian",
   "license": "MIT",
   "packageManager": "pnpm@10.28.0",

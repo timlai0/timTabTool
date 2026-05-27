@@ -621,7 +621,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
     <header class="flex items-center justify-between px-4 py-3" style="box-shadow: 0 0.5px 0 var(--border);">
       <div class="flex items-center gap-2.5 flex-1 min-w-0 flex-wrap py-0.5">
         <img src="/icons/icon-32.png" alt="" class="w-5 h-5 shrink-0" />
-        <h1 class="text-[15px] font-semibold tracking-tight shrink-0" style="color: var(--text-primary);">TabPilot</h1>
+        <h1 class="text-[15px] font-semibold tracking-tight shrink-0" style="color: var(--text-primary);">timTabTool</h1>
         <span class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: var(--hover); border: 1px solid var(--border);">
           {{ totalTabs }} tabs · {{ totalGroups }} groups · {{ totalWindows }} windows
         </span>
