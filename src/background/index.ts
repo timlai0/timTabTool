@@ -35,6 +35,7 @@ import { searchTabs } from './searcher'
 import { recordTabVisit, getHistoryEntries } from './storage'
 import { STORAGE_KEYS, DEFAULT_SETTINGS } from '../shared/constants'
 import type { ExtensionMessage, TabInfo, ExtensionSettings, WindowGroupsInfo } from '../shared/types'
+import { initMCPBridge, getMCPStatus, reconnectMCP } from './mcp-bridge'
 
 console.log('[TabPilot] Service worker started')
 
@@ -707,7 +708,20 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       return { ok: true }
     }
 
+    case 'GET_MCP_STATUS': {
+      return getMCPStatus()
+    }
+
+    case 'RECONNECT_MCP': {
+      reconnectMCP()
+      return { ok: true }
+    }
+
     default:
       return { error: 'Unknown action' }
   }
 }
+
+// Start the MCP bridge server listener
+initMCPBridge()
+

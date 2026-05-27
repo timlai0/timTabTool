@@ -89,6 +89,8 @@ export interface ExtensionSettings {
   windowWidth: number
   windowHeight: number
   showRuleGroupsWhenUngrouped: boolean
+  mcpEnabled?: boolean
+  mcpPort?: number
 }
 
 export interface WindowGroupsInfo {
@@ -144,6 +146,8 @@ type MessageAction =
   | 'UNMUTE_ALL'
   | 'CLOSE_LEFT'
   | 'CLOSE_RIGHT'
+  | 'GET_MCP_STATUS'
+  | 'RECONNECT_MCP'
 
 export interface ExtensionMessage {
   action: MessageAction

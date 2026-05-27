@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, toRaw } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, toRaw } from 'vue'
 import { getMessage } from '../../shared/i18n'
 import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT } from '../../shared/constants'
 import { getAutoBatchSize } from '../../shared/utils'
@@ -21,6 +21,35 @@ const testResult = ref<{ ok: boolean; error?: string } | null>(null)
 const searchShortcut = ref('Ctrl+Shift+F')
 const advancedPromptsExpanded = ref(false)
 const connectionSettingsExpanded = ref(false)
+
+// MCP Status & Reconnection refs
+const mcpStatus = ref({ state: 'disabled', port: 8585, error: null as string | null, autoRetrySecondsLeft: 0 })
+const reconnecting = ref(false)
+let statusPollInterval: any = null
+
+async function updateMCPStatus() {
+  try {
+    const res = await chrome.runtime.sendMessage({ action: 'GET_MCP_STATUS' })
+    if (res && res.state) {
+      mcpStatus.value = res
+    }
+  } catch (err) {
+    // Ignore error
+  }
+}
+
+async function triggerReconnect() {
+  reconnecting.value = true
+  try {
+    await chrome.runtime.sendMessage({ action: 'RECONNECT_MCP' })
+    setTimeout(async () => {
+      await updateMCPStatus()
+      reconnecting.value = false
+    }, 1200)
+  } catch (err) {
+    reconnecting.value = false
+  }
+}
 
 const copyText = ref('Copy Config')
 const pasteText = ref('Paste Config')
@@ -184,6 +213,16 @@ onMounted(async () => {
   const searchCmd = commands.find((c) => c.name === 'open-search')
   if (searchCmd?.shortcut) {
     searchShortcut.value = searchCmd.shortcut
+  }
+
+  // Start polling MCP connection status
+  updateMCPStatus()
+  statusPollInterval = setInterval(updateMCPStatus, 1000)
+})
+
+onUnmounted(() => {
+  if (statusPollInterval) {
+    clearInterval(statusPollInterval)
   }
 })
 
@@ -809,6 +848,103 @@ async function pasteConfig() {
               {{ getMessage('apiKeyNote') }}
             </p>
           </div>
+        </div>
+      </div>
+
+      <!-- Model Context Protocol (MCP) Bridge -->
+      <div>
+        <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5 flex items-center gap-1.5" style="color: var(--text-secondary);">
+          <svg class="w-3.5 h-3.5 opacity-80" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M10 3a1 1 0 01.707.293l3 3a1 1 0 01-1.414 1.414L11 6.414V14a1 1 0 11-2 0V6.414L7.707 7.707a1 1 0 01-1.414-1.414l3-3A1 1 0 0110 3zm-3.707 9.293a1 1 0 011.414 0L10 14.586l2.293-2.293a1 1 0 011.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+          </svg>
+          Model Context Protocol (MCP) Bridge
+        </h2>
+        <div class="rounded-sm overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
+          <!-- Enable toggle -->
+          <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
+            <div class="flex-1">
+              <span class="text-xs block" style="color: var(--text-primary);">Enable MCP WebSocket Server</span>
+              <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
+                Bridges browser tab operations directly to your AI agents locally.
+              </p>
+            </div>
+            <div class="relative mt-0.5">
+              <input
+                type="checkbox"
+                v-model="settings.mcpEnabled"
+                class="sr-only peer"
+              />
+              <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+              <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+            </div>
+          </label>
+
+          <template v-if="settings.mcpEnabled">
+            <!-- Connection Status -->
+            <div class="px-3.5 py-2.5 setting-row flex flex-col gap-1.5">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider" style="color: var(--text-secondary);">
+                MCP Bridge Connection Status
+              </label>
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <span 
+                    class="w-2.5 h-2.5 rounded-full inline-block"
+                    :class="{
+                      'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]': mcpStatus.state === 'connected',
+                      'bg-yellow-500 animate-pulse shadow-[0_0_8px_rgba(234,179,8,0.6)]': mcpStatus.state === 'connecting',
+                      'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]': mcpStatus.state === 'disconnected' || mcpStatus.state === 'disabled'
+                    }"
+                    :style="{
+                      background: mcpStatus.state === 'connected' ? 'var(--group-green)' : (mcpStatus.state === 'connecting' ? '#eab308' : 'var(--group-red)')
+                    }"
+                  />
+                  <span class="text-xs font-semibold capitalize" :style="{ color: mcpStatus.state === 'connected' ? 'var(--group-green)' : (mcpStatus.state === 'connecting' ? '#eab308' : 'var(--text-primary)') }">
+                    {{ mcpStatus.state }}
+                  </span>
+                </div>
+                <button
+                  v-if="mcpStatus.state !== 'connected'"
+                  @click="triggerReconnect"
+                  :disabled="reconnecting"
+                  class="px-2.5 py-1 text-[10px] font-medium rounded-sm border transition-all duration-200"
+                  style="background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border);"
+                >
+                  {{ reconnecting ? 'Connecting...' : 'Retry Now' }}
+                </button>
+              </div>
+              
+              <!-- Connection Error Display -->
+              <p 
+                v-if="mcpStatus.state === 'disconnected' && mcpStatus.error" 
+                class="text-[10px] leading-relaxed p-1.5 rounded-[3px] border mt-1" 
+                style="color: var(--group-red); background: rgba(239,68,68,0.06); border-color: rgba(239,68,68,0.15);"
+              >
+                <strong>Error:</strong> {{ mcpStatus.error }}
+                <br />
+                <span v-if="mcpStatus.autoRetrySecondsLeft && mcpStatus.autoRetrySecondsLeft > 0" class="text-[9px] opacity-90">Auto-retry in <span class="font-bold" style="color: #fbbf24;">{{ mcpStatus.autoRetrySecondsLeft }}</span>s...</span>
+                <span v-else class="text-[9px] opacity-75">Auto-retrying every 5 seconds...</span>
+              </p>
+            </div>
+
+            <!-- Port Selection -->
+            <div class="px-3.5 py-2.5 setting-row">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider mb-1" style="color: var(--text-secondary);">
+                WebSocket Server Port
+              </label>
+              <input
+                type="number"
+                v-model.number="settings.mcpPort"
+                placeholder="8585"
+                min="1024"
+                max="65535"
+                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                style="background: var(--bg-secondary); color: var(--text-primary);"
+              />
+              <p class="text-[10px] mt-1.5 leading-relaxed" style="color: var(--text-tertiary);">
+                Server listens on 127.0.0.1. Ensure your MCP client points to the same port.
+              </p>
+            </div>
+          </template>
         </div>
       </div>
 

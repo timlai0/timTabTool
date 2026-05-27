@@ -52,6 +52,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   windowWidth: 360,
   windowHeight: 600,
   showRuleGroupsWhenUngrouped: true,
+  mcpEnabled: true,
+  mcpPort: 8585,
 }
 
 export const STORAGE_KEYS = {
