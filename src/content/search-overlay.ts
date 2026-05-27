@@ -93,7 +93,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     custom: { input: 0.15, output: 0.60 },
   }
 
-  const BASE_COMMANDS = [
+  const BASE_COMMANDS: CommandItem[] = [
     {
       key: '/group',
       title: 'AI Group Tabs',
@@ -233,7 +233,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     'claude-3-haiku-20240307': 'Claude 3 Haiku',
   }
 
-  const COMMANDS = [...BASE_COMMANDS]
+  const COMMANDS: CommandItem[] = [...BASE_COMMANDS]
 
   const AI_ACTIONS = [
     { cmd: '/group', action: 'GROUP_TABS', name: 'AI Group Tabs', descPrefix: 'Group all tabs using' },
@@ -852,7 +852,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         backdrop.style.background = ''
         backdrop.style.pointerEvents = ''
         backdrop.style.backdropFilter = ''
-        backdrop.style.webkitBackdropFilter = ''
+        ;(backdrop.style as any).webkitBackdropFilter = ''
       }
       if (progressContainer) {
         progressContainer.style.pointerEvents = ''
@@ -897,7 +897,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       backdrop.style.background = 'transparent'
       backdrop.style.pointerEvents = 'none'
       backdrop.style.backdropFilter = 'none'
-      backdrop.style.webkitBackdropFilter = 'none'
+      ;(backdrop.style as any).webkitBackdropFilter = 'none'
     }
     if (progressContainer) {
       progressContainer.style.pointerEvents = 'auto'
@@ -1763,6 +1763,14 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           progressCloseBtn.style.display = 'block'
         }
       }
+    }
+  })
+
+  // Listen for F1 key to toggle search
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'F1') {
+      e.preventDefault()
+      toggle()
     }
   })
 }
