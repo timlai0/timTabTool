@@ -9,7 +9,8 @@
     "tabGroups",
     "storage",
     "scripting",
-    "favicon"
+    "favicon",
+    "clipboardRead"
   ],
   "host_permissions": [
     "<all_urls>"
