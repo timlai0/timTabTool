@@ -240,20 +240,28 @@ async function resolveWindowId(payload: unknown): Promise<number> {
   return win.id ?? -1
 }
 
-function getAIOverrides(payload: unknown): { provider?: "openai" | "claude" | "gemini" | "custom"; model?: string } | undefined {
-  if (payload && typeof payload === 'object' && 'model' in payload) {
-    const p = payload as { provider?: unknown; model?: unknown }
-    const providerStr = typeof p.provider === 'string' ? p.provider : undefined
-    const model = typeof p.model === 'string' ? p.model : undefined
+export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai']> | undefined {
+  if (payload && typeof payload === 'object') {
+    const p = payload as { provider?: unknown; model?: unknown; sendFullUrl?: unknown }
+    const overrides: Partial<ExtensionSettings['ai']> = {}
     
-    let provider: "openai" | "claude" | "gemini" | "custom" | undefined = undefined
-    if (providerStr === "openai" || providerStr === "claude" || providerStr === "gemini" || providerStr === "custom") {
-      provider = providerStr
+    if (typeof p.model === 'string' && p.model !== '-full') {
+      overrides.model = p.model
     }
-
-    return {
-      provider,
-      model
+    
+    if (typeof p.provider === 'string') {
+      const providerStr = p.provider
+      if (providerStr === "openai" || providerStr === "claude" || providerStr === "gemini" || providerStr === "custom") {
+        overrides.provider = providerStr
+      }
+    }
+    
+    if (typeof p.sendFullUrl === 'boolean') {
+      overrides.sendFullUrl = p.sendFullUrl
+    }
+    
+    if (Object.keys(overrides).length > 0) {
+      return overrides
     }
   }
   return undefined

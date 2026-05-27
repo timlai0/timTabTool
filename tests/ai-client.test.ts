@@ -188,3 +188,48 @@ describe('AIClient Retry Logic', () => {
     expect(totalSuccessCount).toBe(30)
   })
 })
+
+describe('AIClient Prompt Formatting', () => {
+  it('formats tab with domain only when sendFullUrl is false', () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openai',
+      apiKey: 'test-key',
+      sendFullUrl: false,
+    }
+    const client = new AIClient(config)
+    const tab = { url: 'https://github.com/florianlanx/tabpilot/issues/1', title: 'Issue #1' }
+    
+    // Using cast to access private formatTabForPrompt method
+    const formatted = (client as any).formatTabForPrompt(tab, 1, false)
+    expect(formatted).toBe('1. Issue #1 (github.com)')
+  })
+
+  it('formats tab with full URL when sendFullUrl is true', () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openai',
+      apiKey: 'test-key',
+      sendFullUrl: true,
+    }
+    const client = new AIClient(config)
+    const tab = { url: 'https://github.com/florianlanx/tabpilot/issues/1', title: 'Issue #1' }
+    
+    const formatted = (client as any).formatTabForPrompt(tab, 1, false)
+    expect(formatted).toBe('1. Issue #1 (URL: https://github.com/florianlanx/tabpilot/issues/1)')
+  })
+
+  it('formats tab with full URL when sendFullUrl is true even if stripTitles is true', () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openai',
+      apiKey: 'test-key',
+      sendFullUrl: true,
+    }
+    const client = new AIClient(config)
+    const tab = { url: 'https://github.com/florianlanx/tabpilot/issues/1', title: 'Issue #1' }
+    
+    const formatted = (client as any).formatTabForPrompt(tab, 1, true)
+    expect(formatted).toBe('1. (URL: https://github.com/florianlanx/tabpilot/issues/1)')
+  })
+})
