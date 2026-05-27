@@ -278,7 +278,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         await broadcastAIComplete(windowId, 'GROUP_TABS')
       } catch (err: any) {
         await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
-        throw err
+        return { error: err.message || String(err) }
       }
       return { ok: true }
     }
@@ -298,7 +298,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
 
     case 'SPLIT_GROUP': {
       const groupId = (message.payload as { groupId: number })?.groupId
-      if (!groupId) throw new Error('Missing groupId')
+      if (!groupId) return { error: 'Missing groupId' }
       const group = await chrome.tabGroups.get(groupId)
       await broadcastAIStart(group.windowId, 'SPLIT_CURRENT_GROUP')
       try {
@@ -307,14 +307,14 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         await broadcastAIComplete(group.windowId, 'SPLIT_CURRENT_GROUP')
       } catch (err: any) {
         await broadcastAIFailed(group.windowId, 'SPLIT_CURRENT_GROUP', err.message || String(err))
-        throw err
+        return { error: err.message || String(err) }
       }
       return { ok: true }
     }
 
     case 'MERGE_GROUP': {
       const groupId = (message.payload as { groupId: number })?.groupId
-      if (!groupId) throw new Error('Missing groupId')
+      if (!groupId) return { error: 'Missing groupId' }
       const group = await chrome.tabGroups.get(groupId)
       await broadcastAIStart(group.windowId, 'MERGE_CURRENT_GROUP')
       try {
@@ -323,7 +323,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         await broadcastAIComplete(group.windowId, 'MERGE_CURRENT_GROUP')
       } catch (err: any) {
         await broadcastAIFailed(group.windowId, 'MERGE_CURRENT_GROUP', err.message || String(err))
-        throw err
+        return { error: err.message || String(err) }
       }
       return { ok: true }
     }
@@ -339,10 +339,10 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
           await broadcastAIComplete(windowId, 'SPLIT_CURRENT_GROUP')
         } catch (err: any) {
           await broadcastAIFailed(windowId, 'SPLIT_CURRENT_GROUP', err.message || String(err))
-          throw err
+          return { error: err.message || String(err) }
         }
       } else {
-        throw new Error('Active tab is not in a group')
+        return { error: 'Active tab is not in a group' }
       }
       return { ok: true }
     }
@@ -358,10 +358,10 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
           await broadcastAIComplete(windowId, 'MERGE_CURRENT_GROUP')
         } catch (err: any) {
           await broadcastAIFailed(windowId, 'MERGE_CURRENT_GROUP', err.message || String(err))
-          throw err
+          return { error: err.message || String(err) }
         }
       } else {
-        throw new Error('Active tab is not in a group')
+        return { error: 'Active tab is not in a group' }
       }
       return { ok: true }
     }
@@ -375,7 +375,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         await broadcastAIComplete(windowId, 'CLASSIFY_NEW_TABS')
       } catch (err: any) {
         await broadcastAIFailed(windowId, 'CLASSIFY_NEW_TABS', err.message || String(err))
-        throw err
+        return { error: err.message || String(err) }
       }
       return { ok: true }
     }
@@ -388,7 +388,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         await broadcastAIComplete(windowId, 'GROUP_TABS')
       } catch (err: any) {
         await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
-        throw err
+        return { error: err.message || String(err) }
       }
       return { ok: true }
     }
@@ -401,7 +401,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         await broadcastAIComplete(windowId, 'GROUP_TABS')
       } catch (err: any) {
         await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
-        throw err
+        return { error: err.message || String(err) }
       }
       return { ok: true }
     }
@@ -414,7 +414,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         await broadcastAIComplete(windowId, 'GROUP_TABS')
       } catch (err: any) {
         await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
-        throw err
+        return { error: err.message || String(err) }
       }
       return { ok: true }
     }
@@ -427,7 +427,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         await broadcastAIComplete(windowId, 'GROUP_TABS')
       } catch (err: any) {
         await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
-        throw err
+        return { error: err.message || String(err) }
       }
       return { ok: true }
     }
@@ -440,7 +440,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         await broadcastAIComplete(windowId, 'GROUP_TABS')
       } catch (err: any) {
         await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
-        throw err
+        return { error: err.message || String(err) }
       }
       return { ok: true }
     }
@@ -453,7 +453,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         await broadcastAIComplete(windowId, 'GROUP_TABS')
       } catch (err: any) {
         await broadcastAIFailed(windowId, 'GROUP_TABS', err.message || String(err))
-        throw err
+        return { error: err.message || String(err) }
       }
       return { ok: true }
     }
@@ -466,7 +466,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         await broadcastAIComplete(windowId, 'CLASSIFY_NEW_TABS')
       } catch (err: any) {
         await broadcastAIFailed(windowId, 'CLASSIFY_NEW_TABS', err.message || String(err))
-        throw err
+        return { error: err.message || String(err) }
       }
       return { ok: true }
     }
@@ -479,7 +479,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         await broadcastAIComplete(windowId, 'CLASSIFY_NEW_TABS')
       } catch (err: any) {
         await broadcastAIFailed(windowId, 'CLASSIFY_NEW_TABS', err.message || String(err))
-        throw err
+        return { error: err.message || String(err) }
       }
       return { ok: true }
     }
