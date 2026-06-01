@@ -1,6 +1,6 @@
-# Contributing to TabPilot
+# Contributing to timTabTool
 
-Thank you for your interest in contributing to TabPilot! This guide will help you get started.
+Thank you for your interest in contributing to timTabTool! This guide will help you get started.
 
 [🇨🇳 简体中文](#贡献指南)
 
@@ -17,8 +17,8 @@ Thank you for your interest in contributing to TabPilot! This guide will help yo
 ### Setup
 
 ```bash
-git clone https://github.com/florianlanx/tabpilot.git
-cd tabpilot
+git clone https://github.com/florianlanx/timTabTool.git
+cd timtabtool
 pnpm install
 pnpm dev
 ```
@@ -29,14 +29,14 @@ Load `dist/` as an unpacked extension in `chrome://extensions` (enable Developer
 
 ### Reporting Bugs
 
-Use the [Bug Report](https://github.com/florianlanx/tabpilot/issues/new?template=bug_report.yml) template. Include:
+Use the [Bug Report](https://github.com/florianlanx/timTabTool/issues/new?template=bug_report.yml) template. Include:
 - Chrome version and OS
 - Steps to reproduce
 - Expected vs actual behavior
 
 ### Suggesting Features
 
-Use the [Feature Request](https://github.com/florianlanx/tabpilot/issues/new?template=feature_request.yml) template.
+Use the [Feature Request](https://github.com/florianlanx/timTabTool/issues/new?template=feature_request.yml) template.
 
 ### Pull Requests
 
@@ -72,17 +72,9 @@ docs: update AI provider setup guide
 ```
 src/
 ├── background/     # Service worker (runs in background)
-│   ├── classifier  # Rule engine + AI classification
-│   ├── tab-manager # Chrome Tab Groups API operations
-│   ├── searcher    # Tab search with relevance scoring
-│   └── storage     # Local tab history
 ├── popup/          # Extension popup (Vue 3)
 ├── content/        # Spotlight search overlay (injected into pages)
 ├── shared/         # Shared code
-│   ├── rules       # 155+ domain rules, 20+ keyword patterns
-│   ├── ai-client   # Multi-provider AI client (OpenAI, Claude, Gemini, Custom)
-│   ├── types       # TypeScript type definitions
-│   └── i18n        # Internationalization (EN, ZH_CN)
 └── styles/         # Tailwind CSS
 ```
 
@@ -99,7 +91,7 @@ pnpm typecheck    # Type check
 
 <h1 id="贡献指南">贡献指南</h1>
 
-感谢你对 TabPilot 的关注！以下是贡献指南。
+感谢你对 timTabTool 的关注！以下是贡献指南。
 
 ## 开始
 
@@ -112,8 +104,8 @@ pnpm typecheck    # Type check
 ### 本地开发
 
 ```bash
-git clone https://github.com/florianlanx/tabpilot.git
-cd tabpilot
+git clone https://github.com/florianlanx/timTabTool.git
+cd timtabtool
 pnpm install
 pnpm dev
 ```
@@ -124,14 +116,14 @@ pnpm dev
 
 ### 报告 Bug
 
-使用 [Bug 报告](https://github.com/florianlanx/tabpilot/issues/new?template=bug_report.yml) 模板，请提供：
+使用 [Bug 报告](https://github.com/florianlanx/timTabTool/issues/new?template=bug_report.yml) 模板，请提供：
 - Chrome 版本和操作系统
 - 复现步骤
 - 期望行为 vs 实际行为
 
 ### 功能建议
 
-使用 [功能请求](https://github.com/florianlanx/tabpilot/issues/new?template=feature_request.yml) 模板。
+使用 [功能请求](https://github.com/florianlanx/timTabTool/issues/new?template=feature_request.yml) 模板。
 
 ### 提交 PR
 

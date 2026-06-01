@@ -205,7 +205,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     {
       key: '/model',
       title: 'Set Default Model',
-      description: 'Set the default AI model for TabPilot groupings',
+      description: 'Set the default AI model for timTabTool groupings',
       action: 'CHANGE_MODEL'
     }
   ]
@@ -351,7 +351,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         overlayMetrics = res
       }
     } catch (err) {
-      console.error('[TabPilot] Failed to load overlay metrics:', err)
+      console.error('[timTabTool] Failed to load overlay metrics:', err)
     }
   }
 
@@ -422,7 +422,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           <span style="color:#FF3B30;font-weight:600;">AI not configured</span>
         </div>
         <div class="atm-details-section-title">Instructions</div>
-        <div class="atm-details-section-body">AI is currently disabled or missing an API Key. Please enable AI and configure your connection credentials in TabPilot Settings first.</div>
+        <div class="atm-details-section-body">AI is currently disabled or missing an API Key. Please enable AI and configure your connection credentials in timTabTool Settings first.</div>
       `
       detailsPanel.style.display = 'flex'
       return
@@ -689,7 +689,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         try {
           await chrome.runtime.sendMessage({ action: 'CANCEL_OPERATION' })
         } catch (err) {
-          console.error('[TabPilot] Failed to send CANCEL_OPERATION:', err)
+          console.error('[timTabTool] Failed to send CANCEL_OPERATION:', err)
         }
       }
       resetAIProgressState()
@@ -1256,7 +1256,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         renderResults(resultsList, query)
       }
     } catch (err) {
-      console.error('[TabPilot] Search failed:', err)
+      console.error('[timTabTool] Search failed:', err)
     }
     updateAutocomplete()
   }

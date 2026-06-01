@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="public/icons/icon-128.png" width="80" height="80" alt="TabPilot logo" />
+  <img src="public/icons/icon-128.png" width="80" height="80" alt="timTabTool logo" />
 </p>
 
-<h1 align="center">TabPilot</h1>
+<h1 align="center">timTabTool</h1>
 
 <p align="center">
   <strong>标签页自动驾驶仪。</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/florianlanx/tabpilot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
+  <a href="https://github.com/florianlanx/timTabTool/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/manifest-v3-green.svg" alt="Manifest V3" />
   <img src="https://img.shields.io/badge/chrome-extension-yellow.svg" alt="Chrome Extension" />
   <img src="https://img.shields.io/badge/vue-3-brightgreen.svg" alt="Vue 3" />
@@ -20,7 +20,7 @@
 <p align="center">
   <a href="#功能特性">功能特性</a> ·
   <a href="#安装">安装</a> ·
-  <a href="#为什么选择-tabpilot">为什么选择 TabPilot</a> ·
+  <a href="#为什么选择-timtabtool">为什么选择 timTabTool</a> ·
   <a href="#开发">开发</a> ·
   <a href="#贡献">贡献</a>
 </p>
@@ -31,12 +31,12 @@
 
 ---
 
-> **TabPilot** 是一款免费开源的 Chrome 标签页自动分组管理扩展。
+> **timTabTool** 是一款免费开源的 Chrome 标签页自动分组管理扩展。
 > 内置 **155+ 规则**，开箱即用无需 API 密钥，零配置即可覆盖 ~75% 标签分类。
 > 可选接入 **OpenAI、Claude、Gemini** 或本地大模型（Ollama、DeepSeek），准确率提升至 ~95%。
 > 所有数据本地存储，无需注册，不追踪，不上传。OneTab / Workona / AI Tab Master 替代方案。
 >
-> **TabPilot** is a free, open-source Chrome extension for automatic tab grouping.
+> **timTabTool** is a free, open-source Chrome extension for automatic tab grouping.
 > 155+ built-in rules, zero config. Optional AI (OpenAI/Claude/Gemini/Ollama) boosts accuracy to ~95%.
 > 100% local & private. A better alternative to OneTab, Workona, and AI Tab Master.
 
@@ -46,7 +46,7 @@
 
 ### 一键智能分组
 
-单击即可将所有标签页整理为 Chrome 标签组。TabPilot 使用**内置规则引擎**，包含 155+ 域名规则和 20+ 关键词模式 — 无需 API 密钥。
+单击即可将所有标签页整理为 Chrome 标签组。timTabTool 使用**内置规则引擎**，包含 155+ 域名规则 and 20+ 关键词模式 — 无需 API 密钥。
 
 <!-- TODO: 录制后替换为实际 GIF -->
 <!-- ![智能分组演示](docs/assets/demo-grouping.gif) -->
@@ -59,7 +59,7 @@
 
 ### 可选 AI 增强
 
-使用自己的 API 密钥将分类准确率从 ~75% 提升到 ~95%。TabPilot 支持 **4 种 AI 供应商**：
+使用自己的 API 密钥将分类准确率从 ~75% 提升到 ~95%。timTabTool 支持 **4 种 AI 供应商**：
 
 | 供应商 | 模型 |
 |--------|------|
@@ -79,7 +79,7 @@ AI 分组后，新打开的标签自动收集到"New Tabs"组。一键用 AI 将
 ### 隐私优先
 
 - 所有数据通过 `chrome.storage.local` 存储在本地
-- API 密钥仅发送到你选择的 AI 供应商
+- API 密钥仅发送到你选择 of AI 供应商
 - 无账号、无追踪、无分析
 - 完全开源 — 你可以自行审计代码
 
@@ -95,11 +95,11 @@ AI 分组后，新打开的标签自动收集到"New Tabs"组。一键用 AI 将
 
 ### 从 GitHub Releases 下载（推荐）
 
-1. 前往 [Releases](https://github.com/florianlanx/tabpilot/releases) 页面，下载最新的 `tabpilot-vX.X.X.zip`
+1. 前往 [Releases](https://github.com/florianlanx/timTabTool/releases) 页面，下载最新的 `timtabtool-vX.X.X.zip`
 2. 解压到一个文件夹
 3. 打开 `chrome://extensions`，开启右上角的**开发者模式**
 4. 点击**加载已解压的扩展程序**，选择解压后的文件夹
-5. 完成！将 TabPilot 固定到工具栏方便使用
+5. 完成！将 timTabTool 固定到工具栏方便使用
 
 ### 从源码构建
 
@@ -107,8 +107,8 @@ AI 分组后，新打开的标签自动收集到"New Tabs"组。一键用 AI 将
 <summary>适合想要自行构建的开发者</summary>
 
 ```bash
-git clone https://github.com/florianlanx/tabpilot.git
-cd tabpilot
+git clone https://github.com/florianlanx/timTabTool.git
+cd timtabtool
 pnpm install
 pnpm build
 ```
@@ -117,7 +117,7 @@ pnpm build
 
 </details>
 
-## 为什么选择 TabPilot
+## 为什么选择 timTabTool
 
 每个重度浏览器用户都有标签页焦虑。开发者尤其严重 — GitHub PR、Stack Overflow、文档、Jira、Slack 全混在一起。Chrome 原生标签组需要手动拖拽，没人会真的去做。
 
@@ -130,7 +130,7 @@ pnpm build
 | AI 驱动类 | AI Tab Master, Tabaroo | 必须有 API Key，没 Key 完全不能用 |
 | 域名分组类 | Tabblar | 按网站分组，缺少上下文（GitHub PR ≠ GitHub 个人主页） |
 
-**TabPilot 的方案：渐进增强。**
+**timTabTool 的方案：渐进增强。**
 
 1. **Level 0（零配置）** — 规则引擎覆盖 155+ 域名和 20+ 关键词，约 75% 准确率
 2. **Level 1（配置 API Key）** — AI 增强剩余 25%，准确率提升到 ~95%
@@ -176,7 +176,7 @@ pnpm typecheck        # 类型检查
 
 ## 支持
 
-如果 TabPilot 对你有帮助，欢迎：
+如果 timTabTool 对你有帮助，欢迎：
 
 - 在 GitHub 上 Star 这个项目
 - 分享给你的朋友

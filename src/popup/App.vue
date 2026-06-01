@@ -566,7 +566,7 @@ async function focusWindow(windowId: number) {
   try {
     await chrome.windows.update(windowId, { focused: true })
   } catch (err) {
-    console.error('[TabPilot] Failed to focus window:', err)
+    console.error('[timTabTool] Failed to focus window:', err)
   }
 }
 

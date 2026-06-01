@@ -464,7 +464,7 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
       cacheIsAIGroupedMap.set(windowId, true)
     } catch (err) {
       if (settings.ai.fallbackToSort) {
-        console.error('[TabPilot] AI free grouping failed in preview, falling back to tab sorting. Error:', err)
+        console.error('[timTabTool] AI free grouping failed in preview, falling back to tab sorting. Error:', err)
         const unpinnedTabs = tabs.filter((t) => !t.pinned)
         const pinnedTabs = tabs.filter((t) => t.pinned)
         const sortedUnpinned = sortTabsByDomainAndTitleHelper(unpinnedTabs)
@@ -479,7 +479,7 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
           },
         ]
       } else {
-        console.error('[TabPilot] AI free grouping failed in preview, falling back to rule engine. Error:', err)
+        console.error('[timTabTool] AI free grouping failed in preview, falling back to rule engine. Error:', err)
         if (settings.showRuleGroupsWhenUngrouped === false) {
           const tabInfos = tabs
             .map((t) => chromeTabToTabInfo(t))
@@ -588,12 +588,12 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
         return
       } catch (err) {
         if (controller.signal.aborted) {
-          console.log('[TabPilot] Grouping aborted by user')
+          console.log('[timTabTool] Grouping aborted by user')
           return
         }
         aiError = err as Error
         if (settings.ai.fallbackToSort) {
-          console.error('[TabPilot] AI free grouping failed, falling back to tab sorting. Error:', err)
+          console.error('[timTabTool] AI free grouping failed, falling back to tab sorting. Error:', err)
           await ungroupAllTabs(windowId)
           const sortedUnpinned = sortTabsByDomainAndTitleHelper(unpinnedTabs)
           const tabIds = sortedUnpinned.map((t) => t.id).filter((id): id is number => id !== undefined)
@@ -617,7 +617,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
           activeOperationsMap.set(windowId, { type: null, error: finalErr.message })
           throw finalErr
         }
-        console.error('[TabPilot] AI free grouping failed, no fallback enabled. Error:', err)
+        console.error('[timTabTool] AI free grouping failed, no fallback enabled. Error:', err)
         const finalErr = new Error(`AI Grouping failed: ${aiError.message}`)
         activeOperationsMap.set(windowId, { type: null, error: finalErr.message })
         throw finalErr
@@ -783,7 +783,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     activeOperationsMap.delete(windowId)
   } catch (err) {
     if (controller.signal.aborted) {
-      console.log('[TabPilot] Classification aborted by user')
+      console.log('[timTabTool] Classification aborted by user')
       return
     }
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
@@ -885,7 +885,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
     await getGroupsPreview(windowId)
     activeOperationsMap.delete(windowId)
   } catch (err) {
-    console.error('[TabPilot] splitGroup failed:', err)
+    console.error('[timTabTool] splitGroup failed:', err)
     activeOperationsMap.set(windowId, { type: 'group', error: (err as Error).message })
     throw err
   } finally {
@@ -967,7 +967,7 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
     await getGroupsPreview(windowId)
     activeOperationsMap.delete(windowId)
   } catch (err) {
-    console.error('[TabPilot] mergeGroup failed:', err)
+    console.error('[timTabTool] mergeGroup failed:', err)
     activeOperationsMap.set(windowId, { type: 'group', error: (err as Error).message })
     throw err
   } finally {
@@ -1008,7 +1008,7 @@ async function setAllGroupsCollapsed(windowId: number, collapsed: boolean): Prom
         chrome.tabGroups.update(groupId, { collapsed }),
       )
     } catch (err) {
-      console.error(`[TabPilot] Failed to update group ${groupId} collapsed=${collapsed}:`, err)
+      console.error(`[timTabTool] Failed to update group ${groupId} collapsed=${collapsed}:`, err)
     } finally {
       updatingGroups.delete(groupId)
     }
@@ -1053,7 +1053,7 @@ export async function toggleGroupTitles(windowId: number): Promise<boolean> {
           chrome.tabGroups.update(groupId, { title: savedTitle }),
         )
       } catch (err) {
-        console.error(`[TabPilot] Failed to restore title for group ${groupId}:`, err)
+        console.error(`[timTabTool] Failed to restore title for group ${groupId}:`, err)
       } finally {
         updatingGroups.delete(groupId)
       }
@@ -1072,7 +1072,7 @@ export async function toggleGroupTitles(windowId: number): Promise<boolean> {
           chrome.tabGroups.update(groupId, { title: '' }),
         )
       } catch (err) {
-        console.error(`[TabPilot] Failed to hide title for group ${groupId}:`, err)
+        console.error(`[timTabTool] Failed to hide title for group ${groupId}:`, err)
       } finally {
         updatingGroups.delete(groupId)
       }

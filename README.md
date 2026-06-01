@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="public/icons/icon-128.png" width="80" height="80" alt="TabPilot logo" />
+  <img src="public/icons/icon-128.png" width="80" height="80" alt="timTabTool logo" />
 </p>
 
-<h1 align="center">TabPilot</h1>
+<h1 align="center">timTabTool</h1>
 
 <p align="center">
   <strong>Autopilot for your browser tabs.</strong><br/>
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/florianlanx/tabpilot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
+  <a href="https://github.com/florianlanx/timTabTool/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/manifest-v3-green.svg" alt="Manifest V3" />
   <img src="https://img.shields.io/badge/chrome-extension-yellow.svg" alt="Chrome Extension" />
   <img src="https://img.shields.io/badge/vue-3-brightgreen.svg" alt="Vue 3" />
@@ -20,7 +20,7 @@
 <p align="center">
   <a href="#features">Features</a> ·
   <a href="#install">Install</a> ·
-  <a href="#why-tabpilot">Why TabPilot</a> ·
+  <a href="#why-timtabtool">Why timTabTool</a> ·
   <a href="#development">Development</a> ·
   <a href="#contributing">Contributing</a>
 </p>
@@ -31,12 +31,12 @@
 
 ---
 
-> **TabPilot** is a free, open-source Chrome extension for **automatic tab grouping** and management.
+> **timTabTool** is a free, open-source Chrome extension for **automatic tab grouping** and management.
 > It works out of the box with **155+ built-in rules** — no API key required.
 > Optionally connect **OpenAI, Claude, Gemini**, or any local LLM (Ollama, DeepSeek) to boost accuracy to ~95%.
 > All data stays on your device. No accounts, no tracking, no cloud.
 >
-> **TabPilot** 是一款免费开源的 Chrome 标签页自动分组管理扩展。
+> **timTabTool** 是一款免费开源的 Chrome 标签页自动分组管理扩展。
 > 内置 155+ 规则，开箱即用无需 API 密钥。
 > 可选接入 OpenAI、Claude、Gemini 或本地大模型，准确率提升至 ~95%。
 > 所有数据本地存储，无需注册，不追踪，不上传。
@@ -47,7 +47,7 @@
 
 ### One-Click Smart Grouping
 
-Organize all your tabs into Chrome Tab Groups with a single click. TabPilot classifies tabs using a **built-in rule engine** with 155+ domain rules and 20+ keyword patterns — no API key needed.
+Organize all your tabs into Chrome Tab Groups with a single click. timTabTool classifies tabs using a **built-in rule engine** with 155+ domain rules and 20+ keyword patterns — no API key needed.
 
 <!-- TODO: Replace with actual GIF after recording -->
 <!-- ![Smart Grouping Demo](docs/assets/demo-grouping.gif) -->
@@ -60,7 +60,7 @@ Press `Ctrl+Shift+F` to open a Spotlight-style search overlay. Search across **a
 
 ### Optional AI Enhancement
 
-Bring your own API key to boost classification accuracy from ~75% to ~95%. TabPilot supports **4 AI providers**:
+Bring your own API key to boost classification accuracy from ~75% to ~95%. timTabTool supports **4 AI providers**:
 
 | Provider | Model |
 |----------|-------|
@@ -96,11 +96,11 @@ Full English and Chinese (简体中文) support. Automatically matches your Chro
 
 ### From GitHub Releases (Recommended)
 
-1. Go to the [Releases](https://github.com/florianlanx/tabpilot/releases) page and download the latest `tabpilot-vX.X.X.zip`
+1. Go to the [Releases](https://github.com/florianlanx/timTabTool/releases) page and download the latest `timtabtool-vX.X.X.zip`
 2. Unzip to a folder
 3. Open `chrome://extensions` and enable **Developer Mode** (top right toggle)
 4. Click **Load unpacked** and select the unzipped folder
-5. Done! Pin TabPilot to the toolbar for quick access
+5. Done! Pin timTabTool to the toolbar for quick access
 
 ### Build from Source
 
@@ -108,8 +108,8 @@ Full English and Chinese (简体中文) support. Automatically matches your Chro
 <summary>For developers who want to build from source</summary>
 
 ```bash
-git clone https://github.com/florianlanx/tabpilot.git
-cd tabpilot
+git clone https://github.com/florianlanx/timTabTool.git
+cd timtabtool
 pnpm install
 pnpm build
 ```
@@ -118,7 +118,7 @@ Then load `dist/` as an unpacked extension in `chrome://extensions` (enable Deve
 
 </details>
 
-## Why TabPilot
+## Why timTabTool
 
 Every heavy browser user suffers from tab overload. Developers are the worst — GitHub PRs, Stack Overflow, docs, Jira, Slack, all mixed together. Chrome's native Tab Groups require manual drag-and-drop organization that nobody actually does.
 
@@ -131,7 +131,7 @@ Every heavy browser user suffers from tab overload. Developers are the worst —
 | AI-only organizers | AI Tab Master, Tabaroo | Requires API key — no key = no functionality |
 | Domain groupers | Tabblar | Groups by website, misses context (a GitHub PR ≠ a GitHub profile) |
 
-**TabPilot's approach: progressive enhancement.**
+**timTabTool's approach: progressive enhancement.**
 
 1. **Level 0 (zero config)** — Rule engine with 155+ domain rules and 20+ keyword patterns covers ~75% of tabs accurately
 2. **Level 1 (add API key)** — AI enhances the remaining ~25%, boosting accuracy to ~95%
@@ -177,7 +177,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 
 ## Support
 
-If you find TabPilot useful, consider:
+If you find timTabTool useful, consider:
 
 - Starring the repo on GitHub
 - Sharing it with friends

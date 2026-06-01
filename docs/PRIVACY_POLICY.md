@@ -1,10 +1,10 @@
-# Privacy Policy for TabPilot
+# Privacy Policy for timTabTool
 
 **Last Updated:** 2026-02-26
 
 ## Overview
 
-TabPilot is a Chrome browser extension that helps users organize and search their browser tabs using rule-based and AI-powered classification. We are committed to protecting your privacy.
+timTabTool is a Chrome browser extension that helps users organize and search their browser tabs using rule-based and AI-powered classification. We are committed to protecting your privacy.
 
 ## Data Collection
 
@@ -59,4 +59,4 @@ If you have questions about this privacy policy, please open an issue on our Git
 
 ---
 
-*This privacy policy applies to TabPilot version 1.0.0 and later.*
+*This privacy policy applies to timTabTool version 1.0.0 and later.*

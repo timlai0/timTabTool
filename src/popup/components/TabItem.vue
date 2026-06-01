@@ -13,7 +13,7 @@ async function closeTab(tabId: number) {
   try {
     await chrome.tabs.remove(tabId)
   } catch (err) {
-    console.error('[TabPilot] Failed to close tab:', err)
+    console.error('[timTabTool] Failed to close tab:', err)
   }
 }
 

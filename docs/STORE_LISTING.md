@@ -3,13 +3,13 @@
 ## English
 
 ### Name
-TabPilot
+timTabTool
 
 ### Summary (132 chars max)
 Autopilot for your tabs. One-click smart grouping, instant search, optional AI enhancement — 100% private, open source.
 
 ### Description
-**Drowning in browser tabs?** TabPilot is the autopilot for your browser — it automatically organizes tabs into smart groups and lets you search through them instantly.
+**Drowning in browser tabs?** timTabTool is the autopilot for your browser — it automatically organizes tabs into smart groups and lets you search through them instantly.
 
 🗂️ **One-Click Smart Grouping**
 - Automatically categorizes tabs into groups: Work, Development, Learning, Social, Entertainment, Shopping, Docs, and more
@@ -55,13 +55,13 @@ English, Chinese (Simplified)
 ## 中文
 
 ### 名称
-TabPilot
+timTabTool
 
 ### 简介 (132 字符)
 标签页自动驾驶。一键智能分组、即时搜索、可选 AI 增强 — 100% 隐私、开源。
 
 ### 描述
-**标签页太多？** TabPilot 是你的标签页自动驾驶仪 — 自动整理标签页为智能分组，支持即时搜索。
+**标签页太多？** timTabTool 是你的标签页自动驾驶仪 — 自动整理标签页为智能分组，支持即时搜索。
 
 🗂️ **一键智能分组**
 - 自动将标签分为：工作、开发、学习、社交、娱乐、购物、文档等分组

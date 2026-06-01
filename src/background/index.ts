@@ -37,10 +37,10 @@ import { STORAGE_KEYS, DEFAULT_SETTINGS } from '../shared/constants'
 import type { ExtensionMessage, TabInfo, ExtensionSettings, WindowGroupsInfo } from '../shared/types'
 import { initMCPBridge, getMCPStatus, reconnectMCP } from './mcp-bridge'
 
-console.log('[TabPilot] Service worker started')
+console.log('[timTabTool] Service worker started')
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('[TabPilot] Extension installed')
+  console.log('[timTabTool] Extension installed')
 })
 
 // --- Tab history tracking + cache updates ---
@@ -54,7 +54,7 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
     recordTabVisit(tab.url, tab.title, tab.favIconUrl)
     cacheUpdateTab(tab)
     autoGroupNewTab(tab).catch((err) =>
-      console.error('[TabPilot] autoGroupNewTab failed:', err),
+      console.error('[timTabTool] autoGroupNewTab failed:', err),
     )
   } else if (changeInfo.url) {
     cacheUpdateTab(tab)
@@ -159,7 +159,7 @@ async function broadcastAIStart(windowId: number, action: string) {
       })
     }
   } catch (err) {
-    console.error('[TabPilot] Failed to broadcast AI start:', err)
+    console.error('[timTabTool] Failed to broadcast AI start:', err)
   }
 }
 
@@ -176,7 +176,7 @@ async function broadcastAIComplete(windowId: number, action: string) {
       })
     }
   } catch (err) {
-    console.error('[TabPilot] Failed to broadcast AI complete:', err)
+    console.error('[timTabTool] Failed to broadcast AI complete:', err)
   }
 }
 
@@ -193,7 +193,7 @@ async function broadcastAIFailed(windowId: number, action: string, errorMsg: str
       })
     }
   } catch (err) {
-    console.error('[TabPilot] Failed to broadcast AI failed:', err)
+    console.error('[timTabTool] Failed to broadcast AI failed:', err)
   }
 }
 
@@ -225,7 +225,7 @@ async function toggleSearchOverlay(initialQuery = '') {
 chrome.runtime.onMessage.addListener(
   (message: ExtensionMessage, sender, sendResponse) => {
     handleMessage(message, sender).then(sendResponse).catch((err) => {
-      console.error(`[TabPilot] Error handling action "${message.action}" with payload:`, message.payload, 'Error:', err)
+      console.error(`[timTabTool] Error handling action "${message.action}" with payload:`, message.payload, 'Error:', err)
       sendResponse({ error: err.message })
     })
     return true

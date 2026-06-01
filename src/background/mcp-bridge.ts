@@ -34,7 +34,7 @@ export function getMCPStatus() {
 }
 
 export function reconnectMCP() {
-  console.log('[TabPilot MCP] Manual reconnect requested')
+  console.log('[timTabTool MCP] Manual reconnect requested')
   lastMcpError = null
   connect()
 }
@@ -63,7 +63,7 @@ export function initMCPBridge() {
         if (nextEnabled !== isEnabled || nextPort !== currentPort) {
           isEnabled = nextEnabled
           currentPort = nextPort
-          console.log(`[TabPilot MCP] Settings updated. Enabled: ${isEnabled}, Port: ${currentPort}`)
+          console.log(`[timTabTool MCP] Settings updated. Enabled: ${isEnabled}, Port: ${currentPort}`)
           
           disconnect()
           if (isEnabled) {
@@ -98,7 +98,7 @@ function disconnect() {
       // Ignored
     }
     socket = null
-    console.log('[TabPilot MCP] Disconnected bridge')
+    console.log('[timTabTool MCP] Disconnected bridge')
   }
   mcpState = 'disconnected'
 }
@@ -109,13 +109,13 @@ function connect() {
   
   mcpState = 'connecting'
   const url = `ws://127.0.0.1:${currentPort}`
-  console.log(`[TabPilot MCP] Connecting to ${url}...`)
+  console.log(`[timTabTool MCP] Connecting to ${url}...`)
 
   try {
     socket = new WebSocket(url)
 
     socket.onopen = () => {
-      console.log(`[TabPilot MCP] Connected successfully on port ${currentPort}!`)
+      console.log(`[timTabTool MCP] Connected successfully on port ${currentPort}!`)
       mcpState = 'connected'
       lastMcpError = null
       autoRetrySecondsLeft = 0
@@ -130,7 +130,7 @@ function connect() {
     }
 
     socket.onclose = (event) => {
-      console.warn(`[TabPilot MCP] Connection closed. Code: ${event.code}. Reconnecting in 5s...`)
+      console.warn(`[timTabTool MCP] Connection closed. Code: ${event.code}. Reconnecting in 5s...`)
       mcpState = 'disconnected'
       if (!lastMcpError) {
         lastMcpError = `Connection closed (Code: ${event.code})`
@@ -140,7 +140,7 @@ function connect() {
     }
 
     socket.onerror = (error) => {
-      console.error('[TabPilot MCP] WebSocket error:', error)
+      console.error('[timTabTool MCP] WebSocket error:', error)
       mcpState = 'disconnected'
       lastMcpError = `Connection refused (Port ${currentPort} is closed or unreachable)`
     }
@@ -163,11 +163,11 @@ function connect() {
           sendToSocket({ id, success: false, error: err.message || String(err) })
         }
       } catch (err) {
-        console.error('[TabPilot MCP] Failed to process socket message:', err)
+        console.error('[timTabTool MCP] Failed to process socket message:', err)
       }
     }
   } catch (err: any) {
-    console.error('[TabPilot MCP] Failed to initialize WebSocket:', err)
+    console.error('[timTabTool MCP] Failed to initialize WebSocket:', err)
     mcpState = 'disconnected'
     lastMcpError = err.message || String(err)
     scheduleReconnect()
@@ -190,7 +190,7 @@ function sendToSocket(data: any) {
     try {
       socket.send(JSON.stringify(data))
     } catch (err) {
-      console.error('[TabPilot MCP] Failed to send to socket:', err)
+      console.error('[timTabTool MCP] Failed to send to socket:', err)
     }
   }
 }

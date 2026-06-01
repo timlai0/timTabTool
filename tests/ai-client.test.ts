@@ -198,7 +198,7 @@ describe('AIClient Prompt Formatting', () => {
       sendFullUrl: false,
     }
     const client = new AIClient(config)
-    const tab = { url: 'https://github.com/florianlanx/tabpilot/issues/1', title: 'Issue #1' }
+    const tab = { url: 'https://github.com/florianlanx/timTabTool/issues/1', title: 'Issue #1' }
     
     // Using cast to access private formatTabForPrompt method
     const formatted = (client as any).formatTabForPrompt(tab, 1, false)
@@ -213,10 +213,10 @@ describe('AIClient Prompt Formatting', () => {
       sendFullUrl: true,
     }
     const client = new AIClient(config)
-    const tab = { url: 'https://github.com/florianlanx/tabpilot/issues/1', title: 'Issue #1' }
+    const tab = { url: 'https://github.com/florianlanx/timTabTool/issues/1', title: 'Issue #1' }
     
     const formatted = (client as any).formatTabForPrompt(tab, 1, false)
-    expect(formatted).toBe('1. Issue #1 (URL: https://github.com/florianlanx/tabpilot/issues/1)')
+    expect(formatted).toBe('1. Issue #1 (URL: https://github.com/florianlanx/timTabTool/issues/1)')
   })
 
   it('formats tab with full URL when sendFullUrl is true even if stripTitles is true', () => {
@@ -227,9 +227,9 @@ describe('AIClient Prompt Formatting', () => {
       sendFullUrl: true,
     }
     const client = new AIClient(config)
-    const tab = { url: 'https://github.com/florianlanx/tabpilot/issues/1', title: 'Issue #1' }
+    const tab = { url: 'https://github.com/florianlanx/timTabTool/issues/1', title: 'Issue #1' }
     
     const formatted = (client as any).formatTabForPrompt(tab, 1, true)
-    expect(formatted).toBe('1. (URL: https://github.com/florianlanx/tabpilot/issues/1)')
+    expect(formatted).toBe('1. (URL: https://github.com/florianlanx/timTabTool/issues/1)')
   })
 })

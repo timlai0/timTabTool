@@ -185,14 +185,14 @@ Only output the JSON array, no other text.`
           }
         }
       } catch (err) {
-        console.error('[TabPilot] Failed to parse AI response. Error:', err, 'Response:', response)
+        console.error('[timTabTool] Failed to parse AI response. Error:', err, 'Response:', response)
       }
 
       return result
     } catch (err) {
       const msg = (err as Error).message
       if (!stripTitles && (msg.includes('PROHIBITED_CONTENT') || msg.includes('Prohibited Use policy') || msg.includes('promptFeedback'))) {
-        console.warn('[TabPilot] Prompt blocked due to sensitive content in fallback, retrying with URLs only...')
+        console.warn('[timTabTool] Prompt blocked due to sensitive content in fallback, retrying with URLs only...')
         return this.classifyTabs(tabs, categories, true)
       }
       throw err
@@ -289,7 +289,7 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
     } catch (err) {
       const msg = (err as Error).message
       if (!stripTitles && (msg.includes('PROHIBITED_CONTENT') || msg.includes('Prohibited Use policy') || msg.includes('promptFeedback'))) {
-        console.warn('[TabPilot] Prompt blocked due to sensitive content, retrying with URLs only...')
+        console.warn('[timTabTool] Prompt blocked due to sensitive content, retrying with URLs only...')
         return this.groupTabsBatch(tabs, offset, existingGroupNames, true)
       }
       throw err
@@ -432,10 +432,10 @@ Only output the JSON array.`
     } catch (err) {
       const msg = (err as Error).message
       if (!stripTitles && (msg.includes('PROHIBITED_CONTENT') || msg.includes('Prohibited Use policy') || msg.includes('promptFeedback'))) {
-        console.warn('[TabPilot] Prompt blocked due to sensitive content in classification, retrying with URLs only...')
+        console.warn('[timTabTool] Prompt blocked due to sensitive content in classification, retrying with URLs only...')
         return this.classifyNewTabsIntoGroups(tabs, existingGroupNames, true)
       }
-      console.error('[TabPilot] Failed to parse classify-new-tabs response. Error:', err)
+      console.error('[timTabTool] Failed to parse classify-new-tabs response. Error:', err)
       return this.fallbackAllToNew(tabs)
     }
   }
@@ -484,10 +484,10 @@ Only output the JSON object.`
     } catch (err) {
       const msg = (err as Error).message
       if (!stripTitles && (msg.includes('PROHIBITED_CONTENT') || msg.includes('Prohibited Use policy') || msg.includes('promptFeedback'))) {
-        console.warn('[TabPilot] Prompt blocked in merge analysis, retrying with URLs only...')
+        console.warn('[timTabTool] Prompt blocked in merge analysis, retrying with URLs only...')
         return this.decideMergeGroup(tabs, existingGroupNames, true)
       }
-      console.error('[TabPilot] Failed to decide merge group. Error:', err)
+      console.error('[timTabTool] Failed to decide merge group. Error:', err)
       return 'KEEP'
     }
   }
@@ -534,7 +534,7 @@ Only output the JSON object.`
           throw err
         }
 
-        console.warn(`[TabPilot] AI API call failed: ${errorMsg}. Retrying in ${delay}ms... (Attempt ${attempt + 1}/${maxRetries})`)
+        console.warn(`[timTabTool] AI API call failed: ${errorMsg}. Retrying in ${delay}ms... (Attempt ${attempt + 1}/${maxRetries})`)
 
         await new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(() => {
@@ -565,7 +565,7 @@ Only output the JSON object.`
   private checkRequestSafeguards(): void {
     // 1. Instance limit check (per operation run)
     if (this.instanceRequestCount >= AIClient.MAX_REQUESTS_PER_RUN) {
-      throw new Error(`[TabPilot] AI safety safeguard: Single operation exceeded the safety limit of ${AIClient.MAX_REQUESTS_PER_RUN} requests to prevent run-away token billing. Please close some tabs or group in smaller batches.`)
+      throw new Error(`[timTabTool] AI safety safeguard: Single operation exceeded the safety limit of ${AIClient.MAX_REQUESTS_PER_RUN} requests to prevent run-away token billing. Please close some tabs or group in smaller batches.`)
     }
 
     // 2. Rolling window minute limit check (global extension throttle)
@@ -575,7 +575,7 @@ Only output the JSON object.`
     )
 
     if (AIClient.globalRequestTimestamps.length >= AIClient.MAX_REQUESTS_PER_MINUTE) {
-      throw new Error(`[TabPilot] AI safety safeguard: Global rate limit exceeded (${AIClient.MAX_REQUESTS_PER_MINUTE} requests/min) to prevent run-away mass token consumption. Please wait a moment before trying again.`)
+      throw new Error(`[timTabTool] AI safety safeguard: Global rate limit exceeded (${AIClient.MAX_REQUESTS_PER_MINUTE} requests/min) to prevent run-away mass token consumption. Please wait a moment before trying again.`)
     }
   }
 
@@ -613,7 +613,7 @@ Only output the JSON object.`
         return data.data.map((d: { embedding: number[] }) => d.embedding)
       })
     } catch (err) {
-      console.error('[TabPilot] Failed to get embeddings:', err)
+      console.error('[timTabTool] Failed to get embeddings:', err)
       return null
     }
   }
