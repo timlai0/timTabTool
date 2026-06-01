@@ -30,7 +30,7 @@ interface SearchResultItem {
 
 // Guard against multiple injections
 if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
-  ;(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__ = true
+  ; (window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__ = true
 
   let hostEl: HTMLDivElement | null = null
   let shadow: ShadowRoot | null = null
@@ -67,14 +67,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     'gemini-3.5-flash': { input: 1.50, output: 9.00 },
     'gemini-3.1-pro-preview': { input: 2.00, output: 12.00 },
     'gemini-3.1-flash-lite': { input: 0.25, output: 1.50 },
-    'gemini-3.1-flash-lite-preview': { input: 0.25, output: 1.50 },
-    'gemini-3.1-flash-live-preview': { input: 0.75, output: 4.50 },
     'gemini-3-flash-preview': { input: 0.50, output: 3.00 },
     'gemini-3-pro-preview': { input: 2.00, output: 12.00 },
     'gemini-2.5-pro': { input: 1.25, output: 10.00 },
     'gemini-2.5-flash': { input: 0.30, output: 2.50 },
     'gemini-2.5-flash-lite': { input: 0.10, output: 0.40 },
-    'gemini-2.5-flash-lite-preview-09-2025': { input: 0.10, output: 0.40 },
     'gemini-2.0-flash': { input: 0.10, output: 0.40 },
     'gemini-2.0-flash-lite': { input: 0.075, output: 0.30 },
     'gemma-4-31b-it': { input: 0, output: 0 },
@@ -214,14 +211,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     'gemini-3.5-flash': 'Gemini 3.5 Flash',
     'gemini-3.1-pro-preview': 'Gemini 3.1 Pro (Preview)',
     'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
-    'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash Lite (Preview)',
-    'gemini-3.1-flash-live-preview': 'Gemini 3.1 Flash Live (Preview)',
-    'gemini-3-flash-preview': 'Gemini 3 Flash (Preview)',
     'gemini-3-pro-preview': 'Gemini 3 Pro (Preview)',
     'gemini-2.5-pro': 'Gemini 2.5 Pro',
     'gemini-2.5-flash': 'Gemini 2.5 Flash',
     'gemini-2.5-flash-lite': 'Gemini 2.5 Flash Lite',
-    'gemini-2.5-flash-lite-preview-09-2025': 'Gemini 2.5 Flash Lite (Preview)',
     'gemini-2.0-flash': 'Gemini 2.0 Flash',
     'gemini-2.0-flash-lite': 'Gemini 2.0 Flash Lite',
     'gemma-4-31b-it': 'Gemma 4 31B',
@@ -367,7 +360,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     const action = result.commandAction
     const isLocal = ['UNGROUP_ALL', 'EXPAND_ALL_GROUPS', 'COLLAPSE_ALL_GROUPS', 'TOGGLE_GROUP_TITLES'].includes(action)
-    
+
     if (isLocal) {
       let desc = ''
       if (action === 'UNGROUP_ALL') desc = 'Ungroup all tabs in this window instantly, leaving all tabs active in a single flat list.'
@@ -414,7 +407,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (result.sendFullUrl) {
       aiSettings.sendFullUrl = true
     }
-    
+
     if (!aiSettings.enabled || !aiSettings.apiKey) {
       detailsPanel.innerHTML = `
         <div class="atm-details-title">${result.tab.title}</div>
@@ -466,10 +459,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     const isGroup = action === 'GROUP_TABS' || action.startsWith('GROUP_TABS_')
     const isClassify = action === 'CLASSIFY_NEW_TABS' || action.startsWith('CLASSIFY_NEW_TABS_')
 
-    let systemPrompt = aiSettings.customPrompt?.trim() 
+    let systemPrompt = aiSettings.customPrompt?.trim()
       ? `You are a helpful assistant that classifies browser tabs into categories. Be concise.\n\nUser Instructions:\n${aiSettings.customPrompt.trim()}`
       : 'You are a helpful assistant that classifies browser tabs into categories. Be concise.'
-      
+
     let userPrompt = ''
     let titleStr = ''
     let tabCount = 0
@@ -556,10 +549,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (key.toLowerCase().startsWith(query.toLowerCase())) {
       const matchText = query
       const suggestionTail = key.slice(query.length)
-      
-      const isDark = hostEl?.getAttribute('data-theme') === 'dark' || 
+
+      const isDark = hostEl?.getAttribute('data-theme') === 'dark' ||
         (!hostEl?.hasAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)
-      
+
       const ghostColor = isDark ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)'
       ghost.style.color = ghostColor
 
@@ -809,7 +802,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (input && resultsList) {
       input.value = initialQuery
       doSearch(initialQuery, resultsList)
-      setTimeout(() => input.focus(), 0)
+
+      // Robust auto-focus
+      input.focus()
+      requestAnimationFrame(() => input.focus())
+      setTimeout(() => input.focus(), 50)
+      setTimeout(() => input.focus(), 150)
     }
   }
 
@@ -824,7 +822,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       clearTimeout(aiProgressTimeout)
       aiProgressTimeout = null
     }
-    
+
     if (shadow) {
       if (hostEl) {
         hostEl.style.pointerEvents = ''
@@ -836,7 +834,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
       const detailsPanel = shadow.querySelector('.atm-details-panel') as HTMLDivElement
       const footer = shadow.querySelector('.atm-footer') as HTMLDivElement
-      
+
       if (input) {
         input.disabled = false
         setTimeout(() => input.focus(), 0)
@@ -852,7 +850,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         backdrop.style.background = ''
         backdrop.style.pointerEvents = ''
         backdrop.style.backdropFilter = ''
-        ;(backdrop.style as any).webkitBackdropFilter = ''
+          ; (backdrop.style as any).webkitBackdropFilter = ''
       }
       if (progressContainer) {
         progressContainer.style.pointerEvents = ''
@@ -897,7 +895,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       backdrop.style.background = 'transparent'
       backdrop.style.pointerEvents = 'none'
       backdrop.style.backdropFilter = 'none'
-      ;(backdrop.style as any).webkitBackdropFilter = 'none'
+        ; (backdrop.style as any).webkitBackdropFilter = 'none'
     }
     if (progressContainer) {
       progressContainer.style.pointerEvents = 'auto'
@@ -906,7 +904,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
     const detailsPanel = shadow.querySelector('.atm-details-panel') as HTMLDivElement
     const footer = shadow.querySelector('.atm-footer') as HTMLDivElement
-    
+
     if (inputWrap) inputWrap.style.visibility = 'hidden'
     if (resultsList) resultsList.style.visibility = 'hidden'
     if (detailsPanel) detailsPanel.style.visibility = 'hidden'
@@ -915,9 +913,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
   async function runAICommand(result: SearchResultItem) {
     if (!shadow || !result.commandAction) return
-    
+
     isAIOperating = true
-    
+
     // Disable search input, show progress
     const input = shadow.querySelector('.atm-input') as HTMLInputElement
     if (input) {
@@ -925,7 +923,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
     if (progressContainer) progressContainer.style.display = 'flex'
     switchToProgressOnlyMode()
-    
+
     if (progressCloseBtn) {
       progressCloseBtn.textContent = 'Cancel'
       progressCloseBtn.style.color = '' // Reverts to CSS-defined red color
@@ -1023,7 +1021,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (aiProgressInterval) clearInterval(aiProgressInterval)
     aiProgressInterval = setInterval(() => {
       if (!isAIOperating) return
-      
+
       // Determine what phase we are in
       const currentPhase = phases[phaseIndex]
       if (currentPhase) {
@@ -1047,7 +1045,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
       if (progressPercent) progressPercent.textContent = `${currentPercent}%`
       if (progressFill) progressFill.style.width = `${currentPercent}%`
-      
+
       // Show appropriate detail text
       const activePhase = phases.find(p => currentPercent <= p.percent) || phases[phases.length - 1]
       if (activePhase && progressDetail) {
@@ -1125,7 +1123,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
   function hide() {
     if (!hostEl) return
-    
+
     if (isAIOperating) {
       switchToProgressOnlyMode()
       return
@@ -1637,7 +1635,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     const escapedTerms = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi')
-    
+
     const parts = text.split(regex)
     return parts.map((part, i) => {
       if (i % 2 === 1) {
@@ -1673,7 +1671,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   }
 
   // Expose toggle function globally so background can call it via executeScript
-  ;(window as unknown as Record<string, (q?: string) => void>).__ATM_TOGGLE_SEARCH__ = toggle
+  ; (window as unknown as Record<string, (q?: string) => void>).__ATM_TOGGLE_SEARCH__ = toggle
 
   // Also listen for messages (for tabs.sendMessage from background)
   chrome.runtime.onMessage.addListener((message) => {
@@ -1690,14 +1688,14 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           'CLASSIFY_NEW_TABS': 'Classify New Tabs'
         }
         const actionTitle = titleMap[commandAction] || 'AI Command'
-        
+
         init()
         if (hostEl && shadow) {
           visible = true
           hostEl.style.display = 'block'
           syncThemeAttribute()
           switchToProgressOnlyMode()
-          
+
           isExternalAI = true
           runAICommand({
             tab: { title: actionTitle, url: 'Executing from GUI...' },
@@ -1716,7 +1714,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         }
         isAIOperating = false
         isExternalAI = false
-        
+
         if (progressPercent) progressPercent.textContent = '100%'
         if (progressFill) {
           progressFill.style.width = '100%'
