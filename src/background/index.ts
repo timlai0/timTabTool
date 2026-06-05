@@ -41,6 +41,18 @@ console.log('[timTabTool] Service worker started')
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[timTabTool] Extension installed')
+  // Programming logic: Create context menu item to open search overlay
+  chrome.contextMenus.create({
+    id: 'open-search-menu',
+    title: 'Open Search',
+    contexts: ['action', 'page']
+  })
+})
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === 'open-search-menu') {
+    await toggleSearchOverlay()
+  }
 })
 
 // --- Tab history tracking + cache updates ---
