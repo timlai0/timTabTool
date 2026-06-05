@@ -59,8 +59,17 @@ watch(themeMode, (mode) => applyTheme(mode))
 
 // ─── Data Loading ───
 
+let refreshTimeout: ReturnType<typeof setTimeout> | null = null
+
 const refreshPreviews = () => {
-  loadAllPreviews()
+  // Programming logic: debounce preview refresh to prevent multiple concurrent loads during tab events
+  if (refreshTimeout) {
+    clearTimeout(refreshTimeout)
+  }
+  refreshTimeout = setTimeout(() => {
+    refreshTimeout = null
+    loadAllPreviews()
+  }, 300)
 }
 
 onMounted(async () => {
@@ -97,7 +106,7 @@ onMounted(async () => {
 
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
   currentWindowId.value = activeTab?.windowId ?? null
-  await loadAllPreviews()
+  await loadAllPreviews(true)
 
   // Logik: Scrollt zur aktiven Gruppe, sobald das Popup geöffnet und gerendert wurde
   // Scroll to active group on initial load
@@ -112,6 +121,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // Programming logic: clear any pending refresh timeouts
+  if (refreshTimeout) {
+    clearTimeout(refreshTimeout)
+  }
   mediaQuery.removeEventListener('change', onSystemThemeChange)
   stopPollingStatus()
   chrome.tabs.onCreated.removeListener(refreshPreviews)
@@ -256,8 +269,11 @@ async function organizePossibleDuplicates() {
 
 const isDarkActive = computed(() => document.documentElement.classList.contains('dark'))
 
-async function loadAllPreviews() {
-  loading.value = true
+async function loadAllPreviews(showLoading = false) {
+  // Programming logic: only set loading to true on initial load or when requested/empty
+  if (showLoading || allWindows.value.length === 0) {
+    loading.value = true
+  }
   try {
     const result = await chrome.runtime.sendMessage({ action: 'GET_ALL_WINDOWS_PREVIEW' })
     if (Array.isArray(result)) {
