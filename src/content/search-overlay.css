@@ -946,6 +946,11 @@
 
 /* ─── Standalone Overrides for search.html ─── */
 
+:host([data-standalone="true"]) {
+  left: 380px !important;
+  width: calc(100% - 380px) !important;
+}
+
 :host([data-standalone="true"]) .atm-backdrop {
   background: transparent !important;
   backdrop-filter: none !important;

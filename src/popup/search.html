@@ -13,9 +13,20 @@
       background: transparent;
       overflow: hidden;
     }
+    #app {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 380px;
+      height: 100%;
+      border-right: 0.5px solid var(--border);
+      background: var(--bg-primary);
+      z-index: 10000;
+    }
   </style>
 </head>
 <body>
+  <div id="app"></div>
   <script type="module" src="./search-page.ts"></script>
 </body>
 </html>
