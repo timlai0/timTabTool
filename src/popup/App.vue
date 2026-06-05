@@ -9,6 +9,11 @@ import GroupList from './components/GroupList.vue'
 import SettingsView from './components/SettingsView.vue'
 
 const currentView = ref<'main' | 'settings'>('main')
+const isStandaloneSearch = computed(() => {
+  // Logik: Prüft, ob die Anwendung als Seitenleiste im Standalone-Suchfenster geladen ist
+  // Programming logic: Check if the application is loaded as a sidebar in the standalone search window
+  return window.location.pathname.endsWith('search.html')
+})
 const allWindows = ref<WindowGroupsInfo[]>([])
 const loading = ref(true)
 const groupingWindowId = ref<number | null>(null)
@@ -176,6 +181,33 @@ const exactDuplicatesCount = computed(() => {
   return count
 })
 
+const exactDuplicateTabs = computed(() => {
+  // Logik: Ermittelt die Liste aller exakt duplizierten Tabs für den Hover-Tooltip
+  // Programming logic: Get list of exact duplicate tabs to show in the hover tooltip
+  const urlSeen = new Set<string>()
+  const duplicates: Array<{ id: number; title: string; url: string; favIconUrl?: string; windowId: number }> = []
+  for (const win of allWindows.value) {
+    for (const group of win.groups) {
+      for (const tab of group.tabs) {
+        if (!tab.url || tab.id === undefined) continue
+        if (urlSeen.has(tab.url)) {
+          duplicates.push({
+            id: tab.id,
+            title: tab.title || 'Untitled',
+            url: tab.url,
+            favIconUrl: tab.favIconUrl,
+            windowId: win.windowId
+          })
+        } else {
+          urlSeen.add(tab.url)
+        }
+      }
+    }
+  }
+  return duplicates
+})
+
+
 const possibleDuplicatesCount = computed(() => {
   const cleanUrlCounts = new Map<string, number>()
   const exactUrlSeen = new Set<string>()
@@ -226,6 +258,14 @@ async function closeExactDuplicates() {
     await chrome.tabs.remove(tabIdsToRemove)
     await loadAllPreviews()
   }
+}
+
+async function focusTab(tabId: number, windowId: number) {
+  // Logik: Aktiviert den ausgewählten Tab und bringt dessen Fenster in den Vordergrund
+  // Programming logic: Activate the selected tab and bring its window to the foreground
+  await chrome.tabs.update(tabId, { active: true })
+  await chrome.windows.update(windowId, { focused: true })
+  window.close() // Close the popup
 }
 
 async function organizePossibleDuplicates() {
@@ -630,7 +670,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 <template>
   <SettingsView v-if="currentView === 'settings'" @back="handleSettingsBack" />
 
-  <div v-else :style="{ width: Math.max(360, windowWidth) + 'px', height: Math.max(240, Math.min(600, windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
+  <div v-else :style="isStandaloneSearch ? { width: '380px', height: '100%', background: 'var(--bg-primary)' } : { width: Math.max(360, windowWidth) + 'px', height: Math.max(240, Math.min(600, windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->
     <header class="flex items-center justify-between px-4 py-3" style="box-shadow: 0 0.5px 0 var(--border);">
       <div class="flex items-center gap-2.5 flex-1 min-w-0 flex-wrap py-0.5">
@@ -643,9 +683,35 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           <svg class="w-3 h-3" style="color: #ef4444;" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
           </svg>
-          <button v-if="exactDuplicatesCount > 0" class="hover:underline focus:outline-none" @click="closeExactDuplicates" title="Close all exact duplicates">
-            {{ exactDuplicatesCount }} exact dupes
-          </button>
+          <span class="relative group">
+            <button v-if="exactDuplicatesCount > 0" class="hover:underline focus:outline-none" @click="closeExactDuplicates" title="Close all exact duplicates">
+              {{ exactDuplicatesCount }} exact dupes
+            </button>
+            <div class="hidden group-hover:block absolute left-1/2 -translate-x-1/2 top-full pt-2 w-[300px] z-50">
+              <div class="p-3 rounded-md shadow-card text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+                <div class="font-semibold mb-2 text-xs flex items-center justify-between" style="color: var(--accent);">
+                  <span>Duplicated Tabs ({{ exactDuplicateTabs.length }})</span>
+                  <span class="text-[9px] font-normal" style="color: var(--text-secondary);">Click to focus</span>
+                </div>
+                <div class="max-h-[200px] overflow-y-auto flex flex-col gap-1.5 scrollbar-thin">
+                  <div 
+                    v-for="tab in exactDuplicateTabs" 
+                    :key="tab.id" 
+                    class="flex items-center gap-2 text-[10px] p-1.5 rounded-md cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors border-b border-dashed last:border-b-0"
+                    style="border-color: var(--border);"
+                    @click="focusTab(tab.id, tab.windowId)"
+                  >
+                    <img v-if="tab.favIconUrl" :src="tab.favIconUrl" alt="" class="w-3.5 h-3.5 rounded-xs shrink-0" />
+                    <div v-else class="w-3.5 h-3.5 rounded-xs bg-gray-500/20 shrink-0" />
+                    <div class="flex-1 min-w-0">
+                      <div class="font-medium truncate" style="color: var(--text-primary);">{{ tab.title }}</div>
+                      <div class="text-[9px] truncate" style="color: var(--text-secondary);">{{ tab.url }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </span>
           <span v-if="exactDuplicatesCount > 0 && possibleDuplicatesCount > 0">·</span>
           <button v-if="possibleDuplicatesCount > 0" class="hover:underline focus:outline-none" @click="organizePossibleDuplicates" title="Group and view possible duplicates">
             {{ possibleDuplicatesCount }} possible dupes
