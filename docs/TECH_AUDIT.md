@@ -18,11 +18,6 @@ A recent scan for unused exports and abandoned code identified the following ite
 ### Fully Unused
 - `src/shared/constants.ts`: `ALL_CATEGORIES` (Line 14) - Exported but never imported by any other module.
 
-### Unused Externally (Used only within module)
-These exports are not used outside their respective files and could be un-exported to reduce the public API surface:
-- `src/background/tab-manager.ts`: `activeAbortControllers` (Line 20), `OperationStatus` (Line 22)
-- `src/shared/ai-client.ts`: `repairTruncatedJson` (Line 805), `SYSTEM_PROMPT` (Line 5)
-- `src/shared/constants.ts`: `DEFAULT_SPLIT_PROMPT` (Line 25), `DEFAULT_CLASSIFY_PROMPT` (Line 26), `DEFAULT_MERGE_PROMPT` (Line 27), `PREDEFINED_MODELS` (Line 102)
-- `src/shared/types.ts`: `GroupIndicatorStyle` (Line 77), `ThemeMode` (Line 79)
+
 
 ---

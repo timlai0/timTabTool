@@ -17,9 +17,9 @@ const previewCacheMap = new Map<number, GroupedTabs[]>()
 const cacheIsAIGroupedMap = new Map<number, boolean>()
 
 /** Tracks active AbortControllers for cancellation. Key: windowId */
-export const activeAbortControllers = new Map<number, AbortController>()
+const activeAbortControllers = new Map<number, AbortController>()
 
-export interface OperationStatus {
+interface OperationStatus {
   type: 'group' | 'classify' | null
   error: string | null
 }
