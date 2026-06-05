@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, toRaw } from 'vue'
 import { getMessage } from '../../shared/i18n'
-import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT } from '../../shared/constants'
+import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS } from '../../shared/constants'
 import { getAutoBatchSize } from '../../shared/utils'
 import type { ExtensionSettings } from '../../shared/types'
 import { AIClient } from '../../shared/ai-client'
@@ -73,41 +73,9 @@ const vAutoresize = {
   }
 }
 
-const DEFAULT_ENDPOINTS: Record<string, string> = {
-  openai: 'https://api.openai.com/v1',
-  claude: 'https://api.anthropic.com',
-  gemini: 'https://generativelanguage.googleapis.com',
-  custom: '',
-}
 
-const PREDEFINED_MODELS: Record<string, { id: string, name: string, complexity: string, costFactor: string, maxTokens: string }[]> = {
-  gemini: [
-    { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', complexity: 'Medium', costFactor: '75%', maxTokens: '65K' },
-    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Preview)', complexity: 'High', costFactor: '100%', maxTokens: '65K' },
-    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', complexity: 'Low', costFactor: '12%', maxTokens: '65K' },
-    { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite (Preview)', complexity: 'Low', costFactor: '12%', maxTokens: '65K' },
-    { id: 'gemini-3.1-flash-live-preview', name: 'Gemini 3.1 Flash Live (Preview)', complexity: 'Low', costFactor: '37%', maxTokens: '65K' },
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Preview)', complexity: 'Medium', costFactor: '25%', maxTokens: '65K' },
-    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro (Preview)', complexity: 'High', costFactor: '100%', maxTokens: '65K' },
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', complexity: 'High', costFactor: '62%', maxTokens: '65K' },
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', complexity: 'Medium', costFactor: '15%', maxTokens: '65K' },
-    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', complexity: 'Low', costFactor: '5%', maxTokens: '65K' },
-    { id: 'gemini-2.5-flash-lite-preview-09-2025', name: 'Gemini 2.5 Flash Lite (Preview)', complexity: 'Low', costFactor: '5%', maxTokens: '65K' },
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', complexity: 'Medium', costFactor: '5%', maxTokens: '65K' },
-    { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', complexity: 'Low', costFactor: '3%', maxTokens: '65K' },
-    { id: 'gemma-4-31b-it', name: 'Gemma 4 31B', complexity: 'Low', costFactor: 'Free', maxTokens: '8K' },
-    { id: 'gemma-4-26b-a4b-it', name: 'Gemma 4 26B', complexity: 'Low', costFactor: 'Free', maxTokens: '8K' },
-  ],
-  openai: [
-    { id: 'gpt-4o', name: 'GPT-4o', complexity: 'High', costFactor: '100%', maxTokens: '16K' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', complexity: 'Low', costFactor: '6%', maxTokens: '16K' },
-  ],
-  claude: [
-    { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', complexity: 'High', costFactor: '100%', maxTokens: '4K' },
-    { id: 'claude-3-5-sonnet-20240620', name: 'Claude 3.5 Sonnet', complexity: 'Medium', costFactor: '20%', maxTokens: '8K' },
-    { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', complexity: 'Low', costFactor: '2%', maxTokens: '4K' },
-  ]
-}
+
+
 
 const currentProviderModels = computed(() => {
   return PREDEFINED_MODELS[settings.value.ai.provider] || []
@@ -154,13 +122,7 @@ const modelSelectValue = computed({
 })
 
 const modelPlaceholder = computed(() => {
-  const placeholders: Record<string, string> = {
-    openai: 'gpt-4o-mini',
-    claude: 'claude-sonnet-4-20250514',
-    gemini: 'gemini-3.5-flash',
-    custom: 'gpt-4o-mini',
-  }
-  return placeholders[settings.value.ai.provider] || 'gpt-4o-mini'
+  return DEFAULT_MODELS[settings.value.ai.provider] || 'gpt-4o-mini'
 })
 
 const endpointPlaceholder = computed(() =>
@@ -256,7 +218,9 @@ async function saveSettings() {
   }
   await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: toRaw(settings.value) })
   saved.value = true
-  setTimeout(() => { emit('back') }, 600)
+  setTimeout(() => {
+    saved.value = false
+  }, 1500)
 }
 
 async function saveAndGoBack() {
