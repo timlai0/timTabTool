@@ -33,7 +33,7 @@ async function saveHistory(history: Map<string, TabHistoryEntry>): Promise<void>
  * Record a tab visit in history.
  */
 export async function recordTabVisit(url: string, title: string, favIconUrl?: string): Promise<void> {
-  if (!url || url.startsWith('chrome://') || url.startsWith('chrome-extension://')) return
+  if (!url || url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url.startsWith('moz-extension://')) return
 
   const history = await loadHistory()
   const existing = history.get(url)

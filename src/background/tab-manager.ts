@@ -254,9 +254,9 @@ export function cacheUpdateTab(tab: chrome.tabs.Tab): void {
   sortGroups(previewCache)
 }
 
-const RESTRICTED_URL_PREFIXES = ['chrome://', 'chrome-extension://', 'about:', 'edge://']
+export const RESTRICTED_URL_PREFIXES = ['chrome://', 'chrome-extension://', 'moz-extension://', 'about:', 'edge://']
 
-function isRestrictedUrl(url: string | undefined): boolean {
+export function isRestrictedUrl(url: string | undefined): boolean {
   if (!url) return true
   return RESTRICTED_URL_PREFIXES.some((p) => url.startsWith(p))
 }

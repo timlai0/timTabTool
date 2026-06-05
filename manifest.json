@@ -11,7 +11,8 @@
     "scripting",
     "favicon",
     "clipboardRead",
-    "contextMenus"
+    "contextMenus",
+    "activeTab"
   ],
   "host_permissions": [
     "<all_urls>"

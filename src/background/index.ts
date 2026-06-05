@@ -30,6 +30,7 @@ import {
   unmuteAllTabs,
   closeLeftTabs,
   closeRightTabs,
+  isRestrictedUrl,
 } from './tab-manager'
 import { searchTabs } from './searcher'
 import { recordTabVisit, getHistoryEntries } from './storage'
@@ -101,7 +102,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
       else if (op.type === 'classify') commandAction = 'CLASSIFY_NEW_TABS'
       
       if (commandAction && tab.id && tab.url) {
-        if (!tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://') && !tab.url.startsWith('about:')) {
+        if (!isRestrictedUrl(tab.url)) {
           await ensureContentScriptLoaded(tab.id)
           await chrome.tabs.sendMessage(tab.id, {
             action: 'START_AI_PROGRESS',
@@ -169,7 +170,7 @@ async function broadcastAIStart(windowId: number, action: string) {
     const tabs = await chrome.tabs.query({ active: true, windowId })
     const activeTab = tabs[0]
     if (activeTab?.id && activeTab.url) {
-      if (activeTab.url.startsWith('chrome://') || activeTab.url.startsWith('chrome-extension://') || activeTab.url.startsWith('about:')) return
+      if (isRestrictedUrl(activeTab.url)) return
       
       await ensureContentScriptLoaded(activeTab.id)
       await chrome.tabs.sendMessage(activeTab.id, {
@@ -187,7 +188,7 @@ async function broadcastAIComplete(windowId: number, action: string) {
     const tabs = await chrome.tabs.query({ active: true, windowId })
     const activeTab = tabs[0]
     if (activeTab?.id && activeTab.url) {
-      if (activeTab.url.startsWith('chrome://') || activeTab.url.startsWith('chrome-extension://') || activeTab.url.startsWith('about:')) return
+      if (isRestrictedUrl(activeTab.url)) return
       
       await chrome.tabs.sendMessage(activeTab.id, {
         action: 'AI_OPERATION_COMPLETE',
@@ -204,7 +205,7 @@ async function broadcastAIFailed(windowId: number, action: string, errorMsg: str
     const tabs = await chrome.tabs.query({ active: true, windowId })
     const activeTab = tabs[0]
     if (activeTab?.id && activeTab.url) {
-      if (activeTab.url.startsWith('chrome://') || activeTab.url.startsWith('chrome-extension://') || activeTab.url.startsWith('about:')) return
+      if (isRestrictedUrl(activeTab.url)) return
       
       await chrome.tabs.sendMessage(activeTab.id, {
         action: 'AI_OPERATION_FAILED',
@@ -221,7 +222,7 @@ async function toggleSearchOverlay(initialQuery = '') {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
     if (!tab?.id || !tab.url) return
     // Skip restricted URLs where content scripts can't run
-    if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('about:')) return
+    if (isRestrictedUrl(tab.url)) return
 
     const tabId = tab.id
     await ensureContentScriptLoaded(tabId)
