@@ -171,10 +171,16 @@ onMounted(async () => {
   if (!settings.value.ai.apiKey) {
     connectionSettingsExpanded.value = true
   }
-  const commands = await chrome.commands.getAll()
-  const searchCmd = commands.find((c) => c.name === 'open-search')
-  if (searchCmd?.shortcut) {
-    searchShortcut.value = searchCmd.shortcut
+  try {
+    const commands = await (typeof browser !== 'undefined' && browser.commands
+      ? browser.commands.getAll()
+      : chrome.commands.getAll())
+    const searchCmd = commands.find((c) => c.name === 'open-search')
+    if (searchCmd?.shortcut) {
+      searchShortcut.value = searchCmd.shortcut
+    }
+  } catch (err) {
+    console.error('Failed to get commands:', err)
   }
 
   // Start polling MCP connection status
