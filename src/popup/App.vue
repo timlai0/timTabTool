@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
+import { ref, onMounted, computed, watch, onUnmounted, nextTick } from 'vue'
 import { getMessage } from '../shared/i18n'
 import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS } from '../shared/constants'
 import { SYSTEM_PROMPT, AIClient } from '../shared/ai-client'
@@ -98,6 +98,17 @@ onMounted(async () => {
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
   currentWindowId.value = activeTab?.windowId ?? null
   await loadAllPreviews()
+
+  // Logik: Scrollt zur aktiven Gruppe, sobald das Popup geöffnet und gerendert wurde
+  // Scroll to active group on initial load
+  nextTick(() => {
+    setTimeout(() => {
+      const activeEl = document.querySelector('[data-active-group="true"]')
+      if (activeEl) {
+        activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }, 150)
+  })
 })
 
 onUnmounted(() => {
@@ -913,6 +924,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
               :indicator-style="indicatorStyle"
               :expand-trigger="expandTriggers[w.windowId] || 0"
               :collapse-trigger="collapseTriggers[w.windowId] || 0"
+              :is-current-window="w.windowId === currentWindowId"
               @close-group="loadAllPreviews"
               @split-group="loadAllPreviews"
               @error="showError"

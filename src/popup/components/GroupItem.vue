@@ -11,10 +11,12 @@ const props = withDefaults(defineProps<{
   mode: GroupIndicatorStyle
   expandTrigger: number
   collapseTrigger: number
+  isActiveGroup?: boolean
 }>(), {
   mode: 'header',
   expandTrigger: 0,
   collapseTrigger: 0,
+  isActiveGroup: false,
 })
 
 const emit = defineEmits<{
@@ -23,7 +25,7 @@ const emit = defineEmits<{
   'error': [msg: string]
 }>()
 
-const collapsed = ref(props.mode === 'header')
+const collapsed = ref(props.mode === 'header' && !props.isActiveGroup)
 const splitting = ref(false)
 const showSplitTooltip = ref(false)
 
@@ -168,11 +170,12 @@ function estimateMergeCost() {
 </script>
 
 <template>
-  <div class="group/item">
+  <div class="group/item" :data-active-group="isActiveGroup ? 'true' : 'false'">
     <!-- Collapsed chip -->
     <template v-if="collapsed">
       <button
         class="w-full flex items-center gap-2.5 px-3.5 py-2 text-left group/row relative"
+        :class="{ 'active-group-highlight': isActiveGroup }"
         @click="collapsed = false"
       >
         <span
@@ -311,6 +314,7 @@ function estimateMergeCost() {
     <template v-else-if="mode === 'header'">
       <button
         class="w-full flex items-center gap-2.5 px-3.5 py-2 text-left group/row relative"
+        :class="{ 'active-group-highlight': isActiveGroup }"
         @click="collapsed = true"
       >
         <span class="w-[3px] h-4 rounded-sm shrink-0" :style="{ background: groupColorVar }" />
@@ -453,7 +457,7 @@ function estimateMergeCost() {
 
     <!-- Bar mode: expanded with colored vertical bar -->
     <template v-else>
-      <div class="relative group/bar">
+      <div class="relative group/bar" :class="{ 'active-group-bar-highlight': isActiveGroup }">
         <div
           class="absolute left-0 top-0 bottom-0 w-4 cursor-pointer z-10 flex items-start"
           :title="displayLabel + ' (' + group.tabs.length + ')'"
@@ -489,5 +493,20 @@ button.group\/row:hover,
 }
 button:active {
   transform: scale(0.99);
+}
+
+.active-group-highlight {
+  /* Logik: Markiert die aktive Gruppe durch einen dezenten Hintergrund und einen linken Rahmen in Akzentfarbe */
+  /* Highlight active group with soft accent background and left border */
+  background: var(--accent-soft) !important;
+  border-left: 3.5px solid var(--accent) !important;
+  padding-left: calc(14px - 3.5px) !important;
+}
+
+.active-group-bar-highlight {
+  /* Logik: Hebt den Container der aktiven Gruppe im Balkenmodus dezent hervor */
+  /* Highlight active group container in bar mode */
+  background: var(--accent-soft);
+  border-left: 3.5px solid var(--accent);
 }
 </style>

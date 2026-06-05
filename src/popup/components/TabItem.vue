@@ -35,6 +35,7 @@ function getFaviconUrl(tab: TabInfo): string {
 <template>
   <button
     class="tab-row w-full flex items-center gap-2.5 px-2 py-[5px] rounded-sm text-left group"
+    :class="{ 'active-tab-highlight': tab.active }"
     @click="switchToTab(tab.id)"
     @mousedown.middle.prevent.stop=""
     @click.middle.prevent.stop="closeTab(tab.id)"
@@ -51,7 +52,7 @@ function getFaviconUrl(tab: TabInfo): string {
         @error="($event.target as HTMLImageElement).style.display = 'none'"
       />
     </div>
-    <span class="text-xs truncate" style="color: var(--text-primary);">
+    <span class="text-xs truncate" :style="{ color: tab.active ? 'var(--accent)' : 'var(--text-primary)' }">
       {{ tab.title || 'Untitled' }}
     </span>
   </button>
@@ -63,5 +64,11 @@ function getFaviconUrl(tab: TabInfo): string {
 }
 .tab-row:active {
   transform: scale(0.99);
+}
+
+.active-tab-highlight {
+  /* Logik: Hebt den aktuell aktiven Tab durch einen dezenten Hintergrund hervor */
+  /* Highlight the active tab with a soft accent background */
+  background: var(--accent-soft) !important;
 }
 </style>

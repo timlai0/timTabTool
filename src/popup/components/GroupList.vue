@@ -7,10 +7,12 @@ withDefaults(defineProps<{
   indicatorStyle: GroupIndicatorStyle
   expandTrigger: number
   collapseTrigger: number
+  isCurrentWindow?: boolean
 }>(), {
   indicatorStyle: 'header',
   expandTrigger: 0,
   collapseTrigger: 0,
+  isCurrentWindow: false,
 })
 
 const emit = defineEmits<{
@@ -39,6 +41,7 @@ const emit = defineEmits<{
       :mode="indicatorStyle"
       :expand-trigger="expandTrigger"
       :collapse-trigger="collapseTrigger"
+      :is-active-group="isCurrentWindow && group.tabs.some(t => t.active)"
       @close-group="emit('close-group')"
       @split-group="emit('split-group')"
       @error="(msg: string) => emit('error', msg)"
