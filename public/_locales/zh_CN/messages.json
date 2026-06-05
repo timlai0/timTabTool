@@ -258,5 +258,13 @@
   "showRuleGroupsWhenUngroupedDesc": {
     "message": "当标签页在 Chrome 中未分组时，在列表中显示本地离线分类",
     "description": "Description of the local grouping preview toggle"
+  },
+  "contextMenuOpenSearch": {
+    "message": "打开标签搜索",
+    "description": "Context menu item to open search overlay"
+  },
+  "contextMenuOpenSearchWindow": {
+    "message": "在新窗口中打开搜索",
+    "description": "Context menu item to open search page in a new window"
   }
 }

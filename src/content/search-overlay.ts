@@ -521,6 +521,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     hostEl = document.createElement('div')
     hostEl.id = 'atm-search-host'
     hostEl.style.display = 'none'
+    if (window.location.pathname.endsWith('search.html')) {
+      // Logik: Standalone-Attribut setzen für Styling-Anpassungen
+      // Programming logic: Set standalone attribute for styling adjustments
+      hostEl.setAttribute('data-standalone', 'true')
+    }
     shadow = hostEl.attachShadow({ mode: 'closed' })
 
     const style = document.createElement('style')
@@ -1018,6 +1023,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     hostEl.style.display = 'none'
     clearTimeout(debounceTimer)
     resetAIProgressState()
+
+    if (window.location.pathname.endsWith('search.html')) {
+      // Logik: Schließen des Popup-Fensters bei Deaktivierung
+      // Programming logic: Close the standalone popup window when deactivated
+      window.close()
+    }
   }
 
   function toggle(initialQuery = '') {
@@ -1659,4 +1670,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       toggle()
     }
   })
+
+  // Auto-initialize and show if loaded directly inside the standalone search.html page
+  if (window.location.pathname.endsWith('search.html')) {
+    // Logik: Sofortiges Anzeigen des Overlays in der search.html-Seite
+    // Programming logic: Immediately display the search overlay in search.html page
+    show()
+  }
 }

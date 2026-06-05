@@ -41,10 +41,15 @@ console.log('[timTabTool] Service worker started')
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[timTabTool] Extension installed')
-  // Programming logic: Create context menu item to open search overlay
+  // Programming logic: Create context menu items to open search (in-page and window)
   chrome.contextMenus.create({
     id: 'open-search-menu',
-    title: 'Open Search',
+    title: chrome.i18n.getMessage('contextMenuOpenSearch') || 'Open Search',
+    contexts: ['action', 'page']
+  })
+  chrome.contextMenus.create({
+    id: 'open-search-window',
+    title: chrome.i18n.getMessage('contextMenuOpenSearchWindow') || 'Open Search in New Window',
     contexts: ['action', 'page']
   })
 })
@@ -52,6 +57,8 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'open-search-menu') {
     await toggleSearchOverlay()
+  } else if (info.menuItemId === 'open-search-window') {
+    await openSearchInNewWindow()
   }
 })
 
@@ -230,6 +237,37 @@ async function toggleSearchOverlay(initialQuery = '') {
     })
   } catch {
     // Tab doesn't support scripting (e.g. chrome:// pages)
+  }
+}
+
+async function openSearchInNewWindow() {
+  try {
+    // Programming logic: Get the current window to center the popup over it
+    const currentWin = await chrome.windows.getLastFocused({ windowTypes: ['normal'] })
+    const width = 680
+    const height = 550
+    let left = 0
+    let top = 0
+
+    if (currentWin.width !== undefined && currentWin.left !== undefined) {
+      left = Math.round(currentWin.left + (currentWin.width - width) / 2)
+    }
+    if (currentWin.height !== undefined && currentWin.top !== undefined) {
+      top = Math.round(currentWin.top + (currentWin.height - height) / 2)
+    }
+
+    // Programming logic: Create new popup-type window for search
+    await chrome.windows.create({
+      url: chrome.runtime.getURL('src/popup/search.html'),
+      type: 'popup',
+      width,
+      height,
+      left,
+      top,
+      focused: true
+    })
+  } catch (err) {
+    console.error('[timTabTool] Failed to open search in new window:', err)
   }
 }
 

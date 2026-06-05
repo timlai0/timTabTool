@@ -258,5 +258,13 @@
   "showRuleGroupsWhenUngroupedDesc": {
     "message": "Show local offline categories in the list when tabs are not currently grouped in Chrome",
     "description": "Description of the local grouping preview toggle"
+  },
+  "contextMenuOpenSearch": {
+    "message": "Open Search",
+    "description": "Context menu item to open search overlay"
+  },
+  "contextMenuOpenSearchWindow": {
+    "message": "Open Search in New Window",
+    "description": "Context menu item to open search page in a new window"
   }
 }
