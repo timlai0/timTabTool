@@ -176,6 +176,7 @@ function estimateMergeCost() {
       <button
         class="w-full flex items-center gap-2.5 px-3.5 py-2 text-left group/row relative"
         :class="{ 'active-group-highlight': isActiveGroup }"
+        :data-active-group-header="isActiveGroup ? 'true' : 'false'"
         @click="collapsed = false"
       >
         <span
@@ -313,8 +314,9 @@ function estimateMergeCost() {
     <!-- Header mode: expanded -->
     <template v-else-if="mode === 'header'">
       <button
-        class="w-full flex items-center gap-2.5 px-3.5 py-2 text-left group/row relative"
+        class="w-full flex items-center gap-2.5 px-3.5 py-2 text-left group/row relative sticky-group-header"
         :class="{ 'active-group-highlight': isActiveGroup }"
+        :data-active-group-header="isActiveGroup ? 'true' : 'false'"
         @click="collapsed = true"
       >
         <span class="w-[3px] h-4 rounded-sm shrink-0" :style="{ background: groupColorVar }" />
@@ -457,7 +459,7 @@ function estimateMergeCost() {
 
     <!-- Bar mode: expanded with colored vertical bar -->
     <template v-else>
-      <div class="relative group/bar" :class="{ 'active-group-bar-highlight': isActiveGroup }">
+      <div class="relative group/bar" :class="{ 'active-group-bar-highlight': isActiveGroup }" :data-active-group-header="isActiveGroup ? 'true' : 'false'">
         <div
           class="absolute left-0 top-0 bottom-0 w-4 cursor-pointer z-10 flex items-start"
           :title="displayLabel + ' (' + group.tabs.length + ')'"
@@ -487,9 +489,17 @@ function estimateMergeCost() {
 </template>
 
 <style scoped>
+.sticky-group-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-primary);
+  /* Logik: Kopfzeile der Gruppe klebrig machen, damit sie beim Scrollen der Tabs sichtbar bleibt */
+}
+
 button.group\/row:hover,
 .group\/row:hover {
-  background: var(--hover);
+  background: linear-gradient(var(--hover), var(--hover)), var(--bg-primary);
 }
 button:active {
   transform: scale(0.99);
@@ -498,7 +508,7 @@ button:active {
 .active-group-highlight {
   /* Logik: Markiert die aktive Gruppe durch einen dezenten Hintergrund und einen linken Rahmen in Akzentfarbe */
   /* Highlight active group with soft accent background and left border */
-  background: var(--accent-soft) !important;
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-primary) !important;
   border-left: 3.5px solid var(--accent) !important;
   padding-left: calc(14px - 3.5px) !important;
 }

@@ -103,9 +103,9 @@ onMounted(async () => {
   // Scroll to active group on initial load
   nextTick(() => {
     setTimeout(() => {
-      const activeEl = document.querySelector('[data-active-group="true"]')
+      const activeEl = document.querySelector('[data-active-group-header="true"]')
       if (activeEl) {
-        activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        activeEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
     }, 150)
   })
