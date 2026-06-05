@@ -259,6 +259,14 @@
     "message": "Show local offline categories in the list when tabs are not currently grouped in Chrome",
     "description": "Description of the local grouping preview toggle"
   },
+  "cleanupGroups": {
+    "message": "Clean Up Groups",
+    "description": "Button label to clean up small tab groups"
+  },
+  "enterMinTabs": {
+    "message": "Enter minimum tab count for a group (groups with fewer tabs will be ungrouped):",
+    "description": "Prompt message when cleaning up small groups"
+  },
   "contextMenuOpenSearch": {
     "message": "Open Search",
     "description": "Context menu item to open search overlay"

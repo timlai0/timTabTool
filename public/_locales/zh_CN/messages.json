@@ -259,6 +259,14 @@
     "message": "当标签页在 Chrome 中未分组时，在列表中显示本地离线分类",
     "description": "Description of the local grouping preview toggle"
   },
+  "cleanupGroups": {
+    "message": "清理小分组",
+    "description": "Button label to clean up small tab groups"
+  },
+  "enterMinTabs": {
+    "message": "输入一个分组的最小标签页数量（少于此数量的分组将被取消分组）：",
+    "description": "Prompt message when cleaning up small groups"
+  },
   "contextMenuOpenSearch": {
     "message": "打开标签搜索",
     "description": "Context menu item to open search overlay"

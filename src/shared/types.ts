@@ -149,6 +149,7 @@ type MessageAction =
   | 'CLOSE_RIGHT'
   | 'GET_MCP_STATUS'
   | 'RECONNECT_MCP'
+  | 'CLEANUP_GROUPS'
 
 export interface ExtensionMessage {
   action: MessageAction

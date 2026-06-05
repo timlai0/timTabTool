@@ -103,3 +103,50 @@ describe('getAIOverrides', () => {
     expect(result?.model).toBeUndefined()
   })
 })
+
+describe('cleanupTabGroups', () => {
+  let cleanupTabGroups: any
+
+  beforeAll(async () => {
+    const managerModule = await import('../src/background/tab-manager')
+    cleanupTabGroups = managerModule.cleanupTabGroups
+  })
+
+  it('ungroups tab groups with fewer than minTabs tabs', async () => {
+    // Programming logic: Setup mock tabs in different groups
+    // Group 11 has 2 tabs, Group 12 has 4 tabs, group -1 is ungrouped
+    const mockTabs = [
+      { id: 1, groupId: 11, windowId: 1 },
+      { id: 2, groupId: 11, windowId: 1 },
+      { id: 3, groupId: 12, windowId: 1 },
+      { id: 4, groupId: 12, windowId: 1 },
+      { id: 5, groupId: 12, windowId: 1 },
+      { id: 6, groupId: 12, windowId: 1 },
+      { id: 7, groupId: -1, windowId: 1 },
+    ]
+
+    const queryMock = vi.fn().mockResolvedValue(mockTabs)
+    const ungroupMock = vi.fn().mockResolvedValue(undefined)
+
+    // Programming logic: Update stubbed global chrome methods
+    const originalQuery = chrome.tabs.query
+    const originalUngroup = (chrome.tabs as any).ungroup
+    chrome.tabs.query = queryMock
+    ;(chrome.tabs as any).ungroup = ungroupMock
+    chrome.tabGroups = {
+      TAB_GROUP_ID_NONE: -1
+    } as any
+
+    try {
+      // Logik: cleanupTabGroups mit minTabs = 3 aufrufen. Gruppe 11 (2 Tabs) sollte aufgelöst werden.
+      await cleanupTabGroups(1, 3)
+
+      expect(queryMock).toHaveBeenCalledWith({ windowId: 1 })
+      expect(ungroupMock).toHaveBeenCalledWith([1, 2])
+      expect(ungroupMock).not.toHaveBeenCalledWith([3, 4, 5, 6])
+    } finally {
+      chrome.tabs.query = originalQuery
+      ;(chrome.tabs as any).ungroup = originalUngroup
+    }
+  })
+})

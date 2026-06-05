@@ -33,6 +33,7 @@ import {
   closeLeftTabs,
   closeRightTabs,
   isRestrictedUrl,
+  cleanupTabGroups,
 } from './tab-manager'
 import { searchTabs } from './searcher'
 import { recordTabVisit, getHistoryEntries } from './storage'
@@ -346,6 +347,16 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'UNGROUP_ALL': {
       const windowId = await resolveWindowId(message.payload)
       await ungroupAllTabs(windowId)
+      invalidatePreviewCache(windowId)
+      return { ok: true }
+    }
+
+    case 'CLEANUP_GROUPS': {
+      // Programming logic: Resolve windowId and minTabs parameter from payload
+      const windowId = await resolveWindowId(message.payload)
+      const minTabs = (message.payload as { minTabs?: number })?.minTabs ?? 3
+      // Logik: Tab-Gruppen mit weniger als minTabs Tabs im angegebenen Fenster auflösen
+      await cleanupTabGroups(windowId, minTabs)
       invalidatePreviewCache(windowId)
       return { ok: true }
     }

@@ -29,6 +29,7 @@ interface SearchResultItem {
   commandAction?: string
   commandDescription?: string
   sendFullUrl?: boolean
+  minTabs?: number
 }
 
 // Guard against multiple injections
@@ -89,6 +90,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       title: 'Ungroup All Tabs',
       description: 'Ungroup all tabs in this window instantly',
       action: 'UNGROUP_ALL'
+    },
+    {
+      key: '/cleanup-groups',
+      title: 'Clean Up Tab Groups',
+      description: 'Ungroup tab groups with less than 3 tabs',
+      action: 'CLEANUP_GROUPS'
     },
     {
       key: '/split',
@@ -235,6 +242,15 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     })
   }
 
+  for (const x of [2, 3, 4, 5]) {
+    COMMANDS.push({
+      key: `/cleanup-groups ${x}`,
+      title: `Clean Up Tab Groups (< ${x} tabs)`,
+      description: `Ungroup tab groups with less than ${x} tabs`,
+      action: 'CLEANUP_GROUPS'
+    })
+  }
+
   window.addEventListener('mousemove', (e) => {
     mouseX = e.clientX
     mouseY = e.clientY
@@ -317,7 +333,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
 
     const action = result.commandAction
-    const isLocal = ['UNGROUP_ALL', 'EXPAND_ALL_GROUPS', 'COLLAPSE_ALL_GROUPS', 'TOGGLE_GROUP_TITLES'].includes(action)
+    const isLocal = ['UNGROUP_ALL', 'EXPAND_ALL_GROUPS', 'COLLAPSE_ALL_GROUPS', 'TOGGLE_GROUP_TITLES', 'CLEANUP_GROUPS'].includes(action)
 
     if (isLocal) {
       let desc = ''
@@ -325,6 +341,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       else if (action === 'EXPAND_ALL_GROUPS') desc = 'Expand all collapsed Chrome tab groups in this window.'
       else if (action === 'COLLAPSE_ALL_GROUPS') desc = 'Collapse all active Chrome tab groups in this window to clear up space.'
       else if (action === 'TOGGLE_GROUP_TITLES') desc = 'Toggle group title visibility. When hidden, groups collapse to tiny color-coded dots, saving maximum tab bar horizontal space.'
+      else if (action === 'CLEANUP_GROUPS') {
+        const threshold = result.minTabs ?? 3
+        desc = `Ungroup any tab group containing less than ${threshold} tabs, leaving larger groups intact.`
+      }
 
       detailsPanel.innerHTML = `
         <div class="atm-details-title">${result.tab.title}</div>
@@ -1098,7 +1118,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       const onlyOneBaseCommand = matchingBaseCommands.length === 1
       const singleBaseCmd = onlyOneBaseCommand ? matchingBaseCommands[0].key : null
 
-      const matched = COMMANDS.filter(c => {
+      let matched = COMMANDS.filter(c => {
         if (!c.key.startsWith(trimmedMatchText)) return false
 
         // Hide model suggestions if the command is not completely entered yet.
@@ -1139,6 +1159,22 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         }
         return true
       })
+
+      // Programming logic: If the user typed a custom group threshold, ensure we add a matching suggestion
+      const cleanupMatch = trimmedMatchText.match(/^\/cleanup-groups\s+(\d+)$/)
+      if (cleanupMatch) {
+        const x = parseInt(cleanupMatch[1])
+        const hasMatch = matched.some(c => c.key === `/cleanup-groups ${x}`)
+        if (!hasMatch) {
+          matched.push({
+            key: `/cleanup-groups ${x}`,
+            title: `Clean Up Tab Groups (< ${x} tabs)`,
+            description: `Ungroup tab groups with less than ${x} tabs`,
+            action: 'CLEANUP_GROUPS'
+          })
+        }
+      }
+
       const currentDefaultModel = overlayMetrics?.aiSettings ? getActiveModel(overlayMetrics.aiSettings) : 'gemini-3.5-flash'
       matched.sort((a, b) => {
         const aParts = a.key.split(' ')
@@ -1156,19 +1192,28 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         return 0
       })
 
-      results = matched.map(c => ({
-        tab: {
-          title: c.key,
-          url: `${c.title} — ${c.description}`
-        },
-        score: 0,
-        isOpen: false,
-        isCommand: true,
-        commandKey: c.key,
-        commandAction: c.action,
-        commandDescription: c.description,
-        sendFullUrl: c.sendFullUrl
-      }))
+      results = matched.map(c => {
+        let minTabs: number | undefined = undefined
+        if (c.action === 'CLEANUP_GROUPS') {
+          // Programming logic: Parse the number from the command key, e.g. "/cleanup-groups 3" -> 3
+          const match = c.key.match(/\/cleanup-groups\s+(\d+)/)
+          minTabs = match ? parseInt(match[1]) : 3
+        }
+        return {
+          tab: {
+            title: c.key,
+            url: `${c.title} — ${c.description}`
+          },
+          score: 0,
+          isOpen: false,
+          isCommand: true,
+          commandKey: c.key,
+          commandAction: c.action,
+          commandDescription: c.description,
+          sendFullUrl: c.sendFullUrl,
+          minTabs
+        }
+      })
       selectedIndex = results.length > 0 ? 0 : -1
       renderResults(resultsList, query)
       updateSelection(resultsList)
@@ -1549,7 +1594,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       }
 
       chrome.runtime.sendMessage({
-        action: result.commandAction
+        action: result.commandAction,
+        payload: result.commandAction === 'CLEANUP_GROUPS' ? { minTabs: result.minTabs } : undefined
       })
     } else if (result.isOpen && result.tab.id) {
       chrome.runtime.sendMessage({

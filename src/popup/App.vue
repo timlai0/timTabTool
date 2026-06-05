@@ -543,6 +543,21 @@ async function handleUngroup(windowId: number) {
   await loadAllPreviews()
 }
 
+async function handleCleanupGroups(windowId: number) {
+  // Programming logic: Prompt user for minimum tab threshold with a default of 3
+  const input = prompt(getMessage('enterMinTabs') || 'Enter minimum tab count for a group:', '3')
+  if (input === null) return
+  const minTabs = parseInt(input.trim())
+  if (isNaN(minTabs) || minTabs <= 0) return
+
+  // Logik: Tab-Gruppen mit weniger als minTabs Tabs auflösen
+  await chrome.runtime.sendMessage({
+    action: 'CLEANUP_GROUPS',
+    payload: { windowId, minTabs }
+  })
+  await loadAllPreviews()
+}
+
 async function handleSettingsBack() {
   currentView.value = 'main'
   const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
@@ -876,6 +891,13 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 @click="handleUngroup(w.windowId)"
               >
                 {{ getMessage('ungroupAll') }}
+              </button>
+              <button
+                class="px-3 py-[4px] text-[11px] rounded-btn"
+                style="color: var(--text-secondary); background: var(--hover);"
+                @click="handleCleanupGroups(w.windowId)"
+              >
+                {{ getMessage('cleanupGroups') }}
               </button>
               <button
                 v-if="newTabsCount(w) > 0"

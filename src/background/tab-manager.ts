@@ -1285,3 +1285,36 @@ export async function closeRightTabs(windowId: number): Promise<void> {
     for (const id of toClose) cacheRemoveTab(id)
   }
 }
+
+/**
+ * Ungroup tab groups that have less than a specified number of tabs.
+ */
+export async function cleanupTabGroups(windowId: number, minTabs: number): Promise<void> {
+  const tabs = await chrome.tabs.query({ windowId })
+
+  // Programming logic: Count tabs per group ID
+  const groupCounts = new Map<number, number>()
+  const groupTabs = new Map<number, number[]>()
+
+  for (const tab of tabs) {
+    if (tab.groupId !== undefined && tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE && tab.id !== undefined) {
+      const currentCount = groupCounts.get(tab.groupId) ?? 0
+      groupCounts.set(tab.groupId, currentCount + 1)
+
+      const tabIds = groupTabs.get(tab.groupId) ?? []
+      tabIds.push(tab.id)
+      groupTabs.set(tab.groupId, tabIds)
+    }
+  }
+
+  // Logik: Alle Tab-Gruppen durchgehen und diejenigen auflösen, die weniger als minTabs Tabs enthalten
+  // Programming logic: Loop through groups and ungroup those with fewer tabs than minTabs
+  for (const [groupId, count] of groupCounts.entries()) {
+    if (count < minTabs) {
+      const tabIds = groupTabs.get(groupId)
+      if (tabIds && tabIds.length > 0) {
+        await retryTabOperation(() => chrome.tabs.ungroup(tabIds))
+      }
+    }
+  }
+}
