@@ -892,6 +892,58 @@
   color: #FF453A;
 }
 
+/* ─── Closed Tabs Toggle ─── */
+
+.atm-closed-tabs-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 10px;
+  font-weight: 500;
+  color: #86868B;
+  background: #F5F5F7;
+  padding: 2px 7px;
+  border-radius: 2px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.atm-closed-tabs-toggle:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #1D1D1F;
+}
+
+.atm-closed-tabs-checkbox {
+  margin: 0;
+  cursor: pointer;
+  accent-color: #007AFF;
+  width: 12px;
+  height: 12px;
+}
+
+/* Dark mode overrides */
+@media (prefers-color-scheme: dark) {
+  .atm-closed-tabs-toggle {
+    background: #2C2C2E;
+    color: #98989D;
+  }
+  .atm-closed-tabs-toggle:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #F5F5F7;
+  }
+}
+
+:host([data-theme="dark"]) .atm-closed-tabs-toggle {
+  background: #2C2C2E;
+  color: #98989D;
+}
+
+:host([data-theme="dark"]) .atm-closed-tabs-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #F5F5F7;
+}
+
 /* ─── Standalone Overrides for search.html ─── */
 
 :host([data-standalone="true"]) .atm-backdrop {
@@ -907,5 +959,6 @@
   box-shadow: none !important;
   border-radius: 0 !important;
 }
+
 
 

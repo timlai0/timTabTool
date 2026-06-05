@@ -1,3 +1,5 @@
+'use strict';
+
 import cssText from './search-overlay.css?inline'
 import { AIClient } from '../shared/ai-client'
 import { MODEL_PRICING, PROVIDER_DEFAULTS, MODEL_NAMES, DEFAULT_MODELS } from '../shared/constants'
@@ -40,6 +42,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let results: SearchResultItem[] = []
   let debounceTimer: ReturnType<typeof setTimeout> | undefined
   let ignoreMouseHover = false
+  // Logik: Bestimmt, ob geschlossene Tabs in den Suchergebnissen angezeigt werden
+  // Programming logic: Determines whether closed tabs are displayed in the search results
+  let showClosedTabs = false
 
   let mouseX = 0
   let mouseY = 0
@@ -676,6 +681,34 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     const keybindsSpan = document.createElement('span')
     keybindsSpan.innerHTML = '<kbd>↑↓</kbd> navigate <kbd>↵</kbd> open <kbd>esc</kbd> close'
 
+    const rightControls = document.createElement('div')
+    rightControls.className = 'atm-footer-right'
+    rightControls.style.display = 'flex'
+    rightControls.style.alignItems = 'center'
+    rightControls.style.gap = '12px'
+
+    const toggleLabel = document.createElement('label')
+    toggleLabel.className = 'atm-closed-tabs-toggle'
+
+    const toggleCheckbox = document.createElement('input')
+    toggleCheckbox.type = 'checkbox'
+    toggleCheckbox.checked = showClosedTabs
+    toggleCheckbox.className = 'atm-closed-tabs-checkbox'
+    toggleCheckbox.addEventListener('change', () => {
+      // Logik: Umschalten des Zustands für geschlossene Tabs
+      // Programming logic: Toggle the showClosedTabs state
+      showClosedTabs = toggleCheckbox.checked
+      // Logik: Suche mit neuem Filter ausführen
+      // Programming logic: Re-run search with the updated filter
+      doSearch(input.value, resultsList)
+    })
+
+    const toggleText = document.createElement('span')
+    toggleText.textContent = 'Show closed'
+
+    toggleLabel.appendChild(toggleCheckbox)
+    toggleLabel.appendChild(toggleText)
+
     const scoreInfoSpan = document.createElement('span')
     scoreInfoSpan.className = 'atm-score-info'
     scoreInfoSpan.textContent = 'How scoring works'
@@ -697,8 +730,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     `
     scoreInfoSpan.appendChild(scoreTooltip)
 
+    rightControls.appendChild(toggleLabel)
+    rightControls.appendChild(scoreInfoSpan)
+
     footer.appendChild(keybindsSpan)
-    footer.appendChild(scoreInfoSpan)
+    footer.appendChild(rightControls)
 
     const detailsPanel = document.createElement('div')
     detailsPanel.className = 'atm-details-panel'
@@ -1146,6 +1182,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       })
       if (Array.isArray(res)) {
         results = res
+        // Logik: Geschlossene Tabs filtern, wenn die Option deaktiviert ist
+        // Programming logic: Filter out closed tabs if the option is disabled
+        if (!showClosedTabs) {
+          results = results.filter(r => r.isOpen || r.isCommand)
+        }
         selectedIndex = -1
         renderResults(resultsList, query)
       }
@@ -1521,7 +1562,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         payload: { url: result.tab.url },
       })
     }
-    hide()
+    const isStandalone = window.location.pathname.endsWith('search.html')
+    const isNavigation = !(result.isCommand && result.commandAction)
+    if (!isStandalone || !isNavigation) {
+      hide()
+    }
   }
 
   function highlightText(text: string, query: string): string {
