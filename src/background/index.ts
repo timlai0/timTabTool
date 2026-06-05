@@ -1,3 +1,5 @@
+'use strict';
+
 import {
   groupAllTabs,
   ungroupAllTabs,
@@ -243,28 +245,54 @@ async function toggleSearchOverlay(initialQuery = '') {
 
 async function openSearchInNewWindow() {
   try {
-    // Programming logic: Get the current window to center the popup over it
+    // Programming logic: Get the current window to layout side-by-side
     const currentWin = await chrome.windows.getLastFocused({ windowTypes: ['normal'] })
-    const width = 680
-    const height = 550
-    let left = 0
-    let top = 0
+    const searchWidth = 680
+    const searchHeight = 550
 
-    if (currentWin.width !== undefined && currentWin.left !== undefined) {
-      left = Math.round(currentWin.left + (currentWin.width - width) / 2)
-    }
-    if (currentWin.height !== undefined && currentWin.top !== undefined) {
-      top = Math.round(currentWin.top + (currentWin.height - height) / 2)
+    const mainLeft = currentWin.left ?? 0
+    const mainTop = currentWin.top ?? 0
+    const mainWidth = currentWin.width ?? 1024
+    const mainHeight = currentWin.height ?? 768
+
+    // Logik: Prüfen, ob das Hauptfenster maximiert ist
+    // Programming logic: Check if the main window is maximized
+    const isMaximized = currentWin.state === 'maximized'
+
+    // Logik: Hauptfenster links anordnen und verkleinern, um Platz für das Suchfenster auf der rechten Seite zu schaffen
+    // Programming logic: Calculate new width for the main window to be on the left of search
+    let newMainWidth = mainWidth - searchWidth
+    if (newMainWidth < 700) {
+      newMainWidth = Math.max(700, Math.round(mainWidth * 0.6))
     }
 
-    // Programming logic: Create new popup-type window for search
+    const searchLeft = mainLeft + newMainWidth
+    const searchTop = mainTop + Math.max(0, Math.round((mainHeight - searchHeight) / 2))
+
+    if (currentWin.id !== undefined) {
+      if (isMaximized) {
+        await chrome.windows.update(currentWin.id, {
+          state: 'normal',
+          left: mainLeft,
+          top: mainTop,
+          width: newMainWidth,
+          height: mainHeight
+        })
+      } else {
+        await chrome.windows.update(currentWin.id, {
+          width: newMainWidth
+        })
+      }
+    }
+
+    // Programming logic: Create new popup-type window for search on the right
     await chrome.windows.create({
       url: chrome.runtime.getURL('src/popup/search.html'),
       type: 'popup',
-      width,
-      height,
-      left,
-      top,
+      width: searchWidth,
+      height: searchHeight,
+      left: searchLeft,
+      top: searchTop,
       focused: true
     })
   } catch (err) {
