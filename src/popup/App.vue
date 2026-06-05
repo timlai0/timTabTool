@@ -16,6 +16,7 @@ const isStandaloneSearch = computed(() => {
 })
 const allWindows = ref<WindowGroupsInfo[]>([])
 const loading = ref(true)
+const tabGroupsSupported = typeof chrome !== 'undefined' && typeof chrome.tabGroups !== 'undefined'
 const groupingWindowId = ref<number | null>(null)
 const classifyingWindowId = ref<number | null>(null)
 const currentWindowId = ref<number | null>(null)
@@ -105,9 +106,14 @@ onMounted(async () => {
   chrome.tabs.onCreated.addListener(refreshPreviews)
   chrome.tabs.onRemoved.addListener(refreshPreviews)
   chrome.tabs.onUpdated.addListener(refreshPreviews)
-  chrome.tabGroups.onCreated.addListener(refreshPreviews)
-  chrome.tabGroups.onUpdated.addListener(refreshPreviews)
-  chrome.tabGroups.onRemoved.addListener(refreshPreviews)
+
+  // Logik: Listener für Tab-Gruppen nur registrieren, wenn die API im Browser verfügbar ist (nicht in Firefox)
+  // Programming logic: only register tab group listeners if tabGroups API is available
+  if (typeof chrome.tabGroups !== 'undefined') {
+    chrome.tabGroups.onCreated.addListener(refreshPreviews)
+    chrome.tabGroups.onUpdated.addListener(refreshPreviews)
+    chrome.tabGroups.onRemoved.addListener(refreshPreviews)
+  }
 
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
   currentWindowId.value = activeTab?.windowId ?? null
@@ -135,9 +141,14 @@ onUnmounted(() => {
   chrome.tabs.onCreated.removeListener(refreshPreviews)
   chrome.tabs.onRemoved.removeListener(refreshPreviews)
   chrome.tabs.onUpdated.removeListener(refreshPreviews)
-  chrome.tabGroups.onCreated.removeListener(refreshPreviews)
-  chrome.tabGroups.onUpdated.removeListener(refreshPreviews)
-  chrome.tabGroups.onRemoved.removeListener(refreshPreviews)
+
+  // Logik: Listener für Tab-Gruppen nur entfernen, wenn die API im Browser verfügbar ist (nicht in Firefox)
+  // Programming logic: only remove tab group listeners if tabGroups API is available
+  if (typeof chrome.tabGroups !== 'undefined') {
+    chrome.tabGroups.onCreated.removeListener(refreshPreviews)
+    chrome.tabGroups.onUpdated.removeListener(refreshPreviews)
+    chrome.tabGroups.onRemoved.removeListener(refreshPreviews)
+  }
 })
 
 const totalTabs = computed(() =>
@@ -868,7 +879,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
         <!-- Collapsible content -->
         <template v-if="!isWindowSectionCollapsed(w.windowId)">
           <!-- Action buttons -->
-          <div class="flex items-center px-3.5 pb-2 relative">
+          <div v-if="tabGroupsSupported" class="flex items-center px-3.5 pb-2 relative">
             <div class="flex items-center gap-1.5">
               <button
                 class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group"

@@ -1,5 +1,7 @@
 'use strict';
 
+import '../shared/polyfill'
+
 import {
   groupAllTabs,
   ungroupAllTabs,
@@ -40,6 +42,10 @@ import { recordTabVisit, getHistoryEntries } from './storage'
 import { STORAGE_KEYS, DEFAULT_SETTINGS } from '../shared/constants'
 import type { ExtensionMessage, TabInfo, ExtensionSettings, WindowGroupsInfo } from '../shared/types'
 import { initMCPBridge, getMCPStatus, reconnectMCP } from './mcp-bridge'
+
+const TAB_GROUP_ID_NONE = typeof chrome !== 'undefined' && typeof chrome.tabGroups !== 'undefined'
+  ? chrome.tabGroups.TAB_GROUP_ID_NONE
+  : -1
 
 console.log('[timTabTool] Service worker started')
 
@@ -120,19 +126,23 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 })
 
 // --- Smart group title: toggle title on collapse/expand + cache rebuild ---
-chrome.tabGroups.onCreated.addListener((group) => {
-  debouncedCacheRebuild(group.windowId)
-})
+// Logik: Listener für Tab-Gruppen nur registrieren, wenn die API im Browser verfügbar ist (nicht in Firefox)
+// Programming logic: only register tab group listeners if tabGroups API is available
+if (typeof chrome.tabGroups !== 'undefined') {
+  chrome.tabGroups.onCreated.addListener((group) => {
+    debouncedCacheRebuild(group.windowId)
+  })
 
-chrome.tabGroups.onUpdated.addListener((group) => {
-  handleTabGroupUpdated(group)
-  debouncedCacheRebuild(group.windowId)
-})
+  chrome.tabGroups.onUpdated.addListener((group) => {
+    handleTabGroupUpdated(group)
+    debouncedCacheRebuild(group.windowId)
+  })
 
-chrome.tabGroups.onRemoved.addListener((group) => {
-  handleTabGroupRemoved(group.id)
-  debouncedCacheRebuild(group.windowId)
-})
+  chrome.tabGroups.onRemoved.addListener((group) => {
+    handleTabGroupRemoved(group.id)
+    debouncedCacheRebuild(group.windowId)
+  })
+}
 
 // --- Command handler (keyboard shortcut) ---
 chrome.commands.onCommand.addListener(async (command) => {
@@ -402,7 +412,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'SPLIT_CURRENT_GROUP': {
       const windowId = await resolveWindowId(message.payload)
       const [activeTab] = await chrome.tabs.query({ active: true, windowId })
-      if (activeTab?.groupId !== undefined && activeTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+      if (activeTab?.groupId !== undefined && activeTab.groupId !== TAB_GROUP_ID_NONE) {
         await broadcastAIStart(windowId, 'SPLIT_CURRENT_GROUP')
         try {
           const overrides = getAIOverrides(message.payload)
@@ -421,7 +431,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'MERGE_CURRENT_GROUP': {
       const windowId = await resolveWindowId(message.payload)
       const [activeTab] = await chrome.tabs.query({ active: true, windowId })
-      if (activeTab?.groupId !== undefined && activeTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+      if (activeTab?.groupId !== undefined && activeTab.groupId !== TAB_GROUP_ID_NONE) {
         await broadcastAIStart(windowId, 'MERGE_CURRENT_GROUP')
         try {
           const overrides = getAIOverrides(message.payload)
@@ -650,8 +660,8 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
           const wid = win.id!
           const groups = await getGroupsPreview(wid)
           const tabs = await chrome.tabs.query({ windowId: wid })
-          const hasGroups = tabs.some(
-            (t) => t.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE,
+          const hasGroups = typeof chrome.tabGroups !== 'undefined' && tabs.some(
+            (t) => t.groupId !== TAB_GROUP_ID_NONE,
           )
           return {
             windowId: wid,
@@ -746,22 +756,27 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       // Get current active tab group ID and tabs count
       const [activeTab] = await chrome.tabs.query({ active: true, windowId })
       let currentGroupTabsCount = 0
-      if (activeTab?.groupId !== undefined && activeTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+      if (activeTab?.groupId !== undefined && typeof chrome.tabGroups !== 'undefined' && activeTab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
         currentGroupTabsCount = tabs.filter(t => t.groupId === activeTab.groupId).length
       }
 
       // Logik: Ermittelt die Anzahl der neuen Tabs (in der "New Tabs"-Gruppe oder ungruppiert, ausgenommen angepinnte Tabs)
-      // Get new tabs count (tabs in the "New Tabs" group + tabs not in any group, excluding pinned)
-      const allGroups = await chrome.tabGroups.query({ windowId })
-      const newTabsGroup = allGroups.find(
-        (g) => g.title === 'New Tabs'
-      )
-      const newTabsCount = tabs.filter(t => {
-        if (t.id === undefined || t.pinned) return false
-        const isInNewTabsGroup = newTabsGroup && t.groupId === newTabsGroup.id
-        const isUngrouped = t.groupId === undefined || t.groupId === chrome.tabGroups.TAB_GROUP_ID_NONE
-        return isInNewTabsGroup || isUngrouped
-      }).length
+      // Programming logic: Get new tabs count (tabs in the "New Tabs" group + tabs not in any group, excluding pinned)
+      let newTabsCount = 0
+      if (typeof chrome.tabGroups !== 'undefined') {
+        const allGroups = await chrome.tabGroups.query({ windowId })
+        const newTabsGroup = allGroups.find(
+          (g) => g.title === 'New Tabs'
+        )
+        newTabsCount = tabs.filter(t => {
+          if (t.id === undefined || t.pinned) return false
+          const isInNewTabsGroup = newTabsGroup && t.groupId === newTabsGroup.id
+          const isUngrouped = t.groupId === undefined || t.groupId === TAB_GROUP_ID_NONE
+          return isInNewTabsGroup || isUngrouped
+        }).length
+      } else {
+        newTabsCount = unpinnedTabsCount
+      }
 
       // Get AI Settings
       const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)

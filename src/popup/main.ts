@@ -1,3 +1,5 @@
+import '../shared/polyfill'
+
 // Synchronous theme init to prevent flash of wrong theme
 ;(function () {
   try {

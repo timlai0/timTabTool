@@ -6,6 +6,12 @@ import { getMessage } from '../shared/i18n'
 import { AIClient } from '../shared/ai-client'
 import type { GroupCategory, GroupedTabs, TabInfo, ExtensionSettings, ChromeTabGroupColor } from '../shared/types'
 
+function isTabGroupsSupported(): boolean {
+  return typeof chrome !== 'undefined' && typeof chrome.tabGroups !== 'undefined'
+}
+
+const TAB_GROUP_ID_NONE = isTabGroupsSupported() ? chrome.tabGroups.TAB_GROUP_ID_NONE : -1
+
 // --- Cache state ---
 const CACHE_DEBOUNCE_MS = 300
 const TAB_RETRY_ATTEMPTS = 3
@@ -266,10 +272,13 @@ export function isRestrictedUrl(url: string | undefined): boolean {
  * Chrome group, automatically add it to the "New Tabs" Chrome group.
  */
 export async function autoGroupNewTab(tab: chrome.tabs.Tab): Promise<void> {
+  // Logik: Abbrechen, wenn Tab-Gruppen im Browser nicht unterstützt werden (z. B. Firefox)
+  // Programming logic: Return early if tab groups are not supported in this browser (e.g. Firefox)
+  if (!isTabGroupsSupported()) return
   if (!tab.id || tab.pinned || isRestrictedUrl(tab.url)) return
   const windowId = tab.windowId
   if (!(cacheIsAIGroupedMap.get(windowId) ?? false)) return
-  if (tab.groupId !== undefined && tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) return
+  if (tab.groupId !== undefined && tab.groupId !== TAB_GROUP_ID_NONE) return
 
   const hideTitles = titlesHiddenMap.get(windowId) ?? false
 
@@ -370,7 +379,10 @@ export function debouncedCacheRebuild(windowId: number): void {
  * Returns null if no tabs are currently grouped in Chrome.
  */
 async function buildGroupsFromChrome(tabs: chrome.tabs.Tab[]): Promise<GroupedTabs[] | null> {
-  const groupedTabs = tabs.filter((t) => t.groupId !== undefined && t.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE)
+  // Logik: Abbrechen, wenn Tab-Gruppen im Browser nicht unterstützt werden
+  // Programming logic: Return null if tab groups are not supported in this browser
+  if (!isTabGroupsSupported()) return null
+  const groupedTabs = tabs.filter((t) => t.groupId !== undefined && t.groupId !== TAB_GROUP_ID_NONE)
   if (groupedTabs.length === 0) return null
 
   // Collect unique group IDs
@@ -410,7 +422,7 @@ async function buildGroupsFromChrome(tabs: chrome.tabs.Tab[]): Promise<GroupedTa
 
   // Add ungrouped tabs as a separate group
   const ungroupedTabs = tabs.filter(
-    (t) => t.groupId === undefined || t.groupId === chrome.tabGroups.TAB_GROUP_ID_NONE,
+    (t) => t.groupId === undefined || t.groupId === TAB_GROUP_ID_NONE,
   )
   const ungroupedInfos = ungroupedTabs
     .map((t) => chromeTabToTabInfo(t))
@@ -453,6 +465,23 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
   if (cached && !forceRefresh) return cached
 
   const tabs = await chrome.tabs.query({ windowId })
+
+  // Logik: Flache Liste aller Tabs zurückgeben, wenn Tab-Gruppen nicht unterstützt werden (z. B. Firefox)
+  // Programming logic: Return flat list of all tabs if tab groups are not supported (e.g. Firefox)
+  if (!isTabGroupsSupported()) {
+    const tabInfos = tabs
+      .map((t) => chromeTabToTabInfo(t))
+      .filter((t): t is TabInfo => t !== null)
+    const sorted = [
+      {
+        category: 'other' as GroupCategory,
+        tabs: tabInfos,
+      }
+    ]
+    previewCacheMap.set(windowId, sorted)
+    return sorted
+  }
+
   const settings = await getSettings()
 
   let result: GroupedTabs[]
@@ -528,6 +557,11 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
  * Group all tabs in the given window using Chrome Tab Groups API.
  */
 export async function groupAllTabs(windowId: number, aiOverrides?: Partial<ExtensionSettings['ai']>): Promise<void> {
+  // Logik: Fehler auslösen, wenn Tab-Gruppen im Browser nicht unterstützt werden
+  // Programming logic: Throw error if tab groups are not supported in this browser
+  if (!isTabGroupsSupported()) {
+    throw new Error('Tab grouping is not supported in this browser.')
+  }
   const existing = activeAbortControllers.get(windowId)
   if (existing) {
     existing.abort()
@@ -676,6 +710,11 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
  * Uses AI to decide which group each tab belongs to, then moves them.
  */
 export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<ExtensionSettings['ai']>): Promise<void> {
+  // Logik: Fehler auslösen, wenn Tab-Gruppen im Browser nicht unterstützt werden
+  // Programming logic: Throw error if tab groups are not supported in this browser
+  if (!isTabGroupsSupported()) {
+    throw new Error('Tab grouping is not supported in this browser.')
+  }
   const existing = activeAbortControllers.get(windowId)
   if (existing) {
     existing.abort()
@@ -713,7 +752,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     const newTabs = allTabs.filter((t) => {
       if (t.id === undefined || t.pinned) return false
       const isInNewTabsGroup = newTabsGroup && t.groupId === newTabsGroup.id
-      const isUngrouped = t.groupId === chrome.tabGroups.TAB_GROUP_ID_NONE
+      const isUngrouped = t.groupId === TAB_GROUP_ID_NONE
       return isInNewTabsGroup || isUngrouped
     })
     if (newTabs.length === 0) return
@@ -816,6 +855,11 @@ export async function closeGroupTabs(tabIds: number[]): Promise<void> {
  * Split a single tab group into more specific sub-groups using AI.
  */
 export async function splitGroup(groupId: number, aiOverrides?: Partial<ExtensionSettings['ai']>): Promise<void> {
+  // Logik: Fehler auslösen, wenn Tab-Gruppen im Browser nicht unterstützt werden
+  // Programming logic: Throw error if tab groups are not supported in this browser
+  if (!isTabGroupsSupported()) {
+    throw new Error('Tab grouping is not supported in this browser.')
+  }
   let windowId: number
   try {
     const group = await chrome.tabGroups.get(groupId)
@@ -903,6 +947,11 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
  * Merge a single tab group into another existing tab group using AI.
  */
 export async function mergeGroup(groupId: number, aiOverrides?: Partial<ExtensionSettings['ai']>): Promise<void> {
+  // Logik: Fehler auslösen, wenn Tab-Gruppen im Browser nicht unterstützt werden
+  // Programming logic: Throw error if tab groups are not supported in this browser
+  if (!isTabGroupsSupported()) {
+    throw new Error('Tab grouping is not supported in this browser.')
+  }
   let windowId: number
   try {
     const group = await chrome.tabGroups.get(groupId)
@@ -999,11 +1048,14 @@ export function cancelActiveOperation(windowId: number): void {
  * Set collapsed state on all Chrome tab groups in the given window.
  */
 async function setAllGroupsCollapsed(windowId: number, collapsed: boolean): Promise<void> {
+  // Logik: Abbrechen, wenn Tab-Gruppen im Browser nicht unterstützt werden
+  // Programming logic: Return early if tab groups are not supported in this browser
+  if (!isTabGroupsSupported()) return
   const tabs = await chrome.tabs.query({ windowId })
   const groupIds = [
     ...new Set(
       tabs
-        .filter((t) => t.groupId !== undefined && t.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE)
+        .filter((t) => t.groupId !== undefined && t.groupId !== TAB_GROUP_ID_NONE)
         .map((t) => t.groupId),
     ),
   ]
@@ -1039,12 +1091,15 @@ export function areGroupTitlesHidden(windowId: number): boolean {
  * Returns the new hidden state.
  */
 export async function toggleGroupTitles(windowId: number): Promise<boolean> {
+  // Logik: Abbrechen, wenn Tab-Gruppen im Browser nicht unterstützt werden
+  // Programming logic: Return false if tab groups are not supported in this browser
+  if (!isTabGroupsSupported()) return false
   const isHidden = titlesHiddenMap.get(windowId) ?? false
   const tabs = await chrome.tabs.query({ windowId })
   const groupIds = [
     ...new Set(
       tabs
-        .filter((t) => t.groupId !== undefined && t.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE)
+        .filter((t) => t.groupId !== undefined && t.groupId !== TAB_GROUP_ID_NONE)
         .map((t) => t.groupId),
     ),
   ]
@@ -1094,8 +1149,11 @@ export async function toggleGroupTitles(windowId: number): Promise<boolean> {
  * Ungroup all tabs in the given window.
  */
 export async function ungroupAllTabs(windowId: number): Promise<void> {
+  // Logik: Abbrechen, wenn Tab-Gruppen im Browser nicht unterstützt werden
+  // Programming logic: Return early if tab groups are not supported in this browser
+  if (!isTabGroupsSupported()) return
   const tabs = await chrome.tabs.query({ windowId })
-  const groupedTabs = tabs.filter((t) => t.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE)
+  const groupedTabs = tabs.filter((t) => t.groupId !== TAB_GROUP_ID_NONE)
 
   for (const tab of groupedTabs) {
     if (tab.id) {
@@ -1111,6 +1169,9 @@ export async function ungroupAllTabs(windowId: number): Promise<void> {
  * so the title is shown in the bookmarks bar on the new tab page.
  */
 export async function handleTabGroupUpdated(group: chrome.tabGroups.TabGroup): Promise<void> {
+  // Logik: Abbrechen, wenn Tab-Gruppen im Browser nicht unterstützt werden
+  // Programming logic: Return early if tab groups are not supported in this browser
+  if (!isTabGroupsSupported()) return
   if (updatingGroups.has(group.id)) return
 
   const hidden = titlesHiddenMap.get(group.windowId) ?? false
@@ -1290,6 +1351,9 @@ export async function closeRightTabs(windowId: number): Promise<void> {
  * Ungroup tab groups that have less than a specified number of tabs.
  */
 export async function cleanupTabGroups(windowId: number, minTabs: number): Promise<void> {
+  // Logik: Abbrechen, wenn Tab-Gruppen im Browser nicht unterstützt werden
+  // Programming logic: Return early if tab groups are not supported in this browser
+  if (!isTabGroupsSupported()) return
   const tabs = await chrome.tabs.query({ windowId })
 
   // Programming logic: Count tabs per group ID
@@ -1297,7 +1361,7 @@ export async function cleanupTabGroups(windowId: number, minTabs: number): Promi
   const groupTabs = new Map<number, number[]>()
 
   for (const tab of tabs) {
-    if (tab.groupId !== undefined && tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE && tab.id !== undefined) {
+    if (tab.groupId !== undefined && tab.groupId !== TAB_GROUP_ID_NONE && tab.id !== undefined) {
       const currentCount = groupCounts.get(tab.groupId) ?? 0
       groupCounts.set(tab.groupId, currentCount + 1)
 

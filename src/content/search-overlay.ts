@@ -1,5 +1,7 @@
 'use strict';
 
+import '../shared/polyfill'
+
 import cssText from './search-overlay.css?inline'
 import { AIClient } from '../shared/ai-client'
 import { MODEL_PRICING, PROVIDER_DEFAULTS, MODEL_NAMES, DEFAULT_MODELS } from '../shared/constants'
