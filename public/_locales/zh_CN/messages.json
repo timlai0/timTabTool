@@ -239,6 +239,18 @@
     "message": "AI 失败时使用排序备选",
     "description": "Toggle in settings to physically sort tabs by domain and title on AI grouping failure"
   },
+  "sendRandomOrder": {
+    "message": "以随机顺序将标签发送给 LLM",
+    "description": "Toggle in settings to send tabs to the LLM in random order when grouping"
+  },
+  "moveToCurrent": {
+    "message": "合并至当前",
+    "description": "Button to move all tabs from another window to the current window"
+  },
+  "moveToCurrentTooltip": {
+    "message": "将此窗口的所有标签页移至当前窗口",
+    "description": "Tooltip for the button to move all tabs from another window to the current window"
+  },
   "showRuleGroupsWhenUngrouped": {
     "message": "显示本地分组预览",
     "description": "Toggle in settings to show local offline rule groups when tabs are not grouped in Chrome"

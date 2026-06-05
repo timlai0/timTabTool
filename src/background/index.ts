@@ -242,7 +242,7 @@ async function resolveWindowId(payload: unknown): Promise<number> {
 
 export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai']> | undefined {
   if (payload && typeof payload === 'object') {
-    const p = payload as { provider?: unknown; model?: unknown; sendFullUrl?: unknown }
+    const p = payload as { provider?: unknown; model?: unknown; sendFullUrl?: unknown; sendRandomOrder?: unknown }
     const overrides: Partial<ExtensionSettings['ai']> = {}
     
     if (typeof p.model === 'string' && p.model !== '-full') {
@@ -258,6 +258,10 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
     
     if (typeof p.sendFullUrl === 'boolean') {
       overrides.sendFullUrl = p.sendFullUrl
+    }
+    
+    if (typeof p.sendRandomOrder === 'boolean') {
+      overrides.sendRandomOrder = p.sendRandomOrder
     }
     
     if (Object.keys(overrides).length > 0) {
@@ -679,12 +683,18 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         currentGroupTabsCount = tabs.filter(t => t.groupId === activeTab.groupId).length
       }
 
-      // Get new tabs count (tabs in the "New Tabs" group)
+      // Logik: Ermittelt die Anzahl der neuen Tabs (in der "New Tabs"-Gruppe oder ungruppiert, ausgenommen angepinnte Tabs)
+      // Get new tabs count (tabs in the "New Tabs" group + tabs not in any group, excluding pinned)
       const allGroups = await chrome.tabGroups.query({ windowId })
       const newTabsGroup = allGroups.find(
         (g) => g.title === 'New Tabs'
       )
-      const newTabsCount = newTabsGroup ? tabs.filter(t => t.groupId === newTabsGroup.id).length : 0
+      const newTabsCount = tabs.filter(t => {
+        if (t.id === undefined || t.pinned) return false
+        const isInNewTabsGroup = newTabsGroup && t.groupId === newTabsGroup.id
+        const isUngrouped = t.groupId === undefined || t.groupId === chrome.tabGroups.TAB_GROUP_ID_NONE
+        return isInNewTabsGroup || isUngrouped
+      }).length
 
       // Get AI Settings
       const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)

@@ -85,9 +85,15 @@ describe('getAIOverrides', () => {
   })
 
   it('extracts all overrides when present', () => {
-    const payload = { model: 'gemini-3.5-flash', provider: 'gemini', sendFullUrl: true }
+    const payload = { model: 'gemini-3.5-flash', provider: 'gemini', sendFullUrl: true, sendRandomOrder: true }
     const result = getAIOverrides(payload)
-    expect(result).toEqual({ model: 'gemini-3.5-flash', provider: 'gemini', sendFullUrl: true })
+    expect(result).toEqual({ model: 'gemini-3.5-flash', provider: 'gemini', sendFullUrl: true, sendRandomOrder: true })
+  })
+
+  it('extracts sendRandomOrder even when set to false', () => {
+    const payload = { sendRandomOrder: false }
+    const result = getAIOverrides(payload)
+    expect(result).toEqual({ sendRandomOrder: false })
   })
 
   it('ignores literal "-full" as a model name (prevents search overlay bug)', () => {

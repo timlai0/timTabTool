@@ -83,4 +83,91 @@ describe('classify', () => {
       expect(result.method).toBe('domain')
     })
   })
+
+  describe('groupTabsFreelyWithAI', () => {
+    it('shuffles tabs before sending to AIClient when sendRandomOrder is true', async () => {
+      // We will mock AIClient.prototype.groupTabsFreely to check the order of tabs passed
+      const { AIClient } = await import('../src/shared/ai-client')
+      const mockGroupTabsFreely = vi.spyOn(AIClient.prototype, 'groupTabsFreely')
+        .mockResolvedValue([
+          { name: 'Group 1', color: 'blue', tabIndices: [1, 2] }
+        ])
+
+      const { groupTabsFreelyWithAI } = await import('../src/background/classifier')
+
+      const tabs = [
+        { id: 1, url: 'https://google.com', title: 'Google' },
+        { id: 2, url: 'https://github.com', title: 'GitHub' },
+        { id: 3, url: 'https://youtube.com', title: 'YouTube' },
+        { id: 4, url: 'https://netflix.com', title: 'Netflix' },
+        { id: 5, url: 'https://amazon.com', title: 'Amazon' },
+      ]
+
+      // Mock Math.random to return a deterministic shuffle order
+      // For this test, we want to ensure it actually shuffles differently from the original
+      let randIndex = 0
+      const randValues = [0.1, 0.9, 0.4, 0.2, 0.8]
+      const spyMathRandom = vi.spyOn(Math, 'random').mockImplementation(() => {
+        const val = randValues[randIndex]
+        randIndex = (randIndex + 1) % randValues.length
+        return val
+      })
+
+      const aiConfig = {
+        enabled: true,
+        provider: 'openai' as const,
+        apiKey: 'test-key',
+        sendRandomOrder: true,
+      }
+
+      await groupTabsFreelyWithAI(tabs, aiConfig)
+
+      expect(mockGroupTabsFreely).toHaveBeenCalled()
+      const passedTabs = mockGroupTabsFreely.mock.calls[0][0]
+      
+      // The length must be the same
+      expect(passedTabs.length).toBe(5)
+      
+      // Verify that at least some tabs are in a different order due to shuffling
+      const originalUrls = tabs.map(t => t.url)
+      const passedUrls = passedTabs.map(t => t.url)
+      expect(passedUrls).not.toEqual(originalUrls)
+
+      spyMathRandom.mockRestore()
+      mockGroupTabsFreely.mockRestore()
+    })
+
+    it('keeps tab order intact when sendRandomOrder is false', async () => {
+      const { AIClient } = await import('../src/shared/ai-client')
+      const mockGroupTabsFreely = vi.spyOn(AIClient.prototype, 'groupTabsFreely')
+        .mockResolvedValue([
+          { name: 'Group 1', color: 'blue', tabIndices: [1, 2] }
+        ])
+
+      const { groupTabsFreelyWithAI } = await import('../src/background/classifier')
+
+      const tabs = [
+        { id: 1, url: 'https://google.com', title: 'Google' },
+        { id: 2, url: 'https://github.com', title: 'GitHub' },
+        { id: 3, url: 'https://youtube.com', title: 'YouTube' },
+      ]
+
+      const aiConfig = {
+        enabled: true,
+        provider: 'openai' as const,
+        apiKey: 'test-key',
+        sendRandomOrder: false,
+      }
+
+      await groupTabsFreelyWithAI(tabs, aiConfig)
+
+      expect(mockGroupTabsFreely).toHaveBeenCalled()
+      const passedTabs = mockGroupTabsFreely.mock.calls[0][0]
+      const originalUrls = tabs.map(t => t.url)
+      const passedUrls = passedTabs.map(t => t.url)
+      expect(passedUrls).toEqual(originalUrls)
+
+      mockGroupTabsFreely.mockRestore()
+    })
+  })
 })

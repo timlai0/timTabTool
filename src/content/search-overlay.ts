@@ -1,5 +1,6 @@
 import cssText from './search-overlay.css?inline'
 import { AIClient } from '../shared/ai-client'
+import { MODEL_PRICING, PROVIDER_DEFAULTS, MODEL_NAMES, DEFAULT_MODELS } from '../shared/constants'
 
 interface CommandItem {
   key: string
@@ -63,32 +64,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let aiProgressInterval: ReturnType<typeof setInterval> | null = null
   let aiProgressTimeout: ReturnType<typeof setTimeout> | null = null
 
-  const MODEL_PRICING = {
-    'gemini-3.5-flash': { input: 1.50, output: 9.00 },
-    'gemini-3.1-pro-preview': { input: 2.00, output: 12.00 },
-    'gemini-3.1-flash-lite': { input: 0.25, output: 1.50 },
-    'gemini-3-flash-preview': { input: 0.50, output: 3.00 },
-    'gemini-3-pro-preview': { input: 2.00, output: 12.00 },
-    'gemini-2.5-pro': { input: 1.25, output: 10.00 },
-    'gemini-2.5-flash': { input: 0.30, output: 2.50 },
-    'gemini-2.5-flash-lite': { input: 0.10, output: 0.40 },
-    'gemini-2.0-flash': { input: 0.10, output: 0.40 },
-    'gemini-2.0-flash-lite': { input: 0.075, output: 0.30 },
-    'gemma-4-31b-it': { input: 0, output: 0 },
-    'gemma-4-26b-a4b-it': { input: 0, output: 0 },
-    'gpt-4o': { input: 2.50, output: 10.00 },
-    'gpt-4o-mini': { input: 0.15, output: 0.60 },
-    'claude-3-opus-20240229': { input: 15.00, output: 75.00 },
-    'claude-3-5-sonnet-20240620': { input: 3.00, output: 15.00 },
-    'claude-3-haiku-20240307': { input: 0.25, output: 1.25 },
-  }
 
-  const PROVIDER_DEFAULTS = {
-    openai: { input: 0.15, output: 0.60 },
-    claude: { input: 3.00, output: 15.00 },
-    gemini: { input: 1.50, output: 9.00 },
-    custom: { input: 0.15, output: 0.60 },
-  }
 
   const BASE_COMMANDS: CommandItem[] = [
     {
@@ -207,24 +183,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
   ]
 
-  const MODEL_NAMES: Record<string, string> = {
-    'gemini-3.5-flash': 'Gemini 3.5 Flash',
-    'gemini-3.1-pro-preview': 'Gemini 3.1 Pro (Preview)',
-    'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
-    'gemini-3-pro-preview': 'Gemini 3 Pro (Preview)',
-    'gemini-2.5-pro': 'Gemini 2.5 Pro',
-    'gemini-2.5-flash': 'Gemini 2.5 Flash',
-    'gemini-2.5-flash-lite': 'Gemini 2.5 Flash Lite',
-    'gemini-2.0-flash': 'Gemini 2.0 Flash',
-    'gemini-2.0-flash-lite': 'Gemini 2.0 Flash Lite',
-    'gemma-4-31b-it': 'Gemma 4 31B',
-    'gemma-4-26b-a4b-it': 'Gemma 4 26B',
-    'gpt-4o': 'GPT-4o',
-    'gpt-4o-mini': 'GPT-4o Mini',
-    'claude-3-opus-20240229': 'Claude 3 Opus',
-    'claude-3-5-sonnet-20240620': 'Claude 3.5 Sonnet',
-    'claude-3-haiku-20240307': 'Claude 3 Haiku',
-  }
+
 
   const COMMANDS: CommandItem[] = [...BASE_COMMANDS]
 
@@ -299,13 +258,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
   function getActiveModel(aiSettings: any) {
     if (aiSettings.model) return aiSettings.model
-    const defaults: Record<string, string> = {
-      openai: 'gpt-4o-mini',
-      claude: 'claude-sonnet-4-20250514',
-      gemini: 'gemini-3.5-flash',
-      custom: 'gpt-4o-mini',
-    }
-    return defaults[aiSettings.provider] || 'gpt-4o-mini'
+    return DEFAULT_MODELS[aiSettings.provider] || 'gpt-4o-mini'
   }
 
   function estimateAICost(
@@ -869,12 +822,16 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       progressStatus.style.color = '' // reset color
       progressStatus.textContent = 'Preparing AI Command...'
     }
-    if (progressPercent) progressPercent.textContent = '0%'
+    if (progressPercent) progressPercent.textContent = ''
     if (progressFill) {
       progressFill.style.width = '0%'
       progressFill.style.backgroundColor = '' // reset color
+      progressFill.classList.remove('atm-indeterminate')
     }
-    if (progressDetail) progressDetail.textContent = 'Ready'
+    if (progressDetail) {
+      progressDetail.textContent = 'Ready'
+      progressDetail.style.color = ''
+    }
     if (progressCloseBtn) progressCloseBtn.style.display = 'none'
   }
 
@@ -934,11 +891,15 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       progressStatus.textContent = 'Executing AI Command...'
     }
     if (progressFill) {
-      progressFill.style.width = '0%'
+      progressFill.style.width = '100%'
       progressFill.style.backgroundColor = '' // reset to default blue
+      progressFill.classList.add('atm-indeterminate')
     }
-    if (progressPercent) progressPercent.textContent = '0%'
-    if (progressDetail) progressDetail.textContent = 'Initializing...'
+    if (progressPercent) progressPercent.textContent = ''
+    if (progressDetail) {
+      progressDetail.textContent = 'Processing...'
+      progressDetail.style.color = ''
+    }
 
     // Extract overrides and display name
     let model = 'gemini-3.5-flash'
@@ -971,87 +932,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     const modelDisplayName = MODEL_NAMES[model] || model
 
-    // Set up step messages based on action
-    let phases: { percent: number; text: string }[] = []
-    const action = result.commandAction
-    if (action === 'GROUP_TABS') {
-      phases = [
-        { percent: 10, text: 'Packaging tab data for analysis...' },
-        { percent: 25, text: `Connecting to AI model (${modelDisplayName})...` },
-        { percent: 45, text: 'Analyzing page titles and semantic categories...' },
-        { percent: 65, text: 'Generating intelligent group structure...' },
-        { percent: 85, text: 'Preparing Chrome tab groupings...' },
-        { percent: 95, text: 'Applying smart groups to your window...' }
-      ]
-    } else if (action === 'SPLIT_CURRENT_GROUP') {
-      phases = [
-        { percent: 15, text: 'Gathering tabs in the current group...' },
-        { percent: 35, text: 'Analyzing sub-topics and finer details...' },
-        { percent: 60, text: 'Structuring granular sub-groups...' },
-        { percent: 85, text: 'Splitting group and applying changes...' },
-        { percent: 95, text: 'Updating window layout...' }
-      ]
-    } else if (action === 'MERGE_CURRENT_GROUP') {
-      phases = [
-        { percent: 15, text: 'Gathering current group tabs...' },
-        { percent: 35, text: 'Analyzing alternative existing groups...' },
-        { percent: 60, text: 'Finding best semantic match...' },
-        { percent: 80, text: 'Merging group tabs into target...' },
-        { percent: 95, text: 'Updating tab layout...' }
-      ]
-    } else if (action === 'CLASSIFY_NEW_TABS') {
-      phases = [
-        { percent: 15, text: 'Identifying ungrouped new tabs...' },
-        { percent: 40, text: 'Comparing tabs with existing group topics...' },
-        { percent: 70, text: 'Classifying tabs into appropriate groups...' },
-        { percent: 90, text: 'Applying group classifications...' },
-        { percent: 95, text: 'Refreshing window grouping...' }
-      ]
-    } else {
-      phases = [
-        { percent: 20, text: 'Processing...' },
-        { percent: 50, text: 'Executing...' },
-        { percent: 90, text: 'Completing...' }
-      ]
-    }
 
-    let currentPercent = 0
-    let phaseIndex = 0
-
-    if (aiProgressInterval) clearInterval(aiProgressInterval)
-    aiProgressInterval = setInterval(() => {
-      if (!isAIOperating) return
-
-      // Determine what phase we are in
-      const currentPhase = phases[phaseIndex]
-      if (currentPhase) {
-        if (currentPercent < currentPhase.percent) {
-          currentPercent += Math.floor(Math.random() * 3) + 1
-          if (currentPercent > currentPhase.percent) {
-            currentPercent = currentPhase.percent
-          }
-        } else {
-          // Advance to next phase
-          phaseIndex++
-        }
-      } else {
-        // We reached 95%, slowly creep up to 98%
-        if (currentPercent < 98) {
-          if (Math.random() > 0.7) {
-            currentPercent += 1
-          }
-        }
-      }
-
-      if (progressPercent) progressPercent.textContent = `${currentPercent}%`
-      if (progressFill) progressFill.style.width = `${currentPercent}%`
-
-      // Show appropriate detail text
-      const activePhase = phases.find(p => currentPercent <= p.percent) || phases[phases.length - 1]
-      if (activePhase && progressDetail) {
-        progressDetail.textContent = activePhase.text
-      }
-    }, 150)
 
     if (isExternalAI) {
       // Triggered externally (e.g. from GUI popup). The background is already executing.
@@ -1076,9 +957,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
       // Success!
       isAIOperating = false
-      if (progressPercent) progressPercent.textContent = '100%'
+      if (progressPercent) progressPercent.textContent = ''
       if (progressFill) {
         progressFill.style.width = '100%'
+        progressFill.classList.remove('atm-indeterminate')
         progressFill.style.backgroundColor = '#34C759' // Glow green
       }
       if (progressStatus) {
@@ -1104,6 +986,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
       // Error handling
       if (progressFill) {
+        progressFill.style.width = '100%'
+        progressFill.classList.remove('atm-indeterminate')
         progressFill.style.backgroundColor = '#FF3B30' // Red
       }
       if (progressStatus) {
@@ -1112,6 +996,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       }
       if (progressDetail) {
         progressDetail.textContent = err.message || 'An unknown error occurred.'
+        progressDetail.style.color = '#FF3B30'
       }
       if (progressCloseBtn) {
         progressCloseBtn.textContent = 'Dismiss'
@@ -1715,9 +1600,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         isAIOperating = false
         isExternalAI = false
 
-        if (progressPercent) progressPercent.textContent = '100%'
+        if (progressPercent) progressPercent.textContent = ''
         if (progressFill) {
           progressFill.style.width = '100%'
+          progressFill.classList.remove('atm-indeterminate')
           progressFill.style.backgroundColor = '#34C759'
         }
         if (progressStatus) {
@@ -1746,6 +1632,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         isExternalAI = false
 
         if (progressFill) {
+          progressFill.style.width = '100%'
+          progressFill.classList.remove('atm-indeterminate')
           progressFill.style.backgroundColor = '#FF3B30'
         }
         if (progressStatus) {

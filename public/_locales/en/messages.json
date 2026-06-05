@@ -239,6 +239,18 @@
     "message": "When AI fails, sort with fallback",
     "description": "Toggle in settings to physically sort tabs by domain and title on AI grouping failure"
   },
+  "sendRandomOrder": {
+    "message": "Send tabs in random order to LLM",
+    "description": "Toggle in settings to send tabs to the LLM in random order when grouping"
+  },
+  "moveToCurrent": {
+    "message": "Move to Current",
+    "description": "Button to move all tabs from another window to the current window"
+  },
+  "moveToCurrentTooltip": {
+    "message": "Move all tabs from this window to the current window",
+    "description": "Tooltip for the button to move all tabs from another window to the current window"
+  },
   "showRuleGroupsWhenUngrouped": {
     "message": "Show Local Grouping Preview",
     "description": "Toggle in settings to show local offline rule groups when tabs are not grouped in Chrome"

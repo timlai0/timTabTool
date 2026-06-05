@@ -82,14 +82,22 @@ export async function groupTabsFreelyWithAI(
 
   if (validTabs.length === 0) return []
 
+  const processedTabs = [...validTabs]
+  if (aiConfig.sendRandomOrder) {
+    for (let i = processedTabs.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [processedTabs[i], processedTabs[j]] = [processedTabs[j], processedTabs[i]]
+    }
+  }
+
   const client = new AIClient(aiConfig, signal)
   const aiGroups = await client.groupTabsFreely(
-    validTabs.map((t) => ({ url: t.url, title: t.title || '' })),
+    processedTabs.map((t) => ({ url: t.url, title: t.title || '' })),
   )
 
   return aiGroups.map((g) => ({
     name: g.name,
     color: g.color || 'grey',
-    tabIds: g.tabIndices.map((i) => validTabs[i - 1].id),
+    tabIds: g.tabIndices.map((i) => processedTabs[i - 1].id),
   }))
 }

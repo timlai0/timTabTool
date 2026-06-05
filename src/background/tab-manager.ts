@@ -703,13 +703,19 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     const allTabs = await chrome.tabs.query({ windowId })
     const allGroups = await chrome.tabGroups.query({ windowId })
 
-    // Find the "New Tabs" group
+    // Find the "New Tabs" group if it exists
     const newTabsGroup = allGroups.find(
       (g) => g.title === UNGROUPED_AI_GROUP_NAME || groupTitleMap.get(g.id) === UNGROUPED_AI_GROUP_NAME,
     )
-    if (!newTabsGroup) return
 
-    const newTabs = allTabs.filter((t) => t.groupId === newTabsGroup.id && t.id !== undefined)
+    // Logik: Klassifiziert Tabs aus der "New Tabs"-Gruppe sowie alle ungruppierten Tabs
+    // Include both "New Tabs" group and completely ungrouped tabs (excluding pinned tabs)
+    const newTabs = allTabs.filter((t) => {
+      if (t.id === undefined || t.pinned) return false
+      const isInNewTabsGroup = newTabsGroup && t.groupId === newTabsGroup.id
+      const isUngrouped = t.groupId === chrome.tabGroups.TAB_GROUP_ID_NONE
+      return isInNewTabsGroup || isUngrouped
+    })
     if (newTabs.length === 0) return
 
     // Build existing group name → groupId mapping (exclude "New Tabs")

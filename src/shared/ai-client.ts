@@ -1,15 +1,10 @@
 import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory } from './types'
-import { DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS } from './constants'
+import { DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS, DEFAULT_ENDPOINTS } from './constants'
 import { getAutoBatchSize } from './utils'
 
 export const SYSTEM_PROMPT = 'You are a helpful assistant that classifies browser tabs into categories. Be concise.'
 
-const DEFAULT_MODELS: Record<AIConfig['provider'], string> = {
-  openai: 'gpt-4o-mini',
-  claude: 'claude-sonnet-4-20250514',
-  gemini: 'gemini-3.5-flash',
-  custom: 'gpt-4o-mini',
-}
+
 
 const VALID_COLORS: ChromeTabGroupColor[] = [
   'grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan',
@@ -86,7 +81,7 @@ export class AIClient {
 
     let model = modelOverride
     if (!model) {
-      model = config.model || (providerOverride || config.provider === 'gemini' ? 'gemini-3.5-flash' : config.provider === 'claude' ? 'claude-sonnet-4-20250514' : 'gpt-4o-mini')
+      model = config.model || DEFAULT_MODELS[providerOverride || config.provider] || 'gpt-4o-mini'
     }
 
     const promptLen = systemPrompt.length + userPrompt.length + baseUserPromptExtra.length + formatInstructionLen
@@ -688,7 +683,7 @@ Only output the JSON object.`
   }
 
   private async chatClaude(userMessage: string, jsonMode?: boolean): Promise<string> {
-    const baseUrl = this.config.endpoint || 'https://api.anthropic.com'
+    const baseUrl = this.config.endpoint || DEFAULT_ENDPOINTS.claude
     const messages: { role: string; content: string }[] = [
       { role: 'user', content: userMessage },
       ...(jsonMode ? [{ role: 'assistant', content: '[' }] : []),
@@ -730,7 +725,7 @@ Only output the JSON object.`
   }
 
   private async chatGemini(userMessage: string, jsonMode?: boolean): Promise<string> {
-    const baseUrl = this.config.endpoint || 'https://generativelanguage.googleapis.com'
+    const baseUrl = this.config.endpoint || DEFAULT_ENDPOINTS.gemini
     const model = this.config.model || this.defaultModel
     const response = await fetch(
       `${baseUrl}/v1beta/models/${model}:generateContent?key=${this.config.apiKey}`,
@@ -792,7 +787,7 @@ Only output the JSON object.`
   }
 
   private getBaseUrl(): string {
-    return this.config.endpoint || 'https://api.openai.com/v1'
+    return this.config.endpoint || DEFAULT_ENDPOINTS.openai
   }
 
   private getHeaders(): Record<string, string> {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
 import { getMessage } from '../shared/i18n'
-import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT } from '../shared/constants'
+import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS } from '../shared/constants'
 import { SYSTEM_PROMPT, AIClient } from '../shared/ai-client'
 import { getAutoBatchSize } from '../shared/utils'
 import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInfo } from '../shared/types'
@@ -375,52 +375,12 @@ function getGroupingPrompt() {
   return aiSettings.value.groupingPrompt?.trim() || DEFAULT_GROUPING_PROMPT
 }
 
-const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  // Gemini
-  'gemini-3.5-flash': { input: 1.50, output: 9.00 },
-  'gemini-3.1-pro-preview': { input: 2.00, output: 12.00 },
-  'gemini-3.1-flash-lite': { input: 0.25, output: 1.50 },
-  'gemini-3.1-flash-lite-preview': { input: 0.25, output: 1.50 },
-  'gemini-3.1-flash-live-preview': { input: 0.75, output: 4.50 },
-  'gemini-3-flash-preview': { input: 0.50, output: 3.00 },
-  'gemini-3-pro-preview': { input: 2.00, output: 12.00 },
-  'gemini-2.5-pro': { input: 1.25, output: 10.00 },
-  'gemini-2.5-flash': { input: 0.30, output: 2.50 },
-  'gemini-2.5-flash-lite': { input: 0.10, output: 0.40 },
-  'gemini-2.5-flash-lite-preview-09-2025': { input: 0.10, output: 0.40 },
-  'gemini-2.0-flash': { input: 0.10, output: 0.40 },
-  'gemini-2.0-flash-lite': { input: 0.075, output: 0.30 },
-  'gemma-4-31b-it': { input: 0, output: 0 },
-  'gemma-4-26b-a4b-it': { input: 0, output: 0 },
-
-  // OpenAI
-  'gpt-4o': { input: 2.50, output: 10.00 },
-  'gpt-4o-mini': { input: 0.15, output: 0.60 },
-
-  // Claude
-  'claude-3-opus-20240229': { input: 15.00, output: 75.00 },
-  'claude-3-5-sonnet-20240620': { input: 3.00, output: 15.00 },
-  'claude-3-haiku-20240307': { input: 0.25, output: 1.25 },
-}
-
-const PROVIDER_DEFAULTS: Record<string, { input: number; output: number }> = {
-  openai: { input: 0.15, output: 0.60 },
-  claude: { input: 3.00, output: 15.00 },
-  gemini: { input: 1.50, output: 9.00 },
-  custom: { input: 0.15, output: 0.60 },
-}
 
 const activeModel = computed(() => {
   if (aiSettings.value.model) {
     return aiSettings.value.model
   }
-  const defaults: Record<string, string> = {
-    openai: 'gpt-4o-mini',
-    claude: 'claude-sonnet-4-20250514',
-    gemini: 'gemini-3.5-flash',
-    custom: 'gpt-4o-mini',
-  }
-  return defaults[aiSettings.value.provider] || 'gpt-4o-mini'
+  return DEFAULT_MODELS[aiSettings.value.provider] || 'gpt-4o-mini'
 })
 
 function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classify' | null = 'group') {
@@ -446,8 +406,17 @@ function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classi
 }
 
 function newTabsCount(w: WindowGroupsInfo): number {
-  const group = w.groups.find((g) => g.groupName === 'New Tabs')
-  return group ? group.tabs.length : 0
+  // Logik: Zählt alle unangepinnten Tabs in der "New Tabs"-Gruppe sowie ungruppierte Tabs (ohne Gruppennamen und ohne Gruppen-ID)
+  // Count unpinned tabs in the "New Tabs" group and ungrouped groups
+  let count = 0
+  for (const g of w.groups) {
+    if (g.groupName === 'New Tabs') {
+      count += g.tabs.filter(t => !t.pinned).length
+    } else if (!g.groupName && g.groupId === undefined) {
+      count += g.tabs.filter(t => !t.pinned).length
+    }
+  }
+  return count
 }
 
 function unpinnedTabsCount(w: WindowGroupsInfo): number {
@@ -567,6 +536,24 @@ async function focusWindow(windowId: number) {
     await chrome.windows.update(windowId, { focused: true })
   } catch (err) {
     console.error('[timTabTool] Failed to focus window:', err)
+  }
+}
+
+async function moveTabsToCurrentWindow(sourceWindowId: number) {
+  if (!currentWindowId.value) return
+  // Logik: Verschiebt alle Tabs eines Fensters in das aktuelle Hauptfenster
+  try {
+    // Get all tabs in the source window
+    const tabs = await chrome.tabs.query({ windowId: sourceWindowId })
+    const tabIds = tabs.map(t => t.id).filter((id): id is number => id !== undefined)
+    if (tabIds.length > 0) {
+      // Move all tabs to the current window at the end
+      await chrome.tabs.move(tabIds, { windowId: currentWindowId.value, index: -1 })
+      await loadAllPreviews()
+    }
+  } catch (err) {
+    console.error('[timTabTool] Failed to move tabs:', err)
+    showError(getMessage('failed') + ': ' + (err as Error).message)
   }
 }
 
@@ -758,6 +745,15 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             {{ windowLabel(w, idx) }}
           </span>
           <span class="text-[10px] tabular-nums" style="color: var(--text-tertiary);">{{ w.tabCount }} {{ getMessage('tabs') }}</span>
+          <button
+            v-if="w.windowId !== currentWindowId"
+            class="px-2 py-[2px] text-[10px] font-medium rounded-sm focus:outline-none shrink-0"
+            style="background: var(--accent-soft); color: var(--accent); border: 0.5px solid var(--border);"
+            @click.stop="moveTabsToCurrentWindow(w.windowId)"
+            :title="getMessage('moveToCurrentTooltip')"
+          >
+            {{ getMessage('moveToCurrent') }}
+          </button>
           <span v-if="w.hasGroups" class="w-1.5 h-1.5 rounded-full" style="background: var(--group-green);" :title="getMessage('grouped')" />
         </div>
 
