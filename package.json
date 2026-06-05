@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:firefox": "vite build --config vite.config.firefox.ts && node scripts/build-firefox.js",
+    "build:firefox": "vite build --config vite.config.firefox.ts",
+    "watch:firefox": "vite build --config vite.config.firefox.ts --watch",
     "build:all": "npm run build && npm run build:firefox",
     "preview": "vite preview",
     "test": "vitest run",

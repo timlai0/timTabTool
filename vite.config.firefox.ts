@@ -1,9 +1,23 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
+import { execSync } from 'child_process'
+
+// Programming logic: A simple plugin to run the Firefox manifest transform script after bundling
+const firefoxManifestPlugin = () => ({
+  name: 'firefox-manifest-plugin',
+  closeBundle() {
+    try {
+      console.log('🤖 Running build-firefox.js script...')
+      execSync('node scripts/build-firefox.js', { stdio: 'inherit' })
+    } catch (err) {
+      console.error('❌ Failed to run build-firefox.js:', err)
+    }
+  }
+})
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), firefoxManifestPlugin()],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
