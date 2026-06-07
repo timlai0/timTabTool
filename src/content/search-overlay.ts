@@ -548,10 +548,13 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     hostEl = document.createElement('div')
     hostEl.id = 'atm-search-host'
     hostEl.style.display = 'none'
-    if (window.location.pathname.endsWith('search.html')) {
-      // Logik: Standalone-Attribut setzen für Styling-Anpassungen
-      // Programming logic: Set standalone attribute for styling adjustments
+    const isStandalone = window.location.href.includes('search.html')
+    if (isStandalone) {
+      // Logik: Standalone-Attribut und Styles setzen für Styling-Anpassungen
+      // Programming logic: Set standalone attribute and styles for layout adjustments
       hostEl.setAttribute('data-standalone', 'true')
+      hostEl.style.left = '380px'
+      hostEl.style.width = 'calc(100% - 380px)'
     }
     shadow = hostEl.attachShadow({ mode: 'closed' })
 
@@ -560,11 +563,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     shadow.appendChild(style)
 
     const backdrop = document.createElement('div')
-    backdrop.className = 'atm-backdrop'
+    backdrop.className = isStandalone ? 'atm-backdrop standalone' : 'atm-backdrop'
     backdrop.addEventListener('click', hide)
 
     const container = document.createElement('div')
-    container.className = 'atm-container'
+    container.className = isStandalone ? 'atm-container standalone' : 'atm-container'
     container.addEventListener('click', (e) => e.stopPropagation())
 
     const inputWrap = document.createElement('div')
@@ -1082,7 +1085,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     clearTimeout(debounceTimer)
     resetAIProgressState()
 
-    if (window.location.pathname.endsWith('search.html')) {
+    if (window.location.href.includes('search.html')) {
       // Logik: Schließen des Popup-Fensters bei Deaktivierung
       // Programming logic: Close the standalone popup window when deactivated
       window.close()
@@ -1610,7 +1613,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         payload: { url: result.tab.url },
       })
     }
-    const isStandalone = window.location.pathname.endsWith('search.html')
+    const isStandalone = window.location.href.includes('search.html')
     const isNavigation = !(result.isCommand && result.commandAction)
     if (!isStandalone || !isNavigation) {
       hide()
@@ -1765,7 +1768,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   })
 
   // Auto-initialize and show if loaded directly inside the standalone search.html page
-  if (window.location.pathname.endsWith('search.html')) {
+  if (window.location.href.includes('search.html')) {
     // Logik: Sofortiges Anzeigen des Overlays in der search.html-Seite
     // Programming logic: Immediately display the search overlay in search.html page
     show()

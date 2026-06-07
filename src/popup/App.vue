@@ -12,7 +12,7 @@ const currentView = ref<'main' | 'settings'>('main')
 const isStandaloneSearch = computed(() => {
   // Logik: Prüft, ob die Anwendung als Seitenleiste im Standalone-Suchfenster geladen ist
   // Programming logic: Check if the application is loaded as a sidebar in the standalone search window
-  return window.location.pathname.endsWith('search.html')
+  return window.location.href.includes('search.html')
 })
 const allWindows = ref<WindowGroupsInfo[]>([])
 const loading = ref(true)
