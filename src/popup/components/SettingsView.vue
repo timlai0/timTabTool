@@ -1028,9 +1028,19 @@ async function pasteConfig() {
 
           <!-- Window Width -->
           <div class="px-3 py-2 setting-row">
-            <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
-              Window Width (px)
-            </label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                Window Width (px)
+              </label>
+              <button
+                v-if="settings.windowWidth !== 800"
+                @click="settings.windowWidth = 800"
+                class="text-[9px] hover:underline focus:outline-none transition-opacity"
+                style="color: var(--accent);"
+              >
+                Max
+              </button>
+            </div>
             <input
               type="number"
               v-model.number="settings.windowWidth"
@@ -1044,9 +1054,19 @@ async function pasteConfig() {
 
           <!-- Window Height -->
           <div class="px-3 pb-2 setting-row">
-            <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
-              Window Height (px)
-            </label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                Window Height (px)
+              </label>
+              <button
+                v-if="settings.windowHeight !== 600"
+                @click="settings.windowHeight = 600"
+                class="text-[9px] hover:underline focus:outline-none transition-opacity"
+                style="color: var(--accent);"
+              >
+                Max
+              </button>
+            </div>
             <input
               type="number"
               v-model.number="settings.windowHeight"
