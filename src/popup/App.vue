@@ -838,48 +838,47 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
         class="rounded-none border-b"
         style="background: var(--bg-secondary); border-color: var(--border);"
       >
-        <!-- Window section header (clickable to collapse/expand) -->
-        <div
-          class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none"
-          @click="toggleWindowSection(w.windowId)"
-        >
-          <svg
-            class="w-3 h-3 shrink-0 transition-transform duration-200"
-            :class="isWindowSectionCollapsed(w.windowId) ? '' : 'rotate-90'"
-            style="color: var(--text-tertiary);"
-            viewBox="0 0 20 20"
-            fill="currentColor"
+        <div class="sticky top-0 z-20 flex flex-col shadow-sm" style="background: var(--bg-secondary); border-bottom: 1px solid var(--border);">
+          <!-- Window section header (clickable to collapse/expand) -->
+          <div
+            class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none"
+            @click="toggleWindowSection(w.windowId)"
           >
-            <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
-          </svg>
-          <svg class="w-3.5 h-3.5 shrink-0" style="color: var(--text-tertiary);" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M2 4.25A2.25 2.25 0 014.25 2h11.5A2.25 2.25 0 0118 4.25v8.5A2.25 2.25 0 0115.75 15h-3.105a3.501 3.501 0 01-5.29 0H4.25A2.25 2.25 0 012 12.75v-8.5zM4.25 3.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h3.105a.75.75 0 01.672.418 2.001 2.001 0 003.946 0 .75.75 0 01.672-.418h3.105a.75.75 0 00.75-.75v-8.5a.75.75 0 00-.75-.75H4.25z" clip-rule="evenodd" />
-          </svg>
-          <span
-            class="text-[11px] font-semibold flex-1 truncate hover:underline"
-            :style="{ color: w.windowId === currentWindowId ? 'var(--accent)' : 'var(--text-primary)' }"
-            @click.stop="focusWindow(w.windowId)"
-            title="Focus this window"
-          >
-            {{ windowLabel(w, idx) }}
-          </span>
-          <span class="text-[10px] tabular-nums" style="color: var(--text-tertiary);">{{ w.tabCount }} {{ getMessage('tabs') }}</span>
-          <button
-            v-if="w.windowId !== currentWindowId"
-            class="px-2 py-[2px] text-[10px] font-medium rounded-sm focus:outline-none shrink-0"
-            style="background: var(--accent-soft); color: var(--accent); border: 0.5px solid var(--border);"
-            @click.stop="moveTabsToCurrentWindow(w.windowId)"
-            :title="getMessage('moveToCurrentTooltip')"
-          >
-            {{ getMessage('moveToCurrent') }}
-          </button>
-          <span v-if="w.hasGroups" class="w-1.5 h-1.5 rounded-full" style="background: var(--group-green);" :title="getMessage('grouped')" />
-        </div>
+            <svg
+              class="w-3 h-3 shrink-0 transition-transform duration-200"
+              :class="isWindowSectionCollapsed(w.windowId) ? '' : 'rotate-90'"
+              style="color: var(--text-tertiary);"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
+              <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
+            </svg>
+            <svg class="w-3.5 h-3.5 shrink-0" style="color: var(--text-tertiary);" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M2 4.25A2.25 2.25 0 014.25 2h11.5A2.25 2.25 0 0118 4.25v8.5A2.25 2.25 0 0115.75 15h-3.105a3.501 3.501 0 01-5.29 0H4.25A2.25 2.25 0 012 12.75v-8.5zM4.25 3.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h3.105a.75.75 0 01.672.418 2.001 2.001 0 003.946 0 .75.75 0 01.672-.418h3.105a.75.75 0 00.75-.75v-8.5a.75.75 0 00-.75-.75H4.25z" clip-rule="evenodd" />
+            </svg>
+            <span
+              class="text-[11px] font-semibold flex-1 truncate hover:underline"
+              :style="{ color: w.windowId === currentWindowId ? 'var(--accent)' : 'var(--text-primary)' }"
+              @click.stop="focusWindow(w.windowId)"
+              title="Focus this window"
+            >
+              {{ windowLabel(w, idx) }}
+            </span>
+            <span class="text-[10px] tabular-nums" style="color: var(--text-tertiary);">{{ w.tabCount }} {{ getMessage('tabs') }}</span>
+            <button
+              v-if="w.windowId !== currentWindowId"
+              class="px-2 py-[2px] text-[10px] font-medium rounded-sm focus:outline-none shrink-0"
+              style="background: var(--accent-soft); color: var(--accent); border: 0.5px solid var(--border);"
+              @click.stop="moveTabsToCurrentWindow(w.windowId)"
+              :title="getMessage('moveToCurrentTooltip')"
+            >
+              {{ getMessage('moveToCurrent') }}
+            </button>
+            <span v-if="w.hasGroups" class="w-1.5 h-1.5 rounded-full" style="background: var(--group-green);" :title="getMessage('grouped')" />
+          </div>
 
-        <!-- Collapsible content -->
-        <template v-if="!isWindowSectionCollapsed(w.windowId)">
           <!-- Action buttons -->
-          <div v-if="tabGroupsSupported" class="flex items-center px-3.5 pb-2 relative">
+          <div v-if="!isWindowSectionCollapsed(w.windowId) && tabGroupsSupported" class="flex items-center px-3.5 pb-2 relative">
             <div class="flex items-center gap-1.5">
               <button
                 class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group"
@@ -1031,21 +1030,21 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
               </button>
             </div>
           </div>
+        </div>
 
-          <!-- Groups for this window -->
-          <div style="background: var(--bg-primary); border-top: 0.5px solid var(--border);">
-            <GroupList
-              :groups="w.groups"
-              :indicator-style="indicatorStyle"
-              :expand-trigger="expandTriggers[w.windowId] || 0"
-              :collapse-trigger="collapseTriggers[w.windowId] || 0"
-              :is-current-window="w.windowId === currentWindowId"
-              @close-group="loadAllPreviews"
-              @split-group="loadAllPreviews"
-              @error="showError"
-            />
-          </div>
-        </template>
+        <!-- Groups for this window -->
+        <div v-if="!isWindowSectionCollapsed(w.windowId)" style="background: var(--bg-primary); border-top: 0.5px solid var(--border);">
+          <GroupList
+            :groups="w.groups"
+            :indicator-style="indicatorStyle"
+            :expand-trigger="expandTriggers[w.windowId] || 0"
+            :collapse-trigger="collapseTriggers[w.windowId] || 0"
+            :is-current-window="w.windowId === currentWindowId"
+            @close-group="loadAllPreviews"
+            @split-group="loadAllPreviews"
+            @error="showError"
+          />
+        </div>
       </div>
     </div>
   </div>
