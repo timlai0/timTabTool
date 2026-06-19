@@ -550,11 +550,14 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     hostEl.style.display = 'none'
     const isStandalone = window.location.href.includes('search.html')
     if (isStandalone) {
-      // Logik: Standalone-Attribut und Styles setzen für Styling-Anpassungen
+      // Logic: Set standalone attribute and styles for styling adjustments
       // Programming logic: Set standalone attribute and styles for layout adjustments
       hostEl.setAttribute('data-standalone', 'true')
-      hostEl.style.left = '380px'
-      hostEl.style.width = 'calc(100% - 380px)'
+      hostEl.style.position = 'absolute'
+      hostEl.style.left = '0'
+      hostEl.style.top = '0'
+      hostEl.style.width = '100%'
+      hostEl.style.height = '100%'
     }
     shadow = hostEl.attachShadow({ mode: 'closed' })
 
@@ -720,10 +723,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     toggleCheckbox.checked = showClosedTabs
     toggleCheckbox.className = 'atm-closed-tabs-checkbox'
     toggleCheckbox.addEventListener('change', () => {
-      // Logik: Umschalten des Zustands für geschlossene Tabs
+      // Logic: Toggle the state for closed tabs
       // Programming logic: Toggle the showClosedTabs state
       showClosedTabs = toggleCheckbox.checked
-      // Logik: Suche mit neuem Filter ausführen
+      // Logic: Execute search with new filter
       // Programming logic: Re-run search with the updated filter
       doSearch(input.value, resultsList)
     })
@@ -774,7 +777,16 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     backdrop.appendChild(container)
     shadow.appendChild(backdrop)
 
-    document.documentElement.appendChild(hostEl)
+    if (isStandalone) {
+      const searchCol = document.getElementById('search-col')
+      if (searchCol) {
+        searchCol.appendChild(hostEl)
+      } else {
+        document.documentElement.appendChild(hostEl)
+      }
+    } else {
+      document.documentElement.appendChild(hostEl)
+    }
   }
 
   function syncThemeAttribute() {
@@ -873,6 +885,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       }
       if (progressContainer) {
         progressContainer.style.pointerEvents = ''
+        progressContainer.classList.remove('atm-error')
       }
       if (inputWrap) {
         inputWrap.style.display = ''
@@ -1050,7 +1063,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         aiProgressInterval = null
       }
 
-      // Error handling
+      if (progressContainer) {
+        progressContainer.classList.add('atm-error')
+      }
       if (progressFill) {
         progressFill.style.width = '100%'
         progressFill.classList.remove('atm-indeterminate')
@@ -1086,7 +1101,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     resetAIProgressState()
 
     if (window.location.href.includes('search.html')) {
-      // Logik: Schließen des Popup-Fensters bei Deaktivierung
+      // Logic: Close the popup window on deactivation
       // Programming logic: Close the standalone popup window when deactivated
       window.close()
     }
@@ -1125,6 +1140,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
       let matched = COMMANDS.filter(c => {
         if (!c.key.startsWith(trimmedMatchText)) return false
+
+        // Logic: Hide commands with -full if 'Always send full URL' is activated
+        // Programming logic: Hide -full commands if 'Always send full URL' is globally enabled
+        if (overlayMetrics?.aiSettings?.sendFullUrl && c.sendFullUrl) {
+          return false
+        }
 
         // Hide model suggestions if the command is not completely entered yet.
         // A model suggestion has a space, and the second part is a known model.
@@ -1174,7 +1195,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           matched.push({
             key: `/cleanup-groups ${x}`,
             title: `Clean Up Tab Groups (< ${x} tabs)`,
-            description: `Ungroup tab groups with less than ${x} tabs`,
+            description: `Close tabs in groups with less than ${x} tabs`,
             action: 'CLEANUP_GROUPS'
           })
         }
@@ -1738,6 +1759,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         isAIOperating = false
         isExternalAI = false
 
+        if (progressContainer) {
+          progressContainer.classList.add('atm-error')
+        }
         if (progressFill) {
           progressFill.style.width = '100%'
           progressFill.classList.remove('atm-indeterminate')
@@ -1759,13 +1783,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
   })
 
-  // Listen for F1 key to toggle search
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'F1') {
-      e.preventDefault()
-      toggle()
-    }
-  })
+
 
   // Auto-initialize and show if loaded directly inside the standalone search.html page
   if (window.location.href.includes('search.html')) {
