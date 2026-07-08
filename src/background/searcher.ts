@@ -1,5 +1,10 @@
 import type { SearchResult, TabInfo, TabHistoryEntry } from '../shared/types'
 
+interface SearchTerm {
+  term: string
+  wordBoundaryRegex: RegExp
+}
+
 /**
  * Search open tabs and history by keyword matching on title and URL.
  * Uses a simple scoring system: title match scores higher than URL match,
@@ -29,7 +34,15 @@ export function searchTabs(
     }))
   }
 
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+  const terms: SearchTerm[] = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((term) => ({
+      term,
+      wordBoundaryRegex: new RegExp(`\\b${escapeRegex(term)}\\b`, 'i'),
+    }))
+
   const results: SearchResult[] = []
 
   // Score open tabs
@@ -73,14 +86,21 @@ export function searchTabs(
 /**
  * Compute a relevance score for a tab against search terms.
  */
-function computeScore(terms: string[], title: string, url: string): { score: number; details: string } {
+function computeScore(terms: SearchTerm[], title: string, url: string): { score: number; details: string } {
   const titleLower = (title || '').toLowerCase()
   const urlLower = (url || '').toLowerCase()
 
   let totalScore = 0
   const detailsParts: string[] = []
 
-  for (const term of terms) {
+  let domain = ''
+  try {
+    domain = new URL(url).hostname.toLowerCase()
+  } catch {
+    // ignore
+  }
+
+  for (const { term, wordBoundaryRegex } of terms) {
     let titleScore = 0
     let urlScore = 0
 
@@ -88,8 +108,7 @@ function computeScore(terms: string[], title: string, url: string): { score: num
     if (titleLower.includes(term)) {
       titleScore += 3
       // Bonus for word boundary match
-      const regex = new RegExp(`\\b${escapeRegex(term)}\\b`, 'i')
-      if (regex.test(title || '')) {
+      if (wordBoundaryRegex.test(title || '')) {
         titleScore += 1
       }
       // Bonus for match at start
@@ -102,13 +121,8 @@ function computeScore(terms: string[], title: string, url: string): { score: num
     if (urlLower.includes(term)) {
       urlScore += 1
       // Domain match bonus
-      try {
-        const domain = new URL(url).hostname.toLowerCase()
-        if (domain.includes(term)) {
-          urlScore += 1
-        }
-      } catch {
-        // ignore
+      if (domain && domain.includes(term)) {
+        urlScore += 1
       }
     }
 

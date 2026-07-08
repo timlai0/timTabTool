@@ -51,6 +51,12 @@
   flex-direction: column;
 }
 
+.atm-container.standalone {
+  max-width: none;
+  width: 100%;
+  box-shadow: none;
+}
+
 .atm-input-wrap {
   display: flex;
   align-items: center;

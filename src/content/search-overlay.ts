@@ -548,7 +548,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     hostEl = document.createElement('div')
     hostEl.id = 'atm-search-host'
     hostEl.style.display = 'none'
-    const isStandalone = window.location.href.includes('search.html')
+    const isStandalone = window.location.protocol.includes('-extension:') && window.location.pathname.includes('search.html')
     if (isStandalone) {
       // Logic: Set standalone attribute and styles for styling adjustments
       // Programming logic: Set standalone attribute and styles for layout adjustments
@@ -606,6 +606,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     input.className = 'atm-input'
     input.type = 'text'
     input.placeholder = 'Search tabs...'
+    input.autofocus = true
     input.style.background = 'transparent'
     input.style.position = 'relative'
     input.style.zIndex = '1'
@@ -786,6 +787,33 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       }
     } else {
       document.documentElement.appendChild(hostEl)
+    }
+
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onCreated) {
+      const refreshSearch = () => {
+        if (visible) {
+          const input = shadow?.querySelector('.atm-input') as HTMLInputElement
+          const resList = shadow?.querySelector('.atm-results') as HTMLDivElement
+          if (input && resList) {
+            const query = input.value
+            if (!query || !query.startsWith('/')) {
+              doSearch(query, resList)
+            }
+          }
+        }
+      }
+      chrome.tabs.onCreated.addListener(refreshSearch)
+      chrome.tabs.onRemoved.addListener(refreshSearch)
+      chrome.tabs.onUpdated.addListener(refreshSearch)
+      if (chrome.tabs.onMoved) chrome.tabs.onMoved.addListener(refreshSearch)
+      if (chrome.tabs.onAttached) chrome.tabs.onAttached.addListener(refreshSearch)
+      if (chrome.tabs.onDetached) chrome.tabs.onDetached.addListener(refreshSearch)
+      if (typeof chrome.tabGroups !== 'undefined') {
+        chrome.tabGroups.onCreated.addListener(refreshSearch)
+        chrome.tabGroups.onRemoved.addListener(refreshSearch)
+        chrome.tabGroups.onUpdated.addListener(refreshSearch)
+        if (chrome.tabGroups.onMoved) chrome.tabGroups.onMoved.addListener(refreshSearch)
+      }
     }
   }
 
@@ -1634,7 +1662,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         payload: { url: result.tab.url },
       })
     }
-    const isStandalone = window.location.href.includes('search.html')
+    const isStandalone = window.location.protocol.includes('-extension:') && window.location.pathname.includes('search.html')
     const isNavigation = !(result.isCommand && result.commandAction)
     if (!isStandalone || !isNavigation) {
       hide()
@@ -1786,7 +1814,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
 
   // Auto-initialize and show if loaded directly inside the standalone search.html page
-  if (window.location.href.includes('search.html')) {
+  if (window.location.protocol.includes('-extension:') && window.location.pathname.includes('search.html')) {
     // Logik: Sofortiges Anzeigen des Overlays in der search.html-Seite
     // Programming logic: Immediately display the search overlay in search.html page
     show()

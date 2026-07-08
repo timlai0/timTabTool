@@ -24,6 +24,7 @@ export default defineConfig({
     },
   },
   build: {
+    modulePreload: false,
     outDir: 'dist-firefox',
     emptyOutDir: true,
     rollupOptions: {
@@ -31,11 +32,10 @@ export default defineConfig({
         popup: resolve(__dirname, 'src/popup/index.html'),
         search: resolve(__dirname, 'src/popup/search.html'),
         background: resolve(__dirname, 'src/background/index.ts'),
-        content: resolve(__dirname, 'src/content/search-overlay.ts'),
       },
       output: {
         entryFileNames: (chunkInfo) => {
-          if (chunkInfo.name === 'background' || chunkInfo.name === 'content') {
+          if (chunkInfo.name === 'background') {
             return '[name].js'
           }
           return 'assets/[name]-[hash].js'

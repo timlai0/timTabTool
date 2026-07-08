@@ -264,7 +264,7 @@
     "description": "Button label to clean up small tab groups"
   },
   "enterMinTabs": {
-    "message": "Enter minimum tab count for a group (groups with fewer tabs will be ungrouped):",
+    "message": "Enter minimum tab count for a group (tabs in smaller groups will be closed):",
     "description": "Prompt message when cleaning up small groups"
   },
   "contextMenuOpenSearch": {
