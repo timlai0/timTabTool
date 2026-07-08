@@ -6,6 +6,10 @@ import { getAutoBatchSize } from '../../shared/utils'
 import type { ExtensionSettings } from '../../shared/types'
 import { AIClient } from '../../shared/ai-client'
 
+const props = defineProps<{
+  isStandaloneSearch?: boolean
+}>()
+
 const emit = defineEmits<{
   back: []
 }>()
@@ -215,7 +219,12 @@ function resetSystemPrompt() {
 }
 
 function openShortcutSettings() {
-  chrome.tabs.create({ url: 'chrome://extensions/shortcuts' })
+  const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('firefox')
+  if (isFirefox) {
+    alert('In Firefox, please manage shortcuts via the Add-ons Manager:\n\n1. Open a new tab and go to about:addons\n2. Click the gear icon\n3. Select "Manage Extension Shortcuts"')
+  } else {
+    chrome.tabs.create({ url: 'chrome://extensions/shortcuts' })
+  }
 }
 
 async function saveSettings() {
@@ -297,7 +306,7 @@ async function pasteConfig() {
 </script>
 
 <template>
-  <div :style="{ width: Math.max(360, settings.windowWidth) + 'px', height: Math.max(240, Math.min(600, settings.windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
+  <div :style="props.isStandaloneSearch ? { width: '100%', height: '100%', background: 'var(--bg-primary)' } : { width: Math.max(360, settings.windowWidth) + 'px', height: Math.max(240, Math.min(600, settings.windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->
     <header class="flex items-center justify-between px-4 py-2.5" style="box-shadow: 0 0.5px 0 var(--border);">
       <div class="flex items-center gap-2.5">
@@ -1093,6 +1102,50 @@ async function pasteConfig() {
               <input
                 type="checkbox"
                 v-model="settings.smartGroupTitle"
+                class="sr-only peer"
+              />
+              <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+              <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+            </div>
+          </label>
+
+          <!-- Divider -->
+          <div class="mx-3.5" style="height: 0.5px; background: var(--border);" />
+
+          <!-- Search popup layout toggle -->
+          <label class="flex items-start gap-3 px-3 py-2 cursor-pointer">
+            <div class="flex-1">
+              <span class="text-xs block" style="color: var(--text-primary);">Use 2-Column Search Layout</span>
+              <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
+                Switches the extension popup to the wider, 2-column search overlay design.
+              </p>
+            </div>
+            <div class="relative mt-0.5">
+              <input
+                type="checkbox"
+                v-model="settings.useSearchPopup"
+                class="sr-only peer"
+              />
+              <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+              <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+            </div>
+          </label>
+
+          <!-- Divider -->
+          <div class="mx-3.5" style="height: 0.5px; background: var(--border);" />
+
+          <!-- Sort new tabs toggle -->
+          <label class="flex items-start gap-3 px-3 py-2 cursor-pointer">
+            <div class="flex-1">
+              <span class="text-xs block" style="color: var(--text-primary);">Sort New Tabs</span>
+              <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
+                Automatically sort newly created tabs by domain and title at the end of the window.
+              </p>
+            </div>
+            <div class="relative mt-0.5">
+              <input
+                type="checkbox"
+                v-model="settings.sortNewTabs"
                 class="sr-only peer"
               />
               <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>

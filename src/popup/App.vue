@@ -10,9 +10,19 @@ import SettingsView from './components/SettingsView.vue'
 
 const currentView = ref<'main' | 'settings'>('main')
 const isStandaloneSearch = computed(() => {
-  // Logik: Prüft, ob die Anwendung als Seitenleiste im Standalone-Suchfenster geladen ist
+  // Logic: Check if the application is loaded as a sidebar in the standalone search window
   // Programming logic: Check if the application is loaded as a sidebar in the standalone search window
   return window.location.href.includes('search.html')
+})
+
+watch(currentView, (newView) => {
+  if (isStandaloneSearch.value) {
+    if (newView === 'settings') {
+      document.body.classList.add('settings-active')
+    } else {
+      document.body.classList.remove('settings-active')
+    }
+  }
 })
 const allWindows = ref<WindowGroupsInfo[]>([])
 const loading = ref(true)
@@ -25,6 +35,9 @@ const windowWidth = ref(DEFAULT_SETTINGS.windowWidth)
 const windowHeight = ref(DEFAULT_SETTINGS.windowHeight)
 const aiSettings = ref<ExtensionSettings['ai']>(DEFAULT_SETTINGS.ai)
 const errorMessage = ref<string | null>(null)
+
+const customWindowNames = ref<Record<number, string>>({})
+const editingWindowId = ref<number | null>(null)
 
 function showError(msg: string) {
   errorMessage.value = msg
@@ -99,6 +112,12 @@ onMounted(async () => {
     const saved = localStorage.getItem('atm_theme') as ThemeMode | null
     if (saved) themeMode.value = saved
   }
+  
+  const namesData = await chrome.storage.local.get('customWindowNames')
+  if (namesData.customWindowNames) {
+    customWindowNames.value = namesData.customWindowNames
+  }
+
   applyTheme(themeMode.value)
   mediaQuery.addEventListener('change', onSystemThemeChange)
 
@@ -106,20 +125,24 @@ onMounted(async () => {
   chrome.tabs.onCreated.addListener(refreshPreviews)
   chrome.tabs.onRemoved.addListener(refreshPreviews)
   chrome.tabs.onUpdated.addListener(refreshPreviews)
+  if (chrome.tabs.onMoved) chrome.tabs.onMoved.addListener(refreshPreviews)
+  if (chrome.tabs.onAttached) chrome.tabs.onAttached.addListener(refreshPreviews)
+  if (chrome.tabs.onDetached) chrome.tabs.onDetached.addListener(refreshPreviews)
 
-  // Logik: Listener für Tab-Gruppen nur registrieren, wenn die API im Browser verfügbar ist (nicht in Firefox)
+  // Logic: Register tab group listeners only if the API is available in the browser (not in Firefox)
   // Programming logic: only register tab group listeners if tabGroups API is available
   if (typeof chrome.tabGroups !== 'undefined') {
     chrome.tabGroups.onCreated.addListener(refreshPreviews)
     chrome.tabGroups.onUpdated.addListener(refreshPreviews)
     chrome.tabGroups.onRemoved.addListener(refreshPreviews)
+    if (chrome.tabGroups.onMoved) chrome.tabGroups.onMoved.addListener(refreshPreviews)
   }
 
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
   currentWindowId.value = activeTab?.windowId ?? null
   await loadAllPreviews(true)
 
-  // Logik: Scrollt zur aktiven Gruppe, sobald das Popup geöffnet und gerendert wurde
+  // Logic: Scroll to the active group as soon as the popup is opened and rendered
   // Scroll to active group on initial load
   nextTick(() => {
     setTimeout(() => {
@@ -141,13 +164,17 @@ onUnmounted(() => {
   chrome.tabs.onCreated.removeListener(refreshPreviews)
   chrome.tabs.onRemoved.removeListener(refreshPreviews)
   chrome.tabs.onUpdated.removeListener(refreshPreviews)
+  if (chrome.tabs.onMoved) chrome.tabs.onMoved.removeListener(refreshPreviews)
+  if (chrome.tabs.onAttached) chrome.tabs.onAttached.removeListener(refreshPreviews)
+  if (chrome.tabs.onDetached) chrome.tabs.onDetached.removeListener(refreshPreviews)
 
-  // Logik: Listener für Tab-Gruppen nur entfernen, wenn die API im Browser verfügbar ist (nicht in Firefox)
+  // Logic: Remove tab group listeners only if the API is available in the browser (not in Firefox)
   // Programming logic: only remove tab group listeners if tabGroups API is available
   if (typeof chrome.tabGroups !== 'undefined') {
     chrome.tabGroups.onCreated.removeListener(refreshPreviews)
     chrome.tabGroups.onUpdated.removeListener(refreshPreviews)
     chrome.tabGroups.onRemoved.removeListener(refreshPreviews)
+    if (chrome.tabGroups.onMoved) chrome.tabGroups.onMoved.removeListener(refreshPreviews)
   }
 })
 
@@ -193,7 +220,7 @@ const exactDuplicatesCount = computed(() => {
 })
 
 const exactDuplicateTabs = computed(() => {
-  // Logik: Ermittelt die Liste aller exakt duplizierten Tabs für den Hover-Tooltip
+  // Logic: Determine the list of all exactly duplicated tabs for the hover tooltip
   // Programming logic: Get list of exact duplicate tabs to show in the hover tooltip
   const urlSeen = new Set<string>()
   const duplicates: Array<{ id: number; title: string; url: string; favIconUrl?: string; windowId: number }> = []
@@ -272,7 +299,7 @@ async function closeExactDuplicates() {
 }
 
 async function focusTab(tabId: number, windowId: number) {
-  // Logik: Aktiviert den ausgewählten Tab und bringt dessen Fenster in den Vordergrund
+  // Logic: Activate the selected tab and bring its window to the foreground
   // Programming logic: Activate the selected tab and bring its window to the foreground
   await chrome.tabs.update(tabId, { active: true })
   await chrome.windows.update(windowId, { focused: true })
@@ -435,9 +462,28 @@ function stopPollingStatus() {
 }
 
 function windowLabel(w: WindowGroupsInfo, idx: number): string {
+  if (customWindowNames.value[w.windowId]) {
+    return customWindowNames.value[w.windowId]
+  }
   const isCurrent = w.windowId === currentWindowId.value
   const label = isCurrent ? getMessage('currentWindow') : `${getMessage('windowLabel')} ${idx + 1}`
   return `${label}`
+}
+
+async function saveWindowName(windowId: number, event: Event) {
+  const input = event.target as HTMLInputElement
+  const newName = input.value.trim()
+  
+  if (newName) {
+    customWindowNames.value = { ...customWindowNames.value, [windowId]: newName }
+  } else {
+    const newNames = { ...customWindowNames.value }
+    delete newNames[windowId]
+    customWindowNames.value = newNames
+  }
+  
+  await chrome.storage.local.set({ customWindowNames: customWindowNames.value })
+  editingWindowId.value = null
 }
 
 // removed duplicate unpinnedTabsCount
@@ -468,7 +514,7 @@ function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classi
   const existingGroupNames = type === 'group' 
     ? [] // Group mode doesn't load existing group names here
     : w.groups
-      .filter(g => g.groupName && g.groupName !== 'New Tabs')
+      .filter(g => g.groupName)
       .map(g => g.groupName as string)
       
   const est = AIClient.estimateCostAndTokens(
@@ -484,13 +530,11 @@ function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classi
 }
 
 function newTabsCount(w: WindowGroupsInfo): number {
-  // Logik: Zählt alle unangepinnten Tabs in der "New Tabs"-Gruppe sowie ungruppierte Tabs (ohne Gruppennamen und ohne Gruppen-ID)
-  // Count unpinned tabs in the "New Tabs" group and ungrouped groups
+  // Logic: Count all unpinned tabs that are ungrouped (without group name and without group ID)
+  // Count unpinned tabs in ungrouped groups
   let count = 0
   for (const g of w.groups) {
-    if (g.groupName === 'New Tabs') {
-      count += g.tabs.filter(t => !t.pinned).length
-    } else if (!g.groupName && g.groupId === undefined) {
+    if (!g.groupName && g.groupId === undefined) {
       count += g.tabs.filter(t => !t.pinned).length
     }
   }
@@ -561,12 +605,42 @@ async function handleCleanupGroups(windowId: number) {
   const minTabs = parseInt(input.trim())
   if (isNaN(minTabs) || minTabs <= 0) return
 
-  // Logik: Tab-Gruppen mit weniger als minTabs Tabs auflösen
+  // Logic: Dissolve tab groups with fewer than minTabs tabs
   await chrome.runtime.sendMessage({
     action: 'CLEANUP_GROUPS',
     payload: { windowId, minTabs }
   })
   await loadAllPreviews()
+}
+
+const copiedWindowId = ref<number | null>(null)
+
+async function copyWindowUrlsAsMarkdown(w: WindowGroupsInfo) {
+  let markdown = ''
+  for (const group of w.groups) {
+    for (const tab of group.tabs) {
+      if (tab.url) {
+        // Fallback to URL if title is missing
+        const title = tab.title || tab.url
+        markdown += `- [${title}](${tab.url})\n`
+      }
+    }
+  }
+  
+  if (markdown) {
+    try {
+      await navigator.clipboard.writeText(markdown)
+      copiedWindowId.value = w.windowId
+      setTimeout(() => {
+        if (copiedWindowId.value === w.windowId) {
+          copiedWindowId.value = null
+        }
+      }, 2000)
+    } catch (err) {
+      console.error('Failed to copy', err)
+      showError('Failed to copy URLs')
+    }
+  }
 }
 
 async function handleSettingsBack() {
@@ -672,7 +746,7 @@ const activeHoverAction = ref<'group' | 'classify' | null>(null)
 const hoveredActionWindowId = ref<number | null>(null)
 
 function getClassifyPrompt(w: WindowGroupsInfo) {
-  const existingGroupNames = w.groups.filter(g => g.groupName !== 'New Tabs').map(g => g.groupName)
+  const existingGroupNames = w.groups.filter(g => g.groupName).map(g => g.groupName)
   const uniqueNames = [...new Set(existingGroupNames.filter((n): n is string => !!n))]
   
   let groupListStr = 'None'
@@ -694,7 +768,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 </script>
 
 <template>
-  <SettingsView v-if="currentView === 'settings'" @back="handleSettingsBack" />
+  <SettingsView v-if="currentView === 'settings'" :is-standalone-search="isStandaloneSearch" @back="handleSettingsBack" />
 
   <div v-else :style="isStandaloneSearch ? { width: '380px', height: '100%', background: 'var(--bg-primary)' } : { width: Math.max(360, windowWidth) + 'px', height: Math.max(240, Math.min(600, windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->
@@ -856,14 +930,41 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             <svg class="w-3.5 h-3.5 shrink-0" style="color: var(--text-tertiary);" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M2 4.25A2.25 2.25 0 014.25 2h11.5A2.25 2.25 0 0118 4.25v8.5A2.25 2.25 0 0115.75 15h-3.105a3.501 3.501 0 01-5.29 0H4.25A2.25 2.25 0 012 12.75v-8.5zM4.25 3.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h3.105a.75.75 0 01.672.418 2.001 2.001 0 003.946 0 .75.75 0 01.672-.418h3.105a.75.75 0 00.75-.75v-8.5a.75.75 0 00-.75-.75H4.25z" clip-rule="evenodd" />
             </svg>
-            <span
-              class="text-[11px] font-semibold flex-1 truncate hover:underline"
-              :style="{ color: w.windowId === currentWindowId ? 'var(--accent)' : 'var(--text-primary)' }"
-              @click.stop="focusWindow(w.windowId)"
-              title="Focus this window"
-            >
-              {{ windowLabel(w, idx) }}
-            </span>
+            <div class="flex-1 min-w-0 flex items-center group/title" @click.stop>
+              <input
+                v-if="editingWindowId === w.windowId"
+                type="text"
+                class="text-[11px] font-semibold bg-transparent border-b border-gray-400 outline-none w-full"
+                :style="{ color: w.windowId === currentWindowId ? 'var(--accent)' : 'var(--text-primary)' }"
+                :value="customWindowNames[w.windowId] || ''"
+                :placeholder="windowLabel(w, idx)"
+                @blur="saveWindowName(w.windowId, $event)"
+                @keydown.enter="saveWindowName(w.windowId, $event)"
+                @keydown.esc="editingWindowId = null"
+                autofocus
+              />
+              <span
+                v-else
+                class="text-[11px] font-semibold truncate hover:underline cursor-pointer"
+                :style="{ color: w.windowId === currentWindowId ? 'var(--accent)' : 'var(--text-primary)' }"
+                @click="focusWindow(w.windowId)"
+                @dblclick="editingWindowId = w.windowId"
+                title="Focus this window (Double-click to rename)"
+              >
+                {{ windowLabel(w, idx) }}
+              </span>
+              <button
+                v-if="editingWindowId !== w.windowId"
+                class="ml-1 opacity-0 group-hover/title:opacity-100 p-0.5 rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-opacity focus:outline-none"
+                style="color: var(--text-tertiary);"
+                @click.stop="editingWindowId = w.windowId"
+                title="Rename Window"
+              >
+                <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+                </svg>
+              </button>
+            </div>
             <span class="text-[10px] tabular-nums" style="color: var(--text-tertiary);">{{ w.tabCount }} {{ getMessage('tabs') }}</span>
             <button
               v-if="w.windowId !== currentWindowId"
@@ -879,9 +980,9 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
           <!-- Action buttons -->
           <div v-if="!isWindowSectionCollapsed(w.windowId) && tabGroupsSupported" class="flex items-center px-3.5 pb-2 relative">
-            <div class="flex items-center gap-1.5">
+            <div class="flex items-center gap-1.5 flex-wrap">
               <button
-                class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group"
+                class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap"
                 :style="groupingWindowId === w.windowId
                   ? { background: 'var(--group-red)', color: '#fff' }
                   : { background: 'var(--accent)', color: '#fff' }"
@@ -896,22 +997,36 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 <span v-else>{{ getMessage('groupTabs') }}</span>
               </button>
               <button
-                class="px-3 py-[4px] text-[11px] rounded-btn"
+                class="px-3 py-[4px] text-[11px] rounded-btn whitespace-nowrap"
                 style="color: var(--text-secondary); background: var(--hover);"
                 @click="handleUngroup(w.windowId)"
               >
                 {{ getMessage('ungroupAll') }}
               </button>
               <button
-                class="px-3 py-[4px] text-[11px] rounded-btn"
+                class="px-3 py-[4px] text-[11px] rounded-btn whitespace-nowrap"
                 style="color: var(--text-secondary); background: var(--hover);"
                 @click="handleCleanupGroups(w.windowId)"
               >
                 {{ getMessage('cleanupGroups') }}
               </button>
               <button
+                class="px-2 py-[4px] rounded-btn flex items-center justify-center transition-colors shrink-0"
+                style="color: var(--text-secondary); background: var(--hover);"
+                @click="copyWindowUrlsAsMarkdown(w)"
+                title="Copy all URLs as Markdown"
+              >
+                <svg v-if="copiedWindowId === w.windowId" class="w-3.5 h-3.5" style="color: var(--group-green);" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.815a.75.75 0 011.05-.145z" clip-rule="evenodd" />
+                </svg>
+                <svg v-else class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z" />
+                  <path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2V5z" />
+                </svg>
+              </button>
+              <button
                 v-if="newTabsCount(w) > 0"
-                class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group"
+                class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap"
                 :style="classifyingWindowId === w.windowId
                   ? { background: 'var(--group-red)', color: '#fff' }
                   : { background: 'var(--accent-soft)', color: 'var(--accent)' }"

@@ -90,6 +90,8 @@ export interface ExtensionSettings {
   windowWidth: number
   windowHeight: number
   showRuleGroupsWhenUngrouped: boolean
+  useSearchPopup?: boolean
+  sortNewTabs?: boolean
   mcpEnabled?: boolean
   mcpPort?: number
 }

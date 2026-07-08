@@ -51,6 +51,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   windowWidth: 360,
   windowHeight: 600,
   showRuleGroupsWhenUngrouped: true,
+  useSearchPopup: false,
+  sortNewTabs: false,
   mcpEnabled: true,
   mcpPort: 8585,
 }
