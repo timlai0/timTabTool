@@ -802,7 +802,7 @@ Only output the JSON object.`
  * Repairs a truncated JSON string by slicing up to the last known structural boundary
  * and closing all open strings, arrays, and objects.
  */
-export function repairTruncatedJson(jsonStr: string): string {
+function repairTruncatedJson(jsonStr: string): string {
   let str = jsonStr.trim()
   if (!str.startsWith('[') && !str.startsWith('{')) {
     return str
