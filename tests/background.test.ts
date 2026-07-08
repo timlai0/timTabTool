@@ -20,7 +20,11 @@ describe('getAIOverrides', () => {
         onRemoved: { addListener: vi.fn() },
         onActivated: { addListener: vi.fn() },
         query: vi.fn(),
-        remove: vi.fn()
+        remove: vi.fn(),
+        ungroup: vi.fn()
+      },
+      windows: {
+        onRemoved: { addListener: vi.fn() }
       },
       tabGroups: {
         onCreated: { addListener: vi.fn() },
@@ -126,27 +130,27 @@ describe('cleanupTabGroups', () => {
     ]
 
     const queryMock = vi.fn().mockResolvedValue(mockTabs)
-    const ungroupMock = vi.fn().mockResolvedValue(undefined)
+    const removeMock = vi.fn().mockResolvedValue(undefined)
 
     // Programming logic: Update stubbed global chrome methods
     const originalQuery = chrome.tabs.query
-    const originalUngroup = (chrome.tabs as any).ungroup
+    const originalRemove = chrome.tabs.remove
     chrome.tabs.query = queryMock
-    ;(chrome.tabs as any).ungroup = ungroupMock
+    chrome.tabs.remove = removeMock
     chrome.tabGroups = {
       TAB_GROUP_ID_NONE: -1
     } as any
 
     try {
-      // Logik: cleanupTabGroups mit minTabs = 3 aufrufen. Gruppe 11 (2 Tabs) sollte aufgelöst werden.
+      // Logic: call cleanupTabGroups with minTabs = 3. Group 11 (2 tabs) should be dissolved.
       await cleanupTabGroups(1, 3)
 
       expect(queryMock).toHaveBeenCalledWith({ windowId: 1 })
-      expect(ungroupMock).toHaveBeenCalledWith([1, 2])
-      expect(ungroupMock).not.toHaveBeenCalledWith([3, 4, 5, 6])
+      expect(removeMock).toHaveBeenCalledWith([1, 2])
+      expect(removeMock).not.toHaveBeenCalledWith([3, 4, 5, 6])
     } finally {
       chrome.tabs.query = originalQuery
-      ;(chrome.tabs as any).ungroup = originalUngroup
+      chrome.tabs.remove = originalRemove
     }
   })
 })
