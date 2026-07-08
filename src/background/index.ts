@@ -23,6 +23,7 @@ import {
   cancelActiveOperation,
   getActiveOperations,
   clearOperationError,
+  cleanupTabGroups,
   splitGroup,
   mergeGroup,
   closeDuplicateTabs,
@@ -49,6 +50,11 @@ const TAB_GROUP_ID_NONE = typeof chrome !== 'undefined' && typeof chrome.tabGrou
 
 console.log('[timTabTool] Service worker started')
 
+chrome.storage.local.get(STORAGE_KEYS.SETTINGS).then((data) => {
+  const saved = (data[STORAGE_KEYS.SETTINGS] ?? {}) as Partial<ExtensionSettings>
+  chrome.action.setPopup({ popup: saved.useSearchPopup ? 'src/popup/search.html' : 'src/popup/index.html' })
+}).catch(console.error)
+
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[timTabTool] Extension installed')
   // Programming logic: Create context menu items to open search (in-page and window)
@@ -62,13 +68,53 @@ chrome.runtime.onInstalled.addListener(() => {
     title: chrome.i18n.getMessage('contextMenuOpenSearchWindow') || 'Open Search in New Window',
     contexts: ['action', 'page']
   })
+  chrome.contextMenus.create({
+    id: 'open-search-tab',
+    title: chrome.i18n.getMessage('contextMenuOpenSearchTab') || 'Open Search in New Tab',
+    contexts: ['action']
+  })
+  chrome.contextMenus.create({
+    id: 'separator-1',
+    type: 'separator',
+    contexts: ['action']
+  })
+  chrome.contextMenus.create({
+    id: 'group-all',
+    title: chrome.i18n.getMessage('contextMenuGroupAll') || 'Group Tabs (AI)',
+    contexts: ['action']
+  })
+  chrome.contextMenus.create({
+    id: 'cleanup-groups',
+    title: chrome.i18n.getMessage('contextMenuCleanupGroups') || 'Clean Up Tab Groups',
+    contexts: ['action']
+  })
+  chrome.contextMenus.create({
+    id: 'ungroup-all',
+    title: chrome.i18n.getMessage('contextMenuUngroupAll') || 'Ungroup All Tabs',
+    contexts: ['action']
+  })
 })
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'open-search-menu') {
     await toggleSearchOverlay()
   } else if (info.menuItemId === 'open-search-window') {
-    await openSearchInNewWindow()
+    if (!(await focusExistingSearchTabOrWindow())) {
+      await openSearchInNewWindow()
+    }
+  } else if (info.menuItemId === 'open-search-tab') {
+    if (!(await focusExistingSearchTabOrWindow())) {
+      await chrome.tabs.create({ url: chrome.runtime.getURL('src/popup/search.html'), pinned: true })
+    }
+  } else if (info.menuItemId === 'ungroup-all') {
+    const windowId = tab?.windowId ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.windowId
+    if (windowId !== undefined) await ungroupAllTabs(windowId)
+  } else if (info.menuItemId === 'group-all') {
+    const windowId = tab?.windowId ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.windowId
+    if (windowId !== undefined) await groupAllTabs(windowId)
+  } else if (info.menuItemId === 'cleanup-groups') {
+    const windowId = tab?.windowId ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.windowId
+    if (windowId !== undefined) await cleanupTabGroups(windowId, 3)
   }
 })
 
@@ -93,6 +139,15 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   cacheRemoveTab(tabId)
+})
+
+chrome.windows.onRemoved.addListener(async (windowId) => {
+  const data = await chrome.storage.local.get('customWindowNames')
+  if (data.customWindowNames && data.customWindowNames[windowId]) {
+    const newNames = { ...data.customWindowNames }
+    delete newNames[windowId]
+    await chrome.storage.local.set({ customWindowNames: newNames })
+  }
 })
 
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
@@ -126,7 +181,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 })
 
 // --- Smart group title: toggle title on collapse/expand + cache rebuild ---
-// Logik: Listener für Tab-Gruppen nur registrieren, wenn die API im Browser verfügbar ist (nicht in Firefox)
+// Logic: Register tab group listeners only if the API is available in the browser (not in Firefox)
 // Programming logic: only register tab group listeners if tabGroups API is available
 if (typeof chrome.tabGroups !== 'undefined') {
   chrome.tabGroups.onCreated.addListener((group) => {
@@ -240,18 +295,45 @@ async function toggleSearchOverlay(initialQuery = '') {
     const tabId = tab.id
     await ensureContentScriptLoaded(tabId)
 
-    // Toggle the overlay via executeScript
+    // Toggle the overlay via executeScript with polling for Vite's async chunk loading
     await chrome.scripting.executeScript({
       target: { tabId },
       func: (query) => {
-        const toggleFn = (window as unknown as Record<string, (q?: string) => void>).__ATM_TOGGLE_SEARCH__
-        if (toggleFn) toggleFn(query)
+        let attempts = 0
+        const tryToggle = () => {
+          const toggleFn = (window as unknown as Record<string, (q?: string) => void>).__ATM_TOGGLE_SEARCH__
+          if (toggleFn) {
+            toggleFn(query)
+          } else if (attempts < 20) {
+            attempts++
+            setTimeout(tryToggle, 50)
+          }
+        }
+        tryToggle()
       },
       args: [initialQuery],
     })
   } catch {
     // Tab doesn't support scripting (e.g. chrome:// pages)
   }
+}
+
+async function focusExistingSearchTabOrWindow(): Promise<boolean> {
+  try {
+    const searchUrl = chrome.runtime.getURL('src/popup/search.html')
+    const existingTabs = await chrome.tabs.query({ url: searchUrl })
+    if (existingTabs.length > 0) {
+      const tab = existingTabs[0]
+      if (tab.id && tab.windowId) {
+        await chrome.windows.update(tab.windowId, { focused: true })
+        await chrome.tabs.update(tab.id, { active: true })
+        return true
+      }
+    }
+  } catch (err) {
+    console.error('[timTabTool] Failed to focus existing search tab:', err)
+  }
+  return false
 }
 
 async function openSearchInNewWindow() {
@@ -268,7 +350,7 @@ async function openSearchInNewWindow() {
     const mainWidth = currentWin.width ?? 1024
     const mainHeight = currentWin.height ?? 768
 
-    // Logik: Das neue Standalone-Suchfenster mittig über dem aktuellen Browserfenster platzieren
+    // Logic: Place the new standalone search window centered over the current browser window
     // Programming logic: Position the new standalone search window centered over the current browser window
     const searchLeft = Math.max(0, mainLeft + Math.round((mainWidth - totalWidth) / 2))
     const searchTop = Math.max(0, mainTop + Math.round((mainHeight - searchHeight) / 2))
@@ -303,8 +385,8 @@ chrome.runtime.onMessage.addListener(
 async function resolveWindowId(payload: unknown): Promise<number> {
   const windowId = (payload as { windowId?: number })?.windowId
   if (windowId !== undefined && Number.isInteger(windowId)) return windowId
-  const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] })
-  return win.id ?? -1
+  const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null)
+  return win?.id ?? chrome.windows.WINDOW_ID_NONE
 }
 
 export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai']> | undefined {
@@ -365,7 +447,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       // Programming logic: Resolve windowId and minTabs parameter from payload
       const windowId = await resolveWindowId(message.payload)
       const minTabs = (message.payload as { minTabs?: number })?.minTabs ?? 3
-      // Logik: Tab-Gruppen mit weniger als minTabs Tabs im angegebenen Fenster auflösen
+      // Logic: Dissolve tab groups with fewer than minTabs tabs in the specified window
       await cleanupTabGroups(windowId, minTabs)
       invalidatePreviewCache(windowId)
       return { ok: true }
@@ -713,6 +795,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       const newSettings = message.payload as ExtensionSettings
       await chrome.storage.local.set({ [STORAGE_KEYS.SETTINGS]: newSettings })
       invalidatePreviewCache()
+      await chrome.action.setPopup({ popup: newSettings.useSearchPopup ? 'src/popup/search.html' : 'src/popup/index.html' })
       return { ok: true }
     }
 
@@ -760,19 +843,13 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         currentGroupTabsCount = tabs.filter(t => t.groupId === activeTab.groupId).length
       }
 
-      // Logik: Ermittelt die Anzahl der neuen Tabs (in der "New Tabs"-Gruppe oder ungruppiert, ausgenommen angepinnte Tabs)
-      // Programming logic: Get new tabs count (tabs in the "New Tabs" group + tabs not in any group, excluding pinned)
+      // Logik: Ermittelt die Anzahl der neuen Tabs (alle ungruppierten Tabs, ausgenommen angepinnte Tabs)
+      // Programming logic: Get new tabs count (tabs not in any group, excluding pinned)
       let newTabsCount = 0
       if (typeof chrome.tabGroups !== 'undefined') {
-        const allGroups = await chrome.tabGroups.query({ windowId })
-        const newTabsGroup = allGroups.find(
-          (g) => g.title === 'New Tabs'
-        )
         newTabsCount = tabs.filter(t => {
           if (t.id === undefined || t.pinned) return false
-          const isInNewTabsGroup = newTabsGroup && t.groupId === newTabsGroup.id
-          const isUngrouped = t.groupId === undefined || t.groupId === TAB_GROUP_ID_NONE
-          return isInNewTabsGroup || isUngrouped
+          return t.groupId === undefined || t.groupId === TAB_GROUP_ID_NONE
         }).length
       } else {
         newTabsCount = unpinnedTabsCount
