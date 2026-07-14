@@ -12,3 +12,7 @@ dist-firefox/
 .vscode/
 CLAUDE.md
 TODO.md
+
+# Secrets and Artifacts
+.env
+web-ext-artifacts/
