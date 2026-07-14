@@ -77,8 +77,15 @@ export function searchTabs(
     }
   }
 
-  // Sort by score descending
-  results.sort((a, b) => b.score - a.score)
+  // Sort by score descending, then by lastAccessed descending
+  results.sort((a, b) => {
+    if (b.score !== a.score) {
+      return b.score - a.score
+    }
+    const timeA = a.tab.lastAccessed || 0
+    const timeB = b.tab.lastAccessed || 0
+    return timeB - timeA
+  })
 
   return results.slice(0, 50)
 }
