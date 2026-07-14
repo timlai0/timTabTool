@@ -23,6 +23,7 @@ const saved = ref(false)
 const testing = ref(false)
 const testResult = ref<{ ok: boolean; error?: string } | null>(null)
 const searchShortcut = ref('Ctrl+Shift+F')
+const searchSlashShortcut = ref('Ctrl+Shift+7')
 const advancedPromptsExpanded = ref(false)
 const connectionSettingsExpanded = ref(false)
 
@@ -182,6 +183,10 @@ onMounted(async () => {
     const searchCmd = commands.find((c) => c.name === 'open-search')
     if (searchCmd?.shortcut) {
       searchShortcut.value = searchCmd.shortcut
+    }
+    const searchSlashCmd = commands.find((c) => c.name === 'open-search-slash')
+    if (searchSlashCmd?.shortcut) {
+      searchSlashShortcut.value = searchSlashCmd.shortcut
     }
   } catch (err) {
     console.error('Failed to get commands:', err)
@@ -949,15 +954,38 @@ async function pasteConfig() {
           </svg>
           {{ getMessage('shortcutTitle') }}
         </h2>
-        <div class="rounded-sm overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
-          <div class="flex items-center justify-between px-3 py-2">
+        <div class="rounded-sm overflow-hidden flex flex-col" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
+          <div class="flex items-center justify-between px-3 py-3 border-b border-white/5 relative group">
             <div>
-              <div class="text-xs" style="color: var(--text-primary);">{{ getMessage('searchPlaceholder').replace('...', '') }}</div>
-              <kbd class="inline-block mt-1.5 px-2 py-0.5 text-[10px] font-mono rounded-md" style="background: var(--bg-secondary); color: var(--text-secondary);">{{ searchShortcut }}</kbd>
+              <div class="text-xs font-medium" style="color: var(--text-primary);">{{ getMessage('searchPlaceholder').replace('...', '') }} (Default)</div>
+              <div class="mt-2 flex gap-1 items-center">
+                <template v-for="(key, i) in searchShortcut.split('+')" :key="'f-'+i">
+                  <span v-if="i > 0" class="text-[10px] opacity-40" style="color: var(--text-secondary);">+</span>
+                  <kbd class="px-2 py-1 text-[10px] font-mono rounded-[4px] border" style="background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border-color); box-shadow: 0 1px 1px rgba(0,0,0,0.1);">{{ key }}</kbd>
+                </template>
+              </div>
             </div>
             <button
               @click="openShortcutSettings"
-              class="px-3 py-1.5 text-[11px] font-medium rounded-sm"
+              class="px-3 py-1.5 text-[11px] font-medium rounded-sm hover:opacity-80 transition-opacity"
+              style="color: var(--accent);"
+            >
+              {{ getMessage('changeShortcut') }}
+            </button>
+          </div>
+          <div class="flex items-center justify-between px-3 py-3 relative group">
+            <div>
+              <div class="text-xs font-medium" style="color: var(--text-primary);">{{ getMessage('searchPlaceholder').replace('...', '') }} (Alternative)</div>
+              <div class="mt-2 flex gap-1 items-center">
+                <template v-for="(key, i) in searchSlashShortcut.split('+')" :key="'s-'+i">
+                  <span v-if="i > 0" class="text-[10px] opacity-40" style="color: var(--text-secondary);">+</span>
+                  <kbd class="px-2 py-1 text-[10px] font-mono rounded-[4px] border" style="background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border-color); box-shadow: 0 1px 1px rgba(0,0,0,0.1);">{{ key }}</kbd>
+                </template>
+              </div>
+            </div>
+            <button
+              @click="openShortcutSettings"
+              class="px-3 py-1.5 text-[11px] font-medium rounded-sm opacity-0 group-hover:opacity-100 transition-opacity"
               style="color: var(--accent);"
             >
               {{ getMessage('changeShortcut') }}
