@@ -3,7 +3,7 @@ import { ref, onMounted, computed, watch, onUnmounted, nextTick } from 'vue'
 import { getMessage } from '../shared/i18n'
 import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS } from '../shared/constants'
 import { SYSTEM_PROMPT, AIClient } from '../shared/ai-client'
-import { getAutoBatchSize } from '../shared/utils'
+import { getAutoBatchSize, getOptimalFaviconUrl } from '../shared/utils'
 import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInfo } from '../shared/types'
 import GroupList from './components/GroupList.vue'
 import SettingsView from './components/SettingsView.vue'
@@ -801,7 +801,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                     style="border-color: var(--border);"
                     @click="focusTab(tab.id, tab.windowId)"
                   >
-                    <img v-if="tab.favIconUrl" :src="tab.favIconUrl" alt="" class="w-3.5 h-3.5 rounded-xs shrink-0" />
+                    <img v-if="getOptimalFaviconUrl(tab.url, tab.favIconUrl)" :src="getOptimalFaviconUrl(tab.url, tab.favIconUrl)" alt="" class="w-3.5 h-3.5 rounded-xs shrink-0" />
                     <div v-else class="w-3.5 h-3.5 rounded-xs bg-gray-500/20 shrink-0" />
                     <div class="flex-1 min-w-0">
                       <div class="font-medium truncate" style="color: var(--text-primary);">{{ tab.title }}</div>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TabInfo } from '../../shared/types'
+import { getOptimalFaviconUrl } from '../../shared/utils'
 
 defineProps<{
   tab: TabInfo
@@ -18,17 +19,7 @@ async function closeTab(tabId: number) {
 }
 
 function getFaviconUrl(tab: TabInfo): string {
-  if (tab.favIconUrl) return tab.favIconUrl
-  try {
-    const url = new URL(tab.url)
-    const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('firefox')
-    if (isFirefox) {
-      return `https://www.google.com/s2/favicons?sz=16&domain=${url.hostname}`
-    }
-    return `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(url.href)}&size=16`
-  } catch {
-    return ''
-  }
+  return getOptimalFaviconUrl(tab.url, tab.favIconUrl)
 }
 </script>
 
