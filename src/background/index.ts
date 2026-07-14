@@ -36,7 +36,6 @@ import {
   closeLeftTabs,
   closeRightTabs,
   isRestrictedUrl,
-  cleanupTabGroups,
 } from './tab-manager'
 import { searchTabs } from './searcher'
 import { recordTabVisit, getHistoryEntries } from './storage'
@@ -93,6 +92,15 @@ chrome.runtime.onInstalled.addListener(() => {
     title: chrome.i18n.getMessage('contextMenuUngroupAll') || 'Ungroup All Tabs',
     contexts: ['action']
   })
+
+  const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('firefox')
+  if (isFirefox) {
+    chrome.contextMenus.create({
+      id: 'move-to-other-window',
+      title: chrome.i18n.getMessage('contextMenuMoveToOtherWindow') || 'Move Tab to Other Window',
+      contexts: ['tab'] as any[]
+    })
+  }
 })
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -115,6 +123,16 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   } else if (info.menuItemId === 'cleanup-groups') {
     const windowId = tab?.windowId ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.windowId
     if (windowId !== undefined) await cleanupTabGroups(windowId, 3)
+  } else if (info.menuItemId === 'move-to-other-window' && tab?.id) {
+    const windows = await chrome.windows.getAll({ windowTypes: ['normal'] })
+    const otherWindows = windows.filter(w => w.id !== undefined && w.id !== tab.windowId)
+    if (otherWindows.length > 0) {
+      await chrome.tabs.move(tab.id, { windowId: otherWindows[0].id!, index: -1 })
+      await chrome.windows.update(otherWindows[0].id!, { focused: true })
+      await chrome.tabs.update(tab.id, { active: true })
+    } else {
+      await chrome.windows.create({ tabId: tab.id, type: 'normal', focused: true })
+    }
   }
 })
 
@@ -143,8 +161,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.windows.onRemoved.addListener(async (windowId) => {
   const data = await chrome.storage.local.get('customWindowNames')
-  if (data.customWindowNames && data.customWindowNames[windowId]) {
-    const newNames = { ...data.customWindowNames }
+  if (data.customWindowNames && (data.customWindowNames as Record<number, string>)[windowId]) {
+    const newNames = { ...(data.customWindowNames as Record<number, string>) }
     delete newNames[windowId]
     await chrome.storage.local.set({ customWindowNames: newNames })
   }
@@ -287,7 +305,11 @@ async function broadcastAIFailed(windowId: number, action: string, errorMsg: str
 
 async function toggleSearchOverlay(initialQuery = '') {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    let tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+    if (!tabs || tabs.length === 0) {
+      tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+    }
+    const tab = tabs[0]
     if (!tab?.id || !tab.url) return
     // Skip restricted URLs where content scripts can't run
     if (isRestrictedUrl(tab.url)) return
@@ -304,7 +326,7 @@ async function toggleSearchOverlay(initialQuery = '') {
           const toggleFn = (window as unknown as Record<string, (q?: string) => void>).__ATM_TOGGLE_SEARCH__
           if (toggleFn) {
             toggleFn(query)
-          } else if (attempts < 20) {
+          } else if (attempts < 60) {
             attempts++
             setTimeout(tryToggle, 50)
           }
