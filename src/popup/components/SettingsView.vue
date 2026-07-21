@@ -4,7 +4,7 @@ import { getMessage } from '../../shared/i18n'
 import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS } from '../../shared/constants'
 import { getAutoBatchSize } from '../../shared/utils'
 import type { ExtensionSettings } from '../../shared/types'
-import { AIClient } from '../../shared/ai-client'
+import { AIClient, SYSTEM_PROMPT, fetchGoogleModels } from '../../shared/ai-client'
 
 const props = defineProps<{
   isStandaloneSearch?: boolean
@@ -78,13 +78,48 @@ const vAutoresize = {
   }
 }
 
+const fetchingGoogleModels = ref(false)
+const fetchModelsMessage = ref<string | null>(null)
+const fetchModelsError = ref<string | null>(null)
 
-
-
+async function handleFetchGoogleModels() {
+  if (!settings.value.ai.apiKey) {
+    fetchModelsError.value = 'Google API Key is required to fetch models.'
+    return
+  }
+  fetchingGoogleModels.value = true
+  fetchModelsMessage.value = null
+  fetchModelsError.value = null
+  try {
+    const models = await fetchGoogleModels(settings.value.ai.apiKey, settings.value.ai.endpoint)
+    if (!settings.value.ai.customModels) {
+      settings.value.ai.customModels = {}
+    }
+    settings.value.ai.customModels.gemini = models
+    fetchModelsMessage.value = `Loaded ${models.length} live models from Google!`
+    if (!settings.value.ai.model && models.length > 0) {
+      settings.value.ai.model = models[0].id
+    }
+    await saveSettings()
+  } catch (err) {
+    fetchModelsError.value = (err as Error).message
+  } finally {
+    fetchingGoogleModels.value = false
+  }
+}
 
 const currentProviderModels = computed(() => {
-  return PREDEFINED_MODELS[settings.value.ai.provider] || []
+  const provider = settings.value.ai.provider
+  if (provider === 'gemini' && settings.value.ai.customModels?.gemini?.length) {
+    return settings.value.ai.customModels.gemini
+  }
+  return PREDEFINED_MODELS[provider] || []
 })
+
+
+
+
+
 
 const isPredefinedModel = computed(() => {
   const models = currentProviderModels.value
@@ -430,7 +465,7 @@ async function pasteConfig() {
                   :key="model.id" 
                   :value="model.id"
                 >
-                  {{ model.name }} ({{ model.complexity }}, {{ model.costFactor }}, Max Output: {{ model.maxTokens }})
+                  {{ model.name }} ({{ model.complexity }}, {{ (model as any).costDetails || model.costFactor }}, Max Output: {{ model.maxTokens }})
                 </option>
                 <option value="custom">Custom model name...</option>
               </select>
@@ -443,6 +478,30 @@ async function pasteConfig() {
                 class="w-full text-xs rounded-sm border-0 py-1.5 px-2 mt-2"
                 style="background: var(--bg-secondary); color: var(--text-primary);"
               />
+
+              <!-- Fetch Google Models Button -->
+              <div v-if="settings.ai.provider === 'gemini'" class="mt-2">
+                <button
+                  type="button"
+                  @click="handleFetchGoogleModels"
+                  :disabled="fetchingGoogleModels || !settings.ai.apiKey"
+                  class="text-[10px] px-2.5 py-1 rounded-sm flex items-center gap-1.5 font-medium transition-all cursor-pointer"
+                  style="background: var(--accent-soft); color: var(--accent); border: 0.5px solid var(--border);"
+                  title="Fetch live model list from Google Gemini API"
+                >
+                  <span v-if="fetchingGoogleModels" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
+                  <svg v-else class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                  </svg>
+                  <span>{{ fetchingGoogleModels ? 'Fetching models...' : 'Fetch Live Models from Google' }}</span>
+                </button>
+                <div v-if="fetchModelsMessage" class="mt-1.5 text-[10px] font-medium" style="color: var(--group-green);">
+                  {{ fetchModelsMessage }}
+                </div>
+                <div v-if="fetchModelsError" class="mt-1.5 text-[10px] font-medium" style="color: var(--group-red);">
+                  {{ fetchModelsError }}
+                </div>
+              </div>
             </div>
 
             <!-- AI Provider & Connection Settings Toggle Header -->
@@ -825,15 +884,15 @@ async function pasteConfig() {
                     @click="resetSystemPrompt"
                     class="text-[9px] hover:underline"
                     style="color: var(--accent);"
-                    title="Clear custom instructions"
+                    title="Restore default instructions"
                   >
-                    Clear
+                    Reset to Default
                   </button>
                 </div>
                 <textarea
                   v-model="settings.ai.customPrompt"
                   v-autoresize
-                  placeholder="E.g., Never use emojis. Always categorize by project."
+                  :placeholder="'Default:\n' + SYSTEM_PROMPT"
                   class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
                   style="background: var(--bg-secondary); color: var(--text-primary);"
                 ></textarea>

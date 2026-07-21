@@ -198,8 +198,11 @@ function estimateMergeCost() {
           @mouseleave="showSplitTooltip = false"
         >
           <svg v-if="splitting" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
-          <svg v-else class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M10.893 2.577a.75.75 0 00-1.786 0L8.23 8.169a.75.75 0 01-.46.46L2.169 9.107a.75.75 0 000 1.786l5.601.411a.75.75 0 01.46.46l.411 5.601a.75.75 0 001.786 0l.411-5.601a.75.75 0 01.46-.46l5.601-.411a.75.75 0 000-1.786l-5.601-.411a.75.75 0 01-.46-.46l-.411-5.601z" clip-rule="evenodd" />
+          <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 3h5v5"/>
+            <path d="M8 3H3v5"/>
+            <path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 4"/>
+            <path d="m15 9 6-6"/>
           </svg>
         </button>
         <!-- Merge Group with AI -->
@@ -214,9 +217,10 @@ function estimateMergeCost() {
           @mouseleave="showMergeTooltip = false"
         >
           <svg v-if="merging" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
-          <svg v-else class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-            <path d="M12.232 4.232a2.5 2.5 0 013.536 3.536l-1.225 1.224a.75.75 0 001.061 1.06l1.224-1.224a4 4 0 00-5.656-5.656l-3 3a4 4 0 00.225 5.865.75.75 0 00.977-1.138 2.5 2.5 0 01-.142-3.667l3-3z" />
-            <path d="M11.603 7.963a.75.75 0 00-.977 1.138 2.5 2.5 0 01.142 3.667l-3 3a2.5 2.5 0 01-3.536-3.536l1.225-1.224a.75.75 0 00-1.061-1.06l-1.224 1.224a4 4 0 105.656 5.656l3-3a4 4 0 00-.225-5.865z" />
+          <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m8 6 4-4 4 4"/>
+            <path d="M12 2v10.3a4 4 0 0 1-1.172 2.872L4 22"/>
+            <path d="m20 22-5-5"/>
           </svg>
         </button>
         <button
@@ -336,8 +340,11 @@ function estimateMergeCost() {
           @mouseleave="showSplitTooltip = false"
         >
           <svg v-if="splitting" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
-          <svg v-else class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M10.893 2.577a.75.75 0 00-1.786 0L8.23 8.169a.75.75 0 01-.46.46L2.169 9.107a.75.75 0 000 1.786l5.601.411a.75.75 0 01.46.46l.411 5.601a.75.75 0 001.786 0l.411-5.601a.75.75 0 01.46-.46l5.601-.411a.75.75 0 000-1.786l-5.601-.411a.75.75 0 01-.46-.46l-.411-5.601z" clip-rule="evenodd" />
+          <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 3h5v5"/>
+            <path d="M8 3H3v5"/>
+            <path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 4"/>
+            <path d="m15 9 6-6"/>
           </svg>
         </button>
         <!-- Merge Group with AI -->
@@ -352,9 +359,10 @@ function estimateMergeCost() {
           @mouseleave="showMergeTooltip = false"
         >
           <svg v-if="merging" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
-          <svg v-else class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-            <path d="M12.232 4.232a2.5 2.5 0 013.536 3.536l-1.225 1.224a.75.75 0 001.061 1.06l1.224-1.224a4 4 0 00-5.656-5.656l-3 3a4 4 0 00.225 5.865.75.75 0 00.977-1.138 2.5 2.5 0 01-.142-3.667l3-3z" />
-            <path d="M11.603 7.963a.75.75 0 00-.977 1.138 2.5 2.5 0 01.142 3.667l-3 3a2.5 2.5 0 01-3.536-3.536l1.225-1.224a.75.75 0 00-1.061-1.06l-1.224 1.224a4 4 0 105.656 5.656l3-3a4 4 0 00-.225-5.865z" />
+          <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m8 6 4-4 4 4"/>
+            <path d="M12 2v10.3a4 4 0 0 1-1.172 2.872L4 22"/>
+            <path d="m20 22-5-5"/>
           </svg>
         </button>
         <button

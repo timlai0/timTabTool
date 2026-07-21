@@ -262,7 +262,10 @@ Only output the JSON array, no other text.`
       .map((t, i) => this.formatTabForPrompt(t, offset + i + 1, stripTitles))
       .join('\n')
 
-    const groupingPrompt = this.config.groupingPrompt?.trim() || DEFAULT_GROUPING_PROMPT
+    const userPrompt = this.config.groupingPrompt?.trim() || DEFAULT_GROUPING_PROMPT
+    const groupingPrompt = (userPrompt !== DEFAULT_GROUPING_PROMPT)
+      ? `Follow this specific user instruction to organize the tabs:\n"${userPrompt}"`
+      : userPrompt
     
     let existingGroupsPrompt = ''
     if (existingGroupNames.length > 0) {
@@ -904,4 +907,127 @@ function repairTruncatedJson(jsonStr: string): string {
   }
 
   return repaired
+}
+
+export interface GoogleModelItem {
+  id: string
+  name: string
+  complexity: string
+  costFactor: string
+  maxTokens: string
+  inputCost?: number
+  outputCost?: number
+  costDetails?: string
+}
+
+export async function fetchGoogleModels(apiKey: string, endpoint?: string): Promise<GoogleModelItem[]> {
+  if (!apiKey || !apiKey.trim()) {
+    throw new Error('Google API Key is required to fetch models.')
+  }
+  const baseUrl = endpoint?.trim() || DEFAULT_ENDPOINTS.gemini
+  const cleanBase = baseUrl.replace(/\/$/, '')
+  const url = `${cleanBase}/v1beta/models?key=${encodeURIComponent(apiKey.trim())}`
+
+  const res = await fetch(url)
+  if (!res.ok) {
+    let errText = ''
+    try {
+      const errJson = await res.json()
+      errText = errJson.error?.message || errJson.message || JSON.stringify(errJson)
+    } catch {
+      errText = await res.text().catch(() => res.statusText)
+    }
+    throw new Error(`Google API Error (${res.status}): ${errText || 'Failed to fetch models'}`)
+  }
+
+  const data = await res.json()
+  if (!data.models || !Array.isArray(data.models)) {
+    throw new Error('Invalid response structure from Google API: missing "models" array.')
+  }
+
+  // Strictly filter for compatible chat / text-generation models
+  const compatibleModels = data.models.filter((m: any) => {
+    const rawName: string = (m.name || '').toLowerCase()
+    const methods: string[] = m.supportedGenerationMethods || []
+
+    // 1. Must support text generation
+    if (!methods.includes('generateContent')) return false
+
+    // 2. Must be a Gemini or Gemma model
+    if (!rawName.includes('gemini') && !rawName.includes('gemma')) return false
+
+    // 3. Exclude non-chat / specialized incompatible models (embeddings, imagen, veo, aqa, bison, robotics)
+    const incompatibleKeywords = ['embedding', 'imagen', 'veo', 'aqa', 'bison', 'robotics']
+    if (incompatibleKeywords.some(keyword => rawName.includes(keyword))) return false
+
+    return true
+  })
+
+  const results: GoogleModelItem[] = compatibleModels.map((m: any) => {
+    const rawName: string = m.name || ''
+    const id = rawName.replace(/^models\//, '')
+    const displayName = m.displayName || id
+    const lowerId = id.toLowerCase()
+
+    const isGemma = lowerId.includes('gemma')
+    const isPro = lowerId.includes('pro')
+    const isFlash = lowerId.includes('flash')
+    const isLite = lowerId.includes('lite') || lowerId.includes('8b')
+
+    let complexity = 'Medium'
+    if (isPro) complexity = 'High'
+    else if (isLite) complexity = 'Low'
+
+    // Determine input and output costs per 1M tokens in USD
+    let inputCost = 0.15
+    let outputCost = 0.60
+
+    if (MODEL_PRICING[id]) {
+      inputCost = MODEL_PRICING[id].input
+      outputCost = MODEL_PRICING[id].output
+    } else if (isGemma) {
+      inputCost = 0
+      outputCost = 0
+    } else if (isPro) {
+      inputCost = 1.25
+      outputCost = 5.00
+    } else if (isLite) {
+      inputCost = 0.075
+      outputCost = 0.30
+    } else if (isFlash) {
+      inputCost = 0.15
+      outputCost = 0.60
+    }
+
+    // Register into global MODEL_PRICING dynamically for cost calculations
+    MODEL_PRICING[id] = { input: inputCost, output: outputCost }
+
+    let costFactor = '25%'
+    let costDetails = ''
+
+    if (inputCost === 0 && outputCost === 0) {
+      costFactor = 'Free'
+      costDetails = 'Free'
+    } else {
+      costFactor = `$${inputCost.toFixed(3)}/1M in`
+      costDetails = `$${inputCost}/$${outputCost} per 1M`
+    }
+
+    const outputLimit = m.outputTokenLimit ? Math.round(m.outputTokenLimit / 1024) : 16
+    const maxTokens = `${outputLimit > 0 ? outputLimit : 16}K`
+
+    return {
+      id,
+      name: displayName,
+      complexity,
+      costFactor,
+      costDetails,
+      inputCost,
+      outputCost,
+      maxTokens,
+    }
+  })
+
+  results.sort((a, b) => a.name.localeCompare(b.name))
+  return results
 }

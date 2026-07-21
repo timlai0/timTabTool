@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { AIClient } from '../src/shared/ai-client'
+import { AIClient, fetchGoogleModels } from '../src/shared/ai-client'
 import type { AIConfig } from '../src/shared/types'
 
 describe('AIClient Retry Logic', () => {
@@ -231,5 +231,67 @@ describe('AIClient Prompt Formatting', () => {
     
     const formatted = (client as any).formatTabForPrompt(tab, 1, true)
     expect(formatted).toBe('1. (URL: https://github.com/florianlanx/timTabTool/issues/1)')
+  })
+})
+
+describe('fetchGoogleModels', () => {
+  it('throws an error if apiKey is empty', async () => {
+    await expect(fetchGoogleModels('')).rejects.toThrow('Google API Key is required')
+  })
+
+  it('fetches and filters generateContent models from Google API and attaches cost details', async () => {
+    const mockResponse = {
+      models: [
+        {
+          name: 'models/gemini-2.5-flash',
+          displayName: 'Gemini 2.5 Flash',
+          supportedGenerationMethods: ['generateContent', 'countTokens'],
+          outputTokenLimit: 16384,
+        },
+        {
+          name: 'models/text-embedding-004',
+          displayName: 'Text Embedding 004',
+          supportedGenerationMethods: ['generateContent'], // has generateContent but is embedding model
+        },
+        {
+          name: 'models/imagen-3.0-generate-002',
+          displayName: 'Imagen 3',
+          supportedGenerationMethods: ['generateContent'], // image gen model
+        },
+        {
+          name: 'models/gemini-2.5-pro',
+          displayName: 'Gemini 2.5 Pro',
+          supportedGenerationMethods: ['generateContent'],
+          outputTokenLimit: 65536,
+        },
+        {
+          name: 'models/gemma-2-9b-it',
+          displayName: 'Gemma 2 9B',
+          supportedGenerationMethods: ['generateContent'],
+          outputTokenLimit: 8192,
+        },
+      ],
+    }
+
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(mockResponse), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    )
+    vi.stubGlobal('fetch', mockFetch)
+
+    const models = await fetchGoogleModels('test-google-key')
+    expect(models.length).toBe(3)
+    expect(models.map(m => m.id)).toContain('gemini-2.5-flash')
+    expect(models.map(m => m.id)).toContain('gemini-2.5-pro')
+    expect(models.map(m => m.id)).toContain('gemma-2-9b-it')
+    expect(models.map(m => m.id)).not.toContain('text-embedding-004')
+    expect(models.map(m => m.id)).not.toContain('imagen-3.0-generate-002')
+
+    const flashModel = models.find(m => m.id === 'gemini-2.5-flash')
+    expect(flashModel?.costDetails).toBeDefined()
+    expect(flashModel?.inputCost).toBe(0.3)
+    expect(flashModel?.outputCost).toBe(2.5)
+
+    const gemmaModel = models.find(m => m.id === 'gemma-2-9b-it')
+    expect(gemmaModel?.costDetails).toBe('Free')
   })
 })
