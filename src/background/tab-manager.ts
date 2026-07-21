@@ -611,12 +611,9 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
         const allSorted = [...pinnedTabs, ...sortedUnpinned]
         result = buildDefaultUngroupedResult(allSorted)
       } else {
-        console.error('[timTabTool] AI free grouping failed in preview, falling back to rule engine. Error:', err)
-        if (settings.showRuleGroupsWhenUngrouped === false) {
-          result = buildDefaultUngroupedResult(tabs)
-        } else {
-          result = ruleGroupsToGroupedTabs(classifyTabs(tabs), tabs)
-        }
+        console.error('[timTabTool] AI free grouping failed in preview, keeping current tab groups untouched. Error:', err)
+        const fromChrome = await buildGroupsFromChrome(tabs)
+        result = fromChrome || buildDefaultUngroupedResult(tabs)
       }
       cacheIsAIGroupedMap.set(windowId, false)
     } finally {

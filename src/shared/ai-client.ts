@@ -270,7 +270,7 @@ Only output the JSON array, no other text.`
 
     const userPrompt = this.config.groupingPrompt?.trim() || DEFAULT_GROUPING_PROMPT
     const groupingPrompt = (userPrompt !== DEFAULT_GROUPING_PROMPT)
-      ? `Follow this specific user instruction to organize the tabs:\n"${userPrompt}"`
+      ? `CRITICAL USER INSTRUCTION FOR TAB GROUPING:\n"${userPrompt}"\nOrganize the tabs into groups strictly adhering to this instruction. Every tab must belong to a group that follows this directive.`
       : userPrompt
     
     let existingGroupsPrompt = ''
