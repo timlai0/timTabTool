@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { AIClient, fetchGoogleModels } from '../src/shared/ai-client'
+import { AIClient, fetchGoogleModels, getGoogleModelPricing } from '../src/shared/ai-client'
 import type { AIConfig } from '../src/shared/types'
+
+describe('getGoogleModelPricing', () => {
+  it('correctly maps Gemini 3.6 Flash, Gemini 3.5 Flash Lite, and Gemini 3.5 Flash prices', () => {
+    expect(getGoogleModelPricing('gemini-3.6-flash')).toEqual({ input: 1.5, output: 9.0 })
+    expect(getGoogleModelPricing('gemini-3.5-flash')).toEqual({ input: 1.5, output: 9.0 })
+    expect(getGoogleModelPricing('gemini-3.5-flash-lite')).toEqual({ input: 0.25, output: 1.5 })
+  })
+})
 
 describe('AIClient Retry Logic', () => {
   beforeEach(() => {

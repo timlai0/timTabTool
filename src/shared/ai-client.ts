@@ -928,6 +928,61 @@ export interface GoogleModelItem {
   costDetails?: string
 }
 
+export function getGoogleModelPricing(id: string): { input: number; output: number } {
+  const lower = id.toLowerCase()
+
+  // 1. Direct match in MODEL_PRICING
+  if (MODEL_PRICING[id]) {
+    return MODEL_PRICING[id]
+  }
+
+  for (const [key, rates] of Object.entries(MODEL_PRICING)) {
+    if (key.toLowerCase() === lower) {
+      return rates
+    }
+  }
+
+  // 2. Open weights / free Gemma models
+  if (lower.includes('gemma')) {
+    return { input: 0, output: 0 }
+  }
+
+  // 3. Gemini 3.5+ / 3.6+ / 3.7+ / 4.x series
+  if (lower.includes('gemini-3.5') || lower.includes('gemini-3.6') || lower.includes('gemini-3.7') || lower.includes('gemini-4')) {
+    if (lower.includes('lite')) return { input: 0.25, output: 1.50 }
+    if (lower.includes('pro')) return { input: 2.00, output: 12.00 }
+    return { input: 1.50, output: 9.00 } // Flash 3.5/3.6 standard
+  }
+
+  // 4. Gemini 3.0 / 3.1 series
+  if (lower.includes('gemini-3')) {
+    if (lower.includes('lite')) return { input: 0.25, output: 1.50 }
+    if (lower.includes('pro')) return { input: 2.00, output: 12.00 }
+    return { input: 0.50, output: 3.00 } // Flash 3.0 standard
+  }
+
+  // 5. Gemini 2.5 series
+  if (lower.includes('gemini-2.5')) {
+    if (lower.includes('lite')) return { input: 0.10, output: 0.40 }
+    if (lower.includes('pro')) return { input: 1.25, output: 10.00 }
+    return { input: 0.30, output: 2.50 }
+  }
+
+  // 6. Gemini 2.0 series
+  if (lower.includes('gemini-2')) {
+    if (lower.includes('lite')) return { input: 0.075, output: 0.30 }
+    if (lower.includes('pro')) return { input: 1.25, output: 5.00 }
+    return { input: 0.10, output: 0.40 }
+  }
+
+  // Fallbacks
+  if (lower.includes('pro')) return { input: 2.00, output: 12.00 }
+  if (lower.includes('lite')) return { input: 0.25, output: 1.50 }
+  if (lower.includes('flash')) return { input: 1.50, output: 9.00 }
+
+  return PROVIDER_DEFAULTS.gemini
+}
+
 export async function fetchGoogleModels(apiKey: string, endpoint?: string): Promise<GoogleModelItem[]> {
   if (!apiKey || !apiKey.trim()) {
     throw new Error('Google API Key is required to fetch models.')
@@ -979,7 +1034,6 @@ export async function fetchGoogleModels(apiKey: string, endpoint?: string): Prom
 
     const isGemma = lowerId.includes('gemma')
     const isPro = lowerId.includes('pro')
-    const isFlash = lowerId.includes('flash')
     const isLite = lowerId.includes('lite') || lowerId.includes('8b')
 
     let complexity = 'Medium'
@@ -987,25 +1041,9 @@ export async function fetchGoogleModels(apiKey: string, endpoint?: string): Prom
     else if (isLite) complexity = 'Low'
 
     // Determine input and output costs per 1M tokens in USD
-    let inputCost = 0.15
-    let outputCost = 0.60
-
-    if (MODEL_PRICING[id]) {
-      inputCost = MODEL_PRICING[id].input
-      outputCost = MODEL_PRICING[id].output
-    } else if (isGemma) {
-      inputCost = 0
-      outputCost = 0
-    } else if (isPro) {
-      inputCost = 1.25
-      outputCost = 5.00
-    } else if (isLite) {
-      inputCost = 0.075
-      outputCost = 0.30
-    } else if (isFlash) {
-      inputCost = 0.15
-      outputCost = 0.60
-    }
+    const rates = getGoogleModelPricing(id)
+    const inputCost = rates.input
+    const outputCost = rates.output
 
     // Register into global MODEL_PRICING dynamically for cost calculations
     MODEL_PRICING[id] = { input: inputCost, output: outputCost }
