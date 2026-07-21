@@ -413,7 +413,7 @@ async function resolveWindowId(payload: unknown): Promise<number> {
 
 export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai']> | undefined {
   if (payload && typeof payload === 'object') {
-    const p = payload as { provider?: unknown; model?: unknown; sendFullUrl?: unknown; sendRandomOrder?: unknown }
+    const p = payload as { provider?: unknown; model?: unknown; sendFullUrl?: unknown; sendRandomOrder?: unknown; groupingPrompt?: unknown; customPrompt?: unknown }
     const overrides: Partial<ExtensionSettings['ai']> = {}
     
     if (typeof p.model === 'string' && p.model !== '-full') {
@@ -433,6 +433,12 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
     
     if (typeof p.sendRandomOrder === 'boolean') {
       overrides.sendRandomOrder = p.sendRandomOrder
+    }
+    
+    if (typeof p.groupingPrompt === 'string' && p.groupingPrompt.trim()) {
+      overrides.groupingPrompt = p.groupingPrompt.trim()
+    } else if (typeof p.customPrompt === 'string' && p.customPrompt.trim()) {
+      overrides.groupingPrompt = p.customPrompt.trim()
     }
     
     if (Object.keys(overrides).length > 0) {

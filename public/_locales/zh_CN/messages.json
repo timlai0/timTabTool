@@ -19,6 +19,22 @@
     "message": "一键分组",
     "description": "Button label to group all tabs"
   },
+  "oneShotPrompt": {
+    "message": "单次提示词",
+    "description": "Button and title for one-shot custom prompt grouping"
+  },
+  "customPrompt": {
+    "message": "自定义提示词",
+    "description": "Button label for custom prompt"
+  },
+  "enterCustomPromptPlaceholder": {
+    "message": "例如：将所有 google 标签页分入1个组",
+    "description": "Placeholder for custom prompt input"
+  },
+  "runPrompt": {
+    "message": "执行分组",
+    "description": "Run custom prompt button text"
+  },
   "ungroupAll": {
     "message": "取消分组",
     "description": "Button label to ungroup all tabs"

@@ -4,7 +4,7 @@
     "description": "Extension name"
   },
   "extDescription": {
-    "message": "Autopilot for your browser tabs. Smart grouping, instant search, optional AI — all private.",
+    "message": "Manage browser tabs with automated grouping, quick search overlay, and optional privacy-focused AI features.",
     "description": "Extension description"
   },
   "cmdOpenSearch": {
@@ -18,6 +18,22 @@
   "groupTabs": {
     "message": "Group Tabs",
     "description": "Button label to group all tabs"
+  },
+  "oneShotPrompt": {
+    "message": "One-Shot Prompt",
+    "description": "Button and title for one-shot custom prompt grouping"
+  },
+  "customPrompt": {
+    "message": "Custom Prompt",
+    "description": "Button label for custom prompt"
+  },
+  "enterCustomPromptPlaceholder": {
+    "message": "e.g. sort all google tabs into 1 group",
+    "description": "Placeholder for custom prompt input"
+  },
+  "runPrompt": {
+    "message": "Group",
+    "description": "Run custom prompt button text"
   },
   "ungroupAll": {
     "message": "Ungroup All",

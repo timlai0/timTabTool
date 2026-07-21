@@ -66,6 +66,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let progressStatus: HTMLSpanElement | null = null
   let progressPercent: HTMLSpanElement | null = null
   let progressCloseBtn: HTMLButtonElement | null = null
+  let progressHideBtn: HTMLButtonElement | null = null
   let progressFill: HTMLDivElement | null = null
   let progressDetail: HTMLDivElement | null = null
   let isAIOperating = false
@@ -681,6 +682,19 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       resetAIProgressState()
     })
 
+    progressHideBtn = document.createElement('button')
+    progressHideBtn.className = 'atm-progress-hide-btn'
+    progressHideBtn.style.display = 'none'
+    progressHideBtn.textContent = 'Hide'
+    progressHideBtn.addEventListener('click', () => {
+      visible = false
+      if (hostEl) hostEl.style.display = 'none'
+      if (window.location.href.includes('search.html')) {
+        window.close()
+      }
+    })
+
+    progressHeaderRight.appendChild(progressHideBtn)
     progressHeaderRight.appendChild(progressPercent)
     progressHeaderRight.appendChild(progressCloseBtn)
 
@@ -941,6 +955,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       progressDetail.style.color = ''
     }
     if (progressCloseBtn) progressCloseBtn.style.display = 'none'
+    if (progressHideBtn) progressHideBtn.style.display = 'none'
   }
 
   function switchToProgressOnlyMode() {
@@ -993,6 +1008,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       progressCloseBtn.textContent = 'Cancel'
       progressCloseBtn.style.color = '' // Reverts to CSS-defined red color
       progressCloseBtn.style.display = 'block'
+    }
+    if (progressHideBtn) {
+      progressHideBtn.style.display = 'block'
     }
     if (progressStatus) {
       progressStatus.style.color = '' // reset to default blue
@@ -1112,6 +1130,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         progressCloseBtn.textContent = 'Dismiss'
         progressCloseBtn.style.color = '#FF3B30'
         progressCloseBtn.style.display = 'block'
+      }
+      if (progressHideBtn) {
+        progressHideBtn.style.display = 'none'
       }
     }
   }
@@ -1624,6 +1645,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         progressCloseBtn.style.color = '#FF3B30'
         progressCloseBtn.style.display = 'block'
       }
+      if (progressHideBtn) {
+        progressHideBtn.style.display = 'none'
+      }
     }
   }
 
@@ -1800,6 +1824,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           progressCloseBtn.style.color = '#FF3B30'
           progressCloseBtn.style.display = 'block'
         }
+        if (progressHideBtn) {
+          progressHideBtn.style.display = 'none'
+        }
       }
     }
   })
@@ -1807,7 +1834,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
 
   // Auto-initialize and show if loaded directly inside the standalone search.html page
-  if (window.location.protocol.includes('-extension:') && window.location.pathname.includes('search.html')) {
+  if (window.location?.protocol?.includes('-extension:') && window.location?.pathname?.includes('search.html')) {
     // Logik: Sofortiges Anzeigen des Overlays in der search.html-Seite
     // Programming logic: Immediately display the search overlay in search.html page
     show()

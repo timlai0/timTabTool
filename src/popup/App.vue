@@ -577,11 +577,42 @@ async function handleClassifyNew(windowId: number) {
   }
 }
 
-async function handleGroup(windowId: number) {
+const activePromptWindowId = ref<number | null>(null)
+const oneShotPromptText = ref<string>('sort all google tabs into 1 group')
+
+function toggleOneShotPromptPopover(windowId: number) {
+  if (activePromptWindowId.value === windowId) {
+    activePromptWindowId.value = null
+  } else {
+    activePromptWindowId.value = windowId
+    if (!oneShotPromptText.value) {
+      oneShotPromptText.value = 'sort all google tabs into 1 group'
+    }
+  }
+}
+
+async function runOneShotPrompt(windowId: number, customPrompt?: string) {
+  const promptToUse = (customPrompt !== undefined ? customPrompt : oneShotPromptText.value).trim()
+  if (!promptToUse) return
+
+  if (!aiSettings.value.enabled || !aiSettings.value.apiKey) {
+    showError('AI grouping requires AI feature to be enabled with a valid API key in Settings.')
+    return
+  }
+
+  activePromptWindowId.value = null
+  await handleGroup(windowId, promptToUse)
+}
+
+async function handleGroup(windowId: number, customPrompt?: string) {
   groupingWindowId.value = windowId
   startPollingStatus()
   try {
-    const res = await chrome.runtime.sendMessage({ action: 'GROUP_TABS', payload: { windowId } })
+    const payload: { windowId: number; groupingPrompt?: string } = { windowId }
+    if (customPrompt) {
+      payload.groupingPrompt = customPrompt
+    }
+    const res = await chrome.runtime.sendMessage({ action: 'GROUP_TABS', payload })
     if (res && typeof res === 'object' && 'error' in res) {
       showError(String(res.error))
     }
@@ -979,170 +1010,233 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           </div>
 
           <!-- Action buttons -->
-          <div v-if="!isWindowSectionCollapsed(w.windowId) && tabGroupsSupported" class="flex items-center px-3.5 pb-2 relative">
-            <div class="flex items-center gap-1.5 flex-wrap">
-              <button
-                class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap"
-                :style="groupingWindowId === w.windowId
-                  ? { background: 'var(--group-red)', color: '#fff' }
-                  : { background: 'var(--accent)', color: '#fff' }"
-                @click="groupingWindowId === w.windowId ? handleCancelGroup(w.windowId) : handleGroup(w.windowId)"
-                @mouseenter="activeHoverAction = 'group'; hoveredActionWindowId = w.windowId"
-                @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
-              >
-                <span v-if="groupingWindowId === w.windowId" class="inline-flex items-center gap-1">
-                  <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
-                  <span>Grouping with {{ activeModel }}...</span>
-                </span>
-                <span v-else>{{ getMessage('groupTabs') }}</span>
-              </button>
-              <button
-                class="px-3 py-[4px] text-[11px] rounded-btn whitespace-nowrap"
-                style="color: var(--text-secondary); background: var(--hover);"
-                @click="handleUngroup(w.windowId)"
-              >
-                {{ getMessage('ungroupAll') }}
-              </button>
-              <button
-                class="px-3 py-[4px] text-[11px] rounded-btn whitespace-nowrap"
-                style="color: var(--text-secondary); background: var(--hover);"
-                @click="handleCleanupGroups(w.windowId)"
-              >
-                {{ getMessage('cleanupGroups') }}
-              </button>
-              <button
-                class="px-2 py-[4px] rounded-btn flex items-center justify-center transition-colors shrink-0"
-                style="color: var(--text-secondary); background: var(--hover);"
-                @click="copyWindowUrlsAsMarkdown(w)"
-                title="Copy all URLs as Markdown"
-              >
-                <svg v-if="copiedWindowId === w.windowId" class="w-3.5 h-3.5" style="color: var(--group-green);" viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.815a.75.75 0 011.05-.145z" clip-rule="evenodd" />
-                </svg>
-                <svg v-else class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                  <path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z" />
-                  <path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2V5z" />
-                </svg>
-              </button>
-              <button
-                v-if="newTabsCount(w) > 0"
-                class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap"
-                :style="classifyingWindowId === w.windowId
-                  ? { background: 'var(--group-red)', color: '#fff' }
-                  : { background: 'var(--accent-soft)', color: 'var(--accent)' }"
-                @click="classifyingWindowId === w.windowId ? handleCancelClassify(w.windowId) : handleClassifyNew(w.windowId)"
-                @mouseenter="activeHoverAction = 'classify'; hoveredActionWindowId = w.windowId"
-                @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
-              >
-                <span v-if="classifyingWindowId === w.windowId" class="inline-flex items-center gap-1">
-                  <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
-                  <span>Classifying with {{ activeModel }}...</span>
-                </span>
-                <span v-else>{{ getMessage('classifyNewTabs') }} ({{ newTabsCount(w) }})</span>
-              </button>
+          <div v-if="!isWindowSectionCollapsed(w.windowId) && tabGroupsSupported" class="flex flex-col px-3.5 pb-2 relative gap-1.5">
+            <div class="flex items-center justify-between w-full">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <button
+                  class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap"
+                  :style="groupingWindowId === w.windowId
+                    ? { background: 'var(--group-red)', color: '#fff' }
+                    : { background: 'var(--accent)', color: '#fff' }"
+                  @click="groupingWindowId === w.windowId ? handleCancelGroup(w.windowId) : handleGroup(w.windowId)"
+                  @mouseenter="activeHoverAction = 'group'; hoveredActionWindowId = w.windowId"
+                  @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
+                >
+                  <span v-if="groupingWindowId === w.windowId" class="inline-flex items-center gap-1">
+                    <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
+                    <span>Grouping with {{ activeModel }}...</span>
+                  </span>
+                  <span v-else>{{ getMessage('groupTabs') }}</span>
+                </button>
+                <button
+                  class="px-3 py-[4px] text-[11px] rounded-btn whitespace-nowrap"
+                  style="color: var(--text-secondary); background: var(--hover);"
+                  @click="handleUngroup(w.windowId)"
+                >
+                  {{ getMessage('ungroupAll') }}
+                </button>
+                <button
+                  class="px-3 py-[4px] text-[11px] rounded-btn whitespace-nowrap"
+                  style="color: var(--text-secondary); background: var(--hover);"
+                  @click="handleCleanupGroups(w.windowId)"
+                >
+                  {{ getMessage('cleanupGroups') }}
+                </button>
+                <button
+                  class="px-2 py-[4px] rounded-btn flex items-center justify-center transition-colors shrink-0"
+                  style="color: var(--text-secondary); background: var(--hover);"
+                  @click="copyWindowUrlsAsMarkdown(w)"
+                  title="Copy all URLs as Markdown"
+                >
+                  <svg v-if="copiedWindowId === w.windowId" class="w-3.5 h-3.5" style="color: var(--group-green);" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.815a.75.75 0 011.05-.145z" clip-rule="evenodd" />
+                  </svg>
+                  <svg v-else class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z" />
+                    <path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2V5z" />
+                  </svg>
+                </button>
+                <button
+                  class="px-2.5 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all whitespace-nowrap"
+                  :style="activePromptWindowId === w.windowId
+                    ? { background: 'var(--accent)', color: '#fff' }
+                    : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
+                  @click="toggleOneShotPromptPopover(w.windowId)"
+                  title="One-Shot AI Prompt (Custom tab grouping instruction)"
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.948 5.684a1 1 0 00-1.896 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.896l2.051.683a1 1 0 01.633.633l.683 2.051a1 1 0 001.896 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.896l-2.051-.683a1 1 0 01-.633-.633L6.948 5.684z" />
+                  </svg>
+                  <span>{{ getMessage('customPrompt') }}</span>
+                </button>
+                <button
+                  v-if="newTabsCount(w) > 0"
+                  class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap"
+                  :style="classifyingWindowId === w.windowId
+                    ? { background: 'var(--group-red)', color: '#fff' }
+                    : { background: 'var(--accent-soft)', color: 'var(--accent)' }"
+                  @click="classifyingWindowId === w.windowId ? handleCancelClassify(w.windowId) : handleClassifyNew(w.windowId)"
+                  @mouseenter="activeHoverAction = 'classify'; hoveredActionWindowId = w.windowId"
+                  @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
+                >
+                  <span v-if="classifyingWindowId === w.windowId" class="inline-flex items-center gap-1">
+                    <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
+                    <span>Classifying with {{ activeModel }}...</span>
+                  </span>
+                  <span v-else>{{ getMessage('classifyNewTabs') }} ({{ newTabsCount(w) }})</span>
+                </button>
+              </div>
 
-              <!-- Tooltip (Shows on hover of Group Tabs or Classify New inside relative actions container) -->
-              <div v-if="groupingWindowId !== w.windowId && classifyingWindowId !== w.windowId && hoveredActionWindowId === w.windowId && activeHoverAction !== null" class="absolute left-3.5 top-full mt-1.5 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
-                <template v-if="aiSettings.enabled && aiSettings.apiKey">
-                  <div class="font-semibold mb-1" style="color: var(--accent);">
-                    {{ activeHoverAction === 'group' ? 'AI Grouping Preview' : 'AI Classification Preview' }}
-                  </div>
-                  <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
-                    <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
-                    <span class="opacity-40">•</span>
-                    <span>Batch Size: <span class="font-semibold" style="color: var(--text-secondary);">{{ aiSettings.batchSize || `${getAutoBatchSize(aiSettings.maxTokens)} (Auto)` }}</span></span>
-                  </div>
-                  
-                  <div class="mb-1 text-[9px] uppercase font-bold tracking-wider mt-2" style="color: var(--text-tertiary);">System Prompt</div>
-                  <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
-                    {{ getSystemPrompt() }}
-                  </div>
-                  
-                  <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">User Prompt</div>
-                  <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
-                    {{ activeHoverAction === 'group' ? getGroupingPrompt() : getClassifyPrompt(w) }}
-                  </div>
-                  
-                  <div class="mt-2 pt-2 border-t flex flex-col gap-1.5" style="border-color: var(--border);">
-                    <div class="flex items-center justify-between text-[10px]">
-                      <span style="color: var(--text-secondary);">
-                        Est. Requests: <span class="font-bold tabular-nums" style="color: var(--text-primary);">
-                          {{ activeHoverAction === 'group' ? Math.ceil(unpinnedTabsCount(w) / (aiSettings.batchSize || getAutoBatchSize(aiSettings.maxTokens))) : Math.ceil(newTabsCount(w) / (aiSettings.batchSize || getAutoBatchSize(aiSettings.maxTokens))) }}
-                        </span>
-                      </span>
-                      <span class="font-bold tabular-nums" style="color: var(--text-primary);">{{ estimateCostAndTokens(w, activeHoverAction).costStr }}</span>
-                    </div>
-                    <div class="flex items-center justify-between text-[9px]" style="color: var(--text-tertiary);">
-                      <span>Total: <span class="font-semibold tabular-nums" style="color: var(--text-secondary);">~{{ estimateCostAndTokens(w, activeHoverAction).tokens }}</span> tokens</span>
-                      <span>Rate: <span class="font-semibold tabular-nums" style="color: var(--text-secondary);">~{{ estimateCostAndTokens(w, activeHoverAction).tokensPerRequest }}</span> tok/req</span>
-                    </div>
-                  </div>
-                </template>
-                <template v-else>
-                  <div class="font-semibold mb-1" style="color: var(--accent);">
-                    {{ activeHoverAction === 'group' ? 'Rule-based Grouping Preview' : 'Rule-based Classification Preview' }}
-                  </div>
-                  <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
-                    <span>Mode: <span class="font-semibold" style="color: var(--text-secondary);">Local Rule Engine</span></span>
-                    <span class="opacity-40">•</span>
-                    <span>Privacy: <span class="font-semibold" style="color: var(--text-secondary);">100% Offline</span></span>
-                  </div>
-                  
-                  <div class="mb-1 text-[9px] uppercase font-bold tracking-wider mt-2" style="color: var(--text-tertiary);">Description</div>
-                  <div class="text-[10px] mb-2 leading-relaxed" style="color: var(--text-secondary);">
-                    {{ activeHoverAction === 'group' 
-                      ? 'Tabs will be organized instantly using high-performance local heuristics. Priority is given to matching exact domains, parent domains, and tab title keywords.' 
-                      : 'New tabs will be classified instantly into matching existing groups using high-performance local heuristics (domain, parent domain, and keyword match).' }}
-                  </div>
-                  
-                  <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">Built-in Categories</div>
-                  <div class="text-[10px] mb-2 flex flex-wrap gap-1" style="color: var(--text-secondary);">
-                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Work</span>
-                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Development</span>
-                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Learning</span>
-                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Social</span>
-                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Entertainment</span>
-                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Shopping</span>
-                    <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Docs</span>
-                  </div>
-                  
-                  <div class="flex items-center justify-between mt-2 pt-2 border-t" style="border-color: var(--border);">
-                    <span class="text-[10px] font-medium" style="color: var(--text-secondary);">
-                      Est. Requests: <span class="font-bold tabular-nums" style="color: var(--text-primary);">0 (No API calls)</span>
-                    </span>
-                    <span class="text-[10px] font-bold tabular-nums" style="color: var(--group-green);">Free</span>
-                  </div>
-                </template>
+              <!-- Toolbar icons -->
+              <div v-if="w.hasGroups" class="flex items-center gap-0 shrink-0 ml-1">
+                <button
+                  class="w-6 h-6 flex items-center justify-center rounded-md"
+                  :style="{ color: isTitlesHidden(w.windowId) ? 'var(--accent)' : 'var(--text-tertiary)' }"
+                  :title="isTitlesHidden(w.windowId) ? getMessage('showGroupTitles') : getMessage('hideGroupTitles')"
+                  @click="handleToggleGroupTitles(w.windowId)"
+                >
+                  <svg class="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M2.5 2a.5.5 0 00-.5.5v3.5a.5.5 0 00.146.354l5.5 5.5a.5.5 0 00.708 0l3.5-3.5a.5.5 0 000-.708l-5.5-5.5A.5.5 0 006 2H2.5zm1.5 2a1 1 0 110 2 1 1 0 010-2z" />
+                  </svg>
+                </button>
+                <button
+                  class="w-6 h-6 flex items-center justify-center rounded-md"
+                  style="color: var(--text-tertiary);"
+                  :title="isWindowCollapsed(w.windowId) ? getMessage('expandAll') : getMessage('collapseAll')"
+                  @click="handleToggleAllGroups(w.windowId)"
+                >
+                  <svg v-if="isWindowCollapsed(w.windowId)" class="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 3.5l4 4 4-4" />
+                    <path d="M4 8.5l4 4 4-4" />
+                  </svg>
+                  <svg v-else class="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 7l4-4 4 4" />
+                    <path d="M4 12.5l4-4 4 4" />
+                  </svg>
+                </button>
               </div>
             </div>
-            <div class="flex-1" />
-            <!-- Toolbar icons -->
-            <div v-if="w.hasGroups" class="flex items-center gap-0">
-              <button
-                class="w-6 h-6 flex items-center justify-center rounded-md"
-                :style="{ color: isTitlesHidden(w.windowId) ? 'var(--accent)' : 'var(--text-tertiary)' }"
-                :title="isTitlesHidden(w.windowId) ? getMessage('showGroupTitles') : getMessage('hideGroupTitles')"
-                @click="handleToggleGroupTitles(w.windowId)"
-              >
-                <svg class="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M2.5 2a.5.5 0 00-.5.5v3.5a.5.5 0 00.146.354l5.5 5.5a.5.5 0 00.708 0l3.5-3.5a.5.5 0 000-.708l-5.5-5.5A.5.5 0 006 2H2.5zm1.5 2a1 1 0 110 2 1 1 0 010-2z" />
-                </svg>
-              </button>
-              <button
-                class="w-6 h-6 flex items-center justify-center rounded-md"
-                style="color: var(--text-tertiary);"
-                :title="isWindowCollapsed(w.windowId) ? getMessage('expandAll') : getMessage('collapseAll')"
-                @click="handleToggleAllGroups(w.windowId)"
-              >
-                <svg v-if="isWindowCollapsed(w.windowId)" class="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M4 3.5l4 4 4-4" />
-                  <path d="M4 8.5l4 4 4-4" />
-                </svg>
-                <svg v-else class="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M4 7l4-4 4 4" />
-                  <path d="M4 12.5l4-4 4 4" />
-                </svg>
-              </button>
+
+            <!-- One-Shot Prompt Popover -->
+            <div v-if="activePromptWindowId === w.windowId" class="w-full p-2.5 rounded-md flex flex-col gap-2 transition-all shadow-card z-40" style="background: var(--bg-elevated); border: 0.5px solid var(--border);">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-1.5 text-[11px] font-semibold" style="color: var(--accent);">
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.948 5.684a1 1 0 00-1.896 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.896l2.051.683a1 1 0 01.633.633l.683 2.051a1 1 0 001.896 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.896l-2.051-.683a1 1 0 01-.633-.633L6.948 5.684z" />
+                  </svg>
+                  <span>{{ getMessage('oneShotPrompt') }}</span>
+                </div>
+                <button @click="activePromptWindowId = null" class="text-[11px] opacity-60 hover:opacity-100 focus:outline-none" style="color: var(--text-secondary);">✕</button>
+              </div>
+              <div class="relative flex items-center gap-1.5">
+                <input
+                  v-model="oneShotPromptText"
+                  type="text"
+                  :placeholder="getMessage('enterCustomPromptPlaceholder')"
+                  class="w-full px-2.5 py-1.5 text-[11px] rounded-sm focus:outline-none"
+                  style="background: var(--bg-main); color: var(--text-primary); border: 0.5px solid var(--border);"
+                  @keydown.enter="runOneShotPrompt(w.windowId)"
+                  @keydown.esc="activePromptWindowId = null"
+                />
+                <button
+                  class="px-3 py-1.5 text-[10px] font-medium rounded-sm transition-colors whitespace-nowrap shrink-0"
+                  style="background: var(--accent); color: #fff;"
+                  @click="runOneShotPrompt(w.windowId)"
+                >
+                  {{ getMessage('runPrompt') }}
+                </button>
+              </div>
+              <div class="flex items-center gap-1.5 flex-wrap text-[9px]" style="color: var(--text-tertiary);">
+                <span class="font-medium">Try:</span>
+                <button
+                  @click="runOneShotPrompt(w.windowId, 'sort all google tabs into 1 group')"
+                  class="px-1.5 py-0.5 rounded-sm hover:underline cursor-pointer"
+                  style="background: var(--hover); color: var(--text-secondary);"
+                >
+                  sort all google tabs into 1 group
+                </button>
+                <button
+                  @click="runOneShotPrompt(w.windowId, 'group tabs by project topic')"
+                  class="px-1.5 py-0.5 rounded-sm hover:underline cursor-pointer"
+                  style="background: var(--hover); color: var(--text-secondary);"
+                >
+                  group by project topic
+                </button>
+              </div>
+            </div>
+
+            <!-- Tooltip (Shows on hover of Group Tabs or Classify New inside relative actions container) -->
+            <div v-if="groupingWindowId !== w.windowId && classifyingWindowId !== w.windowId && hoveredActionWindowId === w.windowId && activeHoverAction !== null" class="absolute left-3.5 top-full mt-1.5 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+              <template v-if="aiSettings.enabled && aiSettings.apiKey">
+                <div class="font-semibold mb-1" style="color: var(--accent);">
+                  {{ activeHoverAction === 'group' ? 'AI Grouping Preview' : 'AI Classification Preview' }}
+                </div>
+                <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
+                  <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
+                  <span class="opacity-40">•</span>
+                  <span>Batch Size: <span class="font-semibold" style="color: var(--text-secondary);">{{ aiSettings.batchSize || `${getAutoBatchSize(aiSettings.maxTokens)} (Auto)` }}</span></span>
+                </div>
+                
+                <div class="mb-1 text-[9px] uppercase font-bold tracking-wider mt-2" style="color: var(--text-tertiary);">System Prompt</div>
+                <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
+                  {{ getSystemPrompt() }}
+                </div>
+                
+                <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">User Prompt</div>
+                <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
+                  {{ activeHoverAction === 'group' ? getGroupingPrompt() : getClassifyPrompt(w) }}
+                </div>
+                
+                <div class="mt-2 pt-2 border-t flex flex-col gap-1.5" style="border-color: var(--border);">
+                  <div class="flex items-center justify-between text-[10px]">
+                    <span style="color: var(--text-secondary);">
+                      Est. Requests: <span class="font-bold tabular-nums" style="color: var(--text-primary);">
+                        {{ activeHoverAction === 'group' ? Math.ceil(unpinnedTabsCount(w) / (aiSettings.batchSize || getAutoBatchSize(aiSettings.maxTokens))) : Math.ceil(newTabsCount(w) / (aiSettings.batchSize || getAutoBatchSize(aiSettings.maxTokens))) }}
+                      </span>
+                    </span>
+                    <span class="font-bold tabular-nums" style="color: var(--text-primary);">{{ estimateCostAndTokens(w, activeHoverAction).costStr }}</span>
+                  </div>
+                  <div class="flex items-center justify-between text-[9px]" style="color: var(--text-tertiary);">
+                    <span>Total: <span class="font-semibold tabular-nums" style="color: var(--text-secondary);">~{{ estimateCostAndTokens(w, activeHoverAction).tokens }}</span> tokens</span>
+                    <span>Rate: <span class="font-semibold tabular-nums" style="color: var(--text-secondary);">~{{ estimateCostAndTokens(w, activeHoverAction).tokensPerRequest }}</span> tok/req</span>
+                  </div>
+                </div>
+              </template>
+              <template v-else>
+                <div class="font-semibold mb-1" style="color: var(--accent);">
+                  {{ activeHoverAction === 'group' ? 'Rule-based Grouping Preview' : 'Rule-based Classification Preview' }}
+                </div>
+                <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
+                  <span>Mode: <span class="font-semibold" style="color: var(--text-secondary);">Local Rule Engine</span></span>
+                  <span class="opacity-40">•</span>
+                  <span>Privacy: <span class="font-semibold" style="color: var(--text-secondary);">100% Offline</span></span>
+                </div>
+                
+                <div class="mb-1 text-[9px] uppercase font-bold tracking-wider mt-2" style="color: var(--text-tertiary);">Description</div>
+                <div class="text-[10px] mb-2 leading-relaxed" style="color: var(--text-secondary);">
+                  {{ activeHoverAction === 'group' 
+                    ? 'Tabs will be organized instantly using high-performance local heuristics. Priority is given to matching exact domains, parent domains, and tab title keywords.' 
+                    : 'New tabs will be classified instantly into matching existing groups using high-performance local heuristics (domain, parent domain, and keyword match).' }}
+                </div>
+                
+                <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">Built-in Categories</div>
+                <div class="text-[10px] mb-2 flex flex-wrap gap-1" style="color: var(--text-secondary);">
+                  <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Work</span>
+                  <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Development</span>
+                  <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Learning</span>
+                  <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Social</span>
+                  <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Entertainment</span>
+                  <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Shopping</span>
+                  <span class="px-1.5 py-0.5 rounded-sm text-[9px]" style="background: var(--hover); border: 0.5px solid var(--border);">Docs</span>
+                </div>
+                
+                <div class="flex items-center justify-between mt-2 pt-2 border-t" style="border-color: var(--border);">
+                  <span class="text-[10px] font-medium" style="color: var(--text-secondary);">
+                    Est. Requests: <span class="font-bold tabular-nums" style="color: var(--text-primary);">0 (No API calls)</span>
+                  </span>
+                  <span class="text-[10px] font-bold tabular-nums" style="color: var(--group-green);">Free</span>
+                </div>
+              </template>
             </div>
           </div>
         </div>
