@@ -74,6 +74,7 @@ export interface AIConfig {
   classifyPrompt?: string
   mergePrompt?: string
   maxRetries?: number
+  bypassSafeguards?: boolean
   customModels?: Record<string, { id: string; name: string; complexity: string; costFactor: string; maxTokens: string }[]>
 }
 

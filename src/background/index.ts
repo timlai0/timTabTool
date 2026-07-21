@@ -440,6 +440,10 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
     } else if (typeof p.customPrompt === 'string' && p.customPrompt.trim()) {
       overrides.groupingPrompt = p.customPrompt.trim()
     }
+
+    if (typeof (p as any).bypassSafeguards === 'boolean') {
+      overrides.bypassSafeguards = (p as any).bypassSafeguards
+    }
     
     if (Object.keys(overrides).length > 0) {
       return overrides

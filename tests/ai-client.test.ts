@@ -146,6 +146,51 @@ describe('AIClient Retry Logic', () => {
     expect(mockFetch).toHaveBeenCalledTimes(15)
   })
 
+  it('fails early before making any API calls if required operation batches exceed safety limit', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openai',
+      apiKey: 'test-key',
+      batchSize: 20,
+    }
+    const client = new AIClient(config)
+    const mockFetch = vi.fn()
+    vi.stubGlobal('fetch', mockFetch)
+
+    // Create 350 tabs (350 / 20 = 18 batches > 15 limit)
+    const tabs = Array.from({ length: 350 }, (_, i) => ({ url: `https://example.com/${i}`, title: `Tab ${i}` }))
+
+    await expect(client.groupTabsFreely(tabs)).rejects.toThrow('Single operation exceeded the safety limit of 15 requests')
+    expect(mockFetch).toHaveBeenCalledTimes(0)
+  })
+
+  it('bypasses safety limit when bypassSafeguards option is enabled', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openai',
+      apiKey: 'test-key',
+      batchSize: 20,
+      bypassSafeguards: true,
+    }
+    const client = new AIClient(config)
+    const mockFetch = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '[{"name":"Dev","tabIndices":[1]}]' } }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    )
+    vi.stubGlobal('fetch', mockFetch)
+
+    const tabs = Array.from({ length: 350 }, (_, i) => ({ url: `https://example.com/${i}`, title: `Tab ${i}` }))
+    const res = await client.groupTabsFreely(tabs)
+    expect(res).toBeDefined()
+    expect(mockFetch).toHaveBeenCalledTimes(18)
+  })
+
   it('prevents global extension-wide rate abuse by throwing safeguard error when minute rate limit is exceeded', async () => {
     const config: AIConfig = {
       enabled: true,

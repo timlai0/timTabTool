@@ -204,6 +204,12 @@ Only output the JSON array, no other text.`
     if (tabs.length === 0) return []
 
     const batchSize = this.config.batchSize || getAutoBatchSize(this.config.maxTokens)
+    const requiredBatches = Math.ceil(tabs.length / batchSize)
+
+    // Fail early before initiating any network calls if total batches exceed safety limit
+    if (!this.config.bypassSafeguards && this.instanceRequestCount + requiredBatches > AIClient.MAX_REQUESTS_PER_RUN) {
+      throw new Error(`[timTabTool] AI safety safeguard: Single operation exceeded the safety limit of ${AIClient.MAX_REQUESTS_PER_RUN} requests to prevent run-away token billing. Please close some tabs or group in smaller batches.`)
+    }
 
     if (tabs.length <= batchSize) {
       return this.groupTabsBatch(tabs, 0)
@@ -561,6 +567,8 @@ Only output the JSON object.`
    * Enforces safety budget limitations on AI API requests to prevent run-away billing.
    */
   private checkRequestSafeguards(): void {
+    if (this.config.bypassSafeguards) return
+
     // 1. Instance limit check (per operation run)
     if (this.instanceRequestCount >= AIClient.MAX_REQUESTS_PER_RUN) {
       throw new Error(`[timTabTool] AI safety safeguard: Single operation exceeded the safety limit of ${AIClient.MAX_REQUESTS_PER_RUN} requests to prevent run-away token billing. Please close some tabs or group in smaller batches.`)

@@ -35,17 +35,30 @@ const windowWidth = ref(DEFAULT_SETTINGS.windowWidth)
 const windowHeight = ref(DEFAULT_SETTINGS.windowHeight)
 const aiSettings = ref<ExtensionSettings['ai']>(DEFAULT_SETTINGS.ai)
 const errorMessage = ref<string | null>(null)
-
 const customWindowNames = ref<Record<number, string>>({})
 const editingWindowId = ref<number | null>(null)
+const errorWindowId = ref<number | null>(null)
 
-function showError(msg: string) {
+function showError(msg: string, windowId?: number | null) {
   errorMessage.value = msg
+  if (windowId !== undefined) {
+    errorWindowId.value = windowId
+  }
   setTimeout(() => {
     if (errorMessage.value === msg) {
       errorMessage.value = null
+      errorWindowId.value = null
     }
   }, 10000)
+}
+
+async function handleProceedAnyways() {
+  const targetWin = errorWindowId.value ?? currentWindowId.value
+  errorMessage.value = null
+  errorWindowId.value = null
+  if (targetWin !== null) {
+    await handleGroup(targetWin, undefined, true)
+  }
 }
 
 // ─── Theme System ───
@@ -604,21 +617,24 @@ async function runOneShotPrompt(windowId: number, customPrompt?: string) {
   await handleGroup(windowId, promptToUse)
 }
 
-async function handleGroup(windowId: number, customPrompt?: string) {
+async function handleGroup(windowId: number, customPrompt?: string, bypassSafeguards = false) {
   groupingWindowId.value = windowId
   startPollingStatus()
   try {
-    const payload: { windowId: number; groupingPrompt?: string } = { windowId }
+    const payload: { windowId: number; groupingPrompt?: string; bypassSafeguards?: boolean } = { windowId }
     if (customPrompt) {
       payload.groupingPrompt = customPrompt
     }
+    if (bypassSafeguards) {
+      payload.bypassSafeguards = true
+    }
     const res = await chrome.runtime.sendMessage({ action: 'GROUP_TABS', payload })
     if (res && typeof res === 'object' && 'error' in res) {
-      showError(String(res.error))
+      showError(String(res.error), windowId)
     }
     await loadAllPreviews()
   } catch (err) {
-    showError((err as Error).message)
+    showError((err as Error).message, windowId)
   } finally {
     groupingWindowId.value = null
   }
@@ -900,8 +916,19 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
       <svg class="w-3.5 h-3.5 shrink-0 mt-0.5" style="color: #ef4444;" viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
       </svg>
-      <div class="flex-1 text-[10.5px] leading-normal" style="color: var(--text-primary); font-weight: 500;">
-        {{ errorMessage }}
+      <div class="flex-1 text-[10.5px] leading-normal flex flex-col gap-1.5" style="color: var(--text-primary); font-weight: 500;">
+        <div>{{ errorMessage }}</div>
+        <button
+          v-if="errorMessage.includes('safety safeguard') || errorMessage.includes('safety limit')"
+          @click="handleProceedAnyways"
+          class="self-start px-2 py-0.5 text-[10px] font-semibold rounded-sm transition-all cursor-pointer flex items-center gap-1 shrink-0"
+          style="background: #ef4444; color: #ffffff;"
+        >
+          <span>Proceed Anyways</span>
+          <svg class="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+          </svg>
+        </button>
       </div>
       <button
         @click="errorMessage = null"

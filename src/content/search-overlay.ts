@@ -1125,6 +1125,23 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       if (progressDetail) {
         progressDetail.textContent = err.message || 'An unknown error occurred.'
         progressDetail.style.color = '#FF3B30'
+
+        if (err.message && (err.message.includes('safety safeguard') || err.message.includes('safety limit'))) {
+          const btn = document.createElement('button')
+          btn.textContent = 'Proceed Anyways'
+          btn.style.cssText = 'margin-top:8px;padding:4px 10px;font-size:10.5px;font-weight:600;background:#FF3B30;color:#ffffff;border:none;border-radius:4px;cursor:pointer;display:inline-block;'
+          btn.addEventListener('click', async () => {
+            try {
+              showAIProgress('AI Grouping (Bypassing Limits)...', 0)
+              await sendMessage({ action: 'GROUP_TABS', payload: { windowId: currentWindowId, bypassSafeguards: true } })
+              showAIProgress('AI Grouping Completed!', 100)
+            } catch (e) {
+              showErrorProgress(e as Error)
+            }
+          })
+          progressDetail.appendChild(document.createElement('br'))
+          progressDetail.appendChild(btn)
+        }
       }
       if (progressCloseBtn) {
         progressCloseBtn.textContent = 'Dismiss'
