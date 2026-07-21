@@ -114,8 +114,12 @@ function chromeTabToTabInfo(tab: chrome.tabs.Tab): TabInfo | null {
 
 function sortGroups(groups: GroupedTabs[]): GroupedTabs[] {
   return groups.sort((a, b) => {
-    if (a.category === 'other') return 1
-    if (b.category === 'other') return -1
+    if (a.isPinnedGroup || a.groupName === 'Pinned') return -1
+    if (b.isPinnedGroup || b.groupName === 'Pinned') return 1
+    const isOtherA = a.category === 'other' && !a.groupId && (a.groupName === 'Other' || !a.groupName)
+    const isOtherB = b.category === 'other' && !b.groupId && (b.groupName === 'Other' || !b.groupName)
+    if (isOtherA && !isOtherB) return 1
+    if (isOtherB && !isOtherA) return -1
     return b.tabs.length - a.tabs.length
   })
 }
@@ -124,7 +128,7 @@ function freeGroupsToGroupedTabs(
   freeGroups: FreeGroupResult[],
   chromeTabs: chrome.tabs.Tab[],
 ): GroupedTabs[] {
-  return freeGroups
+  const result: GroupedTabs[] = freeGroups
     .map((g) => ({
       category: 'other' as GroupCategory,
       tabs: tabsFromChrome(chromeTabs, g.tabIds),
@@ -132,6 +136,40 @@ function freeGroupsToGroupedTabs(
       groupColor: g.color,
     }))
     .filter((g) => g.tabs.length > 0)
+
+  const pinnedTabs = chromeTabs.filter((t) => t.pinned)
+  if (pinnedTabs.length > 0) {
+    const pinnedInfos = pinnedTabs
+      .map((t) => chromeTabToTabInfo(t))
+      .filter((t): t is TabInfo => t !== null)
+    if (pinnedInfos.length > 0) {
+      result.unshift({
+        category: 'other' as GroupCategory,
+        groupName: 'Pinned',
+        isPinnedGroup: true,
+        tabs: pinnedInfos,
+      })
+    }
+  }
+
+  const groupedTabIds = new Set(freeGroups.flatMap((g) => g.tabIds))
+  const unpinnedUngrouped = chromeTabs.filter(
+    (t) => !t.pinned && (t.id !== undefined && !groupedTabIds.has(t.id)),
+  )
+  if (unpinnedUngrouped.length > 0) {
+    const unpinnedInfos = unpinnedUngrouped
+      .map((t) => chromeTabToTabInfo(t))
+      .filter((t): t is TabInfo => t !== null)
+    if (unpinnedInfos.length > 0) {
+      result.push({
+        category: 'other' as GroupCategory,
+        groupName: 'Other',
+        tabs: unpinnedInfos,
+      })
+    }
+  }
+
+  return result
 }
 
 function ruleGroupsToGroupedTabs(
@@ -139,12 +177,29 @@ function ruleGroupsToGroupedTabs(
   chromeTabs: chrome.tabs.Tab[],
 ): GroupedTabs[] {
   const result: GroupedTabs[] = []
+
+  const pinnedTabs = chromeTabs.filter((t) => t.pinned)
+  if (pinnedTabs.length > 0) {
+    const pinnedInfos = pinnedTabs
+      .map((t) => chromeTabToTabInfo(t))
+      .filter((t): t is TabInfo => t !== null)
+    if (pinnedInfos.length > 0) {
+      result.push({
+        category: 'other' as GroupCategory,
+        groupName: 'Pinned',
+        isPinnedGroup: true,
+        tabs: pinnedInfos,
+      })
+    }
+  }
+
   for (const [category, tabIds] of groups) {
     const categoryTabs = tabsFromChrome(chromeTabs, tabIds)
     if (categoryTabs.length > 0) {
       result.push({ category, tabs: categoryTabs })
     }
   }
+
   return result
 }
 
@@ -168,26 +223,42 @@ export function cacheAddTab(tab: chrome.tabs.Tab): void {
   const tabInfo = chromeTabToTabInfo(tab)
   if (!tabInfo) return
 
+  if (tab.pinned) {
+    let pinnedGroup = previewCache.find((g) => g.isPinnedGroup || g.groupName === 'Pinned')
+    if (pinnedGroup) {
+      pinnedGroup.tabs.push(tabInfo)
+    } else {
+      previewCache.unshift({
+        category: 'other' as GroupCategory,
+        groupName: 'Pinned',
+        isPinnedGroup: true,
+        tabs: [tabInfo],
+      })
+    }
+    sortGroups(previewCache)
+    return
+  }
+
   const cacheIsAIGrouped = cacheIsAIGroupedMap.get(windowId) ?? false
   if (cacheIsAIGrouped) {
-    // When AI-grouped, put new tabs in an "ungrouped" bucket instead of
-    // running rule engine which would create mismatched rule-engine groups.
-    const ungrouped = previewCache.find((g) => g.category === 'other' && !g.groupName)
+    const ungrouped = previewCache.find((g) => g.category === 'other' && (g.groupName === 'Other' || !g.groupName) && !g.isPinnedGroup)
     if (ungrouped) {
       ungrouped.tabs.push(tabInfo)
     } else {
       previewCache.push({
         category: 'other' as GroupCategory,
-        tabs: [tabInfo]
+        groupName: 'Other',
+        tabs: [tabInfo],
       })
     }
+    sortGroups(previewCache)
     return
   }
 
   const result = classify(tab.url, tab.title)
   const category = result.category
 
-  const group = previewCache.find((g) => g.category === category && !g.groupName)
+  const group = previewCache.find((g) => g.category === category && !g.groupName && !g.isPinnedGroup)
   if (group) {
     group.tabs.push(tabInfo)
   } else {
@@ -299,17 +370,32 @@ export async function autoGroupNewTab(tab: chrome.tabs.Tab): Promise<void> {
 }
 
 /**
- * Update the extension badge to show how many tabs are ungrouped.
+ * Update the extension badge to show how many tabs are duplicates.
  */
 async function updateNewTabsBadge(windowId: number): Promise<void> {
   const tabs = await chrome.tabs.query({ windowId })
 
-  const count = tabs.filter(
-    (t) => !t.pinned && (t.groupId === undefined || t.groupId === TAB_GROUP_ID_NONE)
-  ).length
+  const urlCounts = new Map<string, number>()
+  for (const t of tabs) {
+    if (t.url) {
+      urlCounts.set(t.url, (urlCounts.get(t.url) || 0) + 1)
+    }
+  }
 
-  await chrome.action.setBadgeText({ text: count > 0 ? String(count) : '' })
-  await chrome.action.setBadgeBackgroundColor({ color: '#6B7280' })
+  let duplicateCount = 0
+  for (const count of urlCounts.values()) {
+    if (count > 1) {
+      duplicateCount += count - 1
+    }
+  }
+
+  await chrome.action.setBadgeText({ text: duplicateCount > 0 ? String(duplicateCount) : '' })
+  await chrome.action.setBadgeBackgroundColor({ color: duplicateCount > 0 ? 'red' : '#6B7280' })
+}
+
+async function setAIBadge(): Promise<void> {
+  await chrome.action.setBadgeText({ text: 'AI' })
+  await chrome.action.setBadgeBackgroundColor({ color: '#8B5CF6' })
 }
 
 async function rebuildCache(windowId: number): Promise<void> {
@@ -383,6 +469,23 @@ async function buildGroupsFromChrome(tabs: chrome.tabs.Tab[]): Promise<GroupedTa
 
   // Build GroupedTabs from Chrome state
   const result: GroupedTabs[] = []
+
+  // 1. Separate Pinned tabs
+  const pinnedTabs = tabs.filter((t) => t.pinned)
+  const pinnedInfos = pinnedTabs
+    .map((t) => chromeTabToTabInfo(t))
+    .filter((t): t is TabInfo => t !== null)
+
+  if (pinnedInfos.length > 0) {
+    result.push({
+      category: 'other' as GroupCategory,
+      tabs: pinnedInfos,
+      groupName: 'Pinned',
+      isPinnedGroup: true,
+    })
+  }
+
+  // 2. Build Chrome tab groups
   for (const [gid, chromeGroup] of chromeGroups) {
     const memberTabs = tabs.filter((t) => t.groupId === gid)
     const tabInfos = memberTabs
@@ -400,17 +503,19 @@ async function buildGroupsFromChrome(tabs: chrome.tabs.Tab[]): Promise<GroupedTa
     })
   }
 
-  // Add ungrouped tabs as a separate group
-  const ungroupedTabs = tabs.filter(
-    (t) => t.groupId === undefined || t.groupId === TAB_GROUP_ID_NONE,
+  // 3. Add unpinned ungrouped tabs as a separate 'Other' group
+  const unpinnedUngroupedTabs = tabs.filter(
+    (t) => !t.pinned && (t.groupId === undefined || t.groupId === TAB_GROUP_ID_NONE),
   )
-  const ungroupedInfos = ungroupedTabs
+  const unpinnedUngroupedInfos = unpinnedUngroupedTabs
     .map((t) => chromeTabToTabInfo(t))
     .filter((t): t is TabInfo => t !== null)
-  if (ungroupedInfos.length > 0) {
+
+  if (unpinnedUngroupedInfos.length > 0) {
     result.push({
       category: 'other' as GroupCategory,
-      tabs: ungroupedInfos,
+      tabs: unpinnedUngroupedInfos,
+      groupName: 'Other',
     })
   }
 
@@ -440,24 +545,49 @@ export function sortTabsByDomainAndTitleHelper(tabs: chrome.tabs.Tab[]): chrome.
  * already has tab groups and restores from those — this preserves AI grouping
  * results across service worker restarts.
  */
+function buildDefaultUngroupedResult(tabs: chrome.tabs.Tab[]): GroupedTabs[] {
+  const result: GroupedTabs[] = []
+  const pinnedTabs = tabs.filter((t) => t.pinned)
+  const unpinnedTabs = tabs.filter((t) => !t.pinned)
+
+  if (pinnedTabs.length > 0) {
+    const pinnedInfos = pinnedTabs
+      .map((t) => chromeTabToTabInfo(t))
+      .filter((t): t is TabInfo => t !== null)
+    if (pinnedInfos.length > 0) {
+      result.push({
+        category: 'other' as GroupCategory,
+        groupName: 'Pinned',
+        isPinnedGroup: true,
+        tabs: pinnedInfos,
+      })
+    }
+  }
+
+  if (unpinnedTabs.length > 0) {
+    const unpinnedInfos = unpinnedTabs
+      .map((t) => chromeTabToTabInfo(t))
+      .filter((t): t is TabInfo => t !== null)
+    if (unpinnedInfos.length > 0) {
+      result.push({
+        category: 'other' as GroupCategory,
+        groupName: 'Other',
+        tabs: unpinnedInfos,
+      })
+    }
+  }
+
+  return result
+}
+
 export async function getGroupsPreview(windowId: number, forceRefresh = false): Promise<GroupedTabs[]> {
   const cached = previewCacheMap.get(windowId)
   if (cached && !forceRefresh) return cached
 
   const tabs = await chrome.tabs.query({ windowId })
 
-  // Logic: Return flat list of all tabs if tab groups are not supported (e.g. Firefox)
-  // Programming logic: Return flat list of all tabs if tab groups are not supported (e.g. Firefox)
   if (!isTabGroupsSupported()) {
-    const tabInfos = tabs
-      .map((t) => chromeTabToTabInfo(t))
-      .filter((t): t is TabInfo => t !== null)
-    const sorted = [
-      {
-        category: 'other' as GroupCategory,
-        tabs: tabInfos,
-      }
-    ]
+    const sorted = buildDefaultUngroupedResult(tabs)
     previewCacheMap.set(windowId, sorted)
     return sorted
   }
@@ -468,6 +598,7 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
 
   if (forceRefresh && settings.ai.enabled && settings.ai.apiKey) {
     try {
+      await setAIBadge()
       const freeGroups = await groupTabsFreelyWithAI(tabs, settings.ai)
       result = freeGroupsToGroupedTabs(freeGroups, tabs)
       cacheIsAIGroupedMap.set(windowId, true)
@@ -478,32 +609,18 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
         const pinnedTabs = tabs.filter((t) => t.pinned)
         const sortedUnpinned = sortTabsByDomainAndTitleHelper(unpinnedTabs)
         const allSorted = [...pinnedTabs, ...sortedUnpinned]
-        const tabInfos = allSorted
-          .map((t) => chromeTabToTabInfo(t))
-          .filter((t): t is TabInfo => t !== null)
-        result = [
-          {
-            category: 'other' as GroupCategory,
-            tabs: tabInfos,
-          },
-        ]
+        result = buildDefaultUngroupedResult(allSorted)
       } else {
         console.error('[timTabTool] AI free grouping failed in preview, falling back to rule engine. Error:', err)
         if (settings.showRuleGroupsWhenUngrouped === false) {
-          const tabInfos = tabs
-            .map((t) => chromeTabToTabInfo(t))
-            .filter((t): t is TabInfo => t !== null)
-          result = [
-            {
-              category: 'other' as GroupCategory,
-              tabs: tabInfos,
-            }
-          ]
+          result = buildDefaultUngroupedResult(tabs)
         } else {
           result = ruleGroupsToGroupedTabs(classifyTabs(tabs), tabs)
         }
       }
       cacheIsAIGroupedMap.set(windowId, false)
+    } finally {
+      await updateNewTabsBadge(windowId)
     }
   } else {
     const fromChrome = await buildGroupsFromChrome(tabs)
@@ -512,15 +629,7 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
       cacheIsAIGroupedMap.set(windowId, fromChrome.some((g) => !!g.groupName))
     } else {
       if (settings.showRuleGroupsWhenUngrouped === false) {
-        const tabInfos = tabs
-          .map((t) => chromeTabToTabInfo(t))
-          .filter((t): t is TabInfo => t !== null)
-        result = [
-          {
-            category: 'other' as GroupCategory,
-            tabs: tabInfos,
-          }
-        ]
+        result = buildDefaultUngroupedResult(tabs)
       } else {
         result = ruleGroupsToGroupedTabs(classifyTabs(tabs), tabs)
       }
@@ -571,6 +680,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
 
     if (settings.ai.enabled && settings.ai.apiKey) {
       try {
+        await setAIBadge()
         // Make the AI call first while tabs are untouched
         const freeGroups = await groupTabsFreelyWithAI(unpinnedTabs, settings.ai, controller.signal)
         if (controller.signal.aborted) return
@@ -679,6 +789,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
+    await updateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
@@ -740,6 +851,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     const existingGroupNames = [...groupNameToId.keys()]
     if (existingGroupNames.length === 0) return
 
+    await setAIBadge()
     const client = new AIClient(settings.ai, controller.signal)
     const classifications = await client.classifyNewTabsIntoGroups(
       newTabs.map((t) => ({ url: t.url || '', title: t.title || '' })),
@@ -806,6 +918,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
+    await updateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
@@ -859,6 +972,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
 
     const hideTitles = titlesHiddenMap.get(windowId) ?? false
 
+    await setAIBadge()
     // Query AI for sub-grouping
     const tabInputs = tabs.map((t) => ({ url: t.url || '', title: t.title || '' }))
     
@@ -911,6 +1025,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
     activeOperationsMap.set(windowId, { type: 'group', error: (err as Error).message })
     throw err
   } finally {
+    await updateNewTabsBadge(windowId)
     activeAbortControllers.delete(windowId)
   }
 }
@@ -976,6 +1091,7 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
       ...aiOverrides
     }, controller.signal)
     
+    await setAIBadge()
     const mergeTarget = await client.decideMergeGroup(tabInputs, otherGroupNames)
 
     if (controller.signal.aborted) return
@@ -998,6 +1114,7 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
     activeOperationsMap.set(windowId, { type: 'group', error: (err as Error).message })
     throw err
   } finally {
+    await updateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
