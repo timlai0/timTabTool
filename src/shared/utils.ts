@@ -12,6 +12,18 @@ export function getAutoBatchSize(maxTokens: number | undefined): number {
   return Math.min(100, Math.max(10, Math.floor(tokens / 500)))
 }
 
+export function parseMaxTokensToNumber(maxTokensStr: string | number | undefined): number {
+  if (typeof maxTokensStr === 'number') return maxTokensStr
+  if (!maxTokensStr) return 16384
+  const str = String(maxTokensStr).trim().toUpperCase()
+  if (str.endsWith('K')) {
+    const val = parseFloat(str.replace('K', ''))
+    if (!isNaN(val)) return Math.round(val * 1024)
+  }
+  const num = parseInt(str, 10)
+  return isNaN(num) ? 16384 : num
+}
+
 export function getOptimalFaviconUrl(urlStr: string, fallbackFavIconUrl?: string): string {
   if (!urlStr) return ''
   try {
@@ -50,3 +62,22 @@ export function getOptimalFaviconUrl(urlStr: string, fallbackFavIconUrl?: string
     return ''
   }
 }
+
+export function formatTimeAgo(timestamp: number, now = Date.now()): string {
+  const diffMs = Math.max(0, now - timestamp)
+  const diffSecs = Math.floor(diffMs / 1000)
+  if (diffSecs < 60) {
+    return 'just now'
+  }
+  const diffMins = Math.floor(diffSecs / 60)
+  if (diffMins < 60) {
+    return `${diffMins}m ago`
+  }
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) {
+    return `${diffHours}h ago`
+  }
+  const diffDays = Math.floor(diffHours / 24)
+  return `${diffDays}d ago`
+}
+

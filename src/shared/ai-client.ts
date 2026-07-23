@@ -1,6 +1,6 @@
 import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory } from './types'
 import { DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS, DEFAULT_ENDPOINTS } from './constants'
-import { getAutoBatchSize } from './utils'
+import { getAutoBatchSize, formatTimeAgo, extractDomain } from './utils'
 
 export const SYSTEM_PROMPT = 'You are a helpful assistant that classifies browser tabs into categories. Be concise.'
 
@@ -143,7 +143,7 @@ export class AIClient {
    * Classify tabs that the rule engine couldn't confidently categorize.
    */
   async classifyTabs(
-    tabs: { url: string; title: string }[],
+    tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
     categories: GroupCategory[],
     stripTitles = false,
   ): Promise<Map<string, GroupCategory>> {
@@ -199,7 +199,7 @@ Only output the JSON array, no other text.`
    * Splits into batches when tab count exceeds BATCH_SIZE.
    */
   async groupTabsFreely(
-    tabs: { url: string; title: string }[],
+    tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
   ): Promise<AIGroupResult[]> {
     if (tabs.length === 0) return []
 
@@ -235,31 +235,32 @@ Only output the JSON array, no other text.`
     return allResults
   }
 
-  private formatTabForPrompt(tab: { url: string; title: string }, index: number, stripTitles = false): string {
-    let urlString = tab.url || ''
-    let domain = ''
-    try {
-      domain = new URL(urlString).hostname.replace(/^www\./, '')
-    } catch {
-      domain = urlString
-    }
+  private formatTabForPrompt(
+    tab: { url: string; title: string; lastAccessed?: number; createdAt?: number },
+    index: number,
+    stripTitles = false,
+  ): string {
+    const urlString = tab.url || ''
+    const domain = extractDomain(urlString) || urlString
+    const openedTime = tab.createdAt ?? tab.lastAccessed
+    const timeTag = openedTime ? ` (Opened: ${new Date(openedTime).toISOString()})` : ''
 
     if (stripTitles) {
       if (this.config.sendFullUrl) {
-        return `${index}. (URL: ${urlString})`
+        return `${index}. (URL: ${urlString})${timeTag}`
       }
-      return `${index}. (${domain})`
+      return `${index}. (${domain})${timeTag}`
     }
 
     const shortTitle = tab.title.length > 40 ? tab.title.slice(0, 40) + '…' : tab.title
     if (this.config.sendFullUrl) {
-      return `${index}. ${shortTitle} (URL: ${urlString})`
+      return `${index}. ${shortTitle} (URL: ${urlString})${timeTag}`
     }
-    return `${index}. ${shortTitle} (${domain})`
+    return `${index}. ${shortTitle} (${domain})${timeTag}`
   }
 
   private async groupTabsBatch(
-    tabs: { url: string; title: string }[],
+    tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
     offset: number,
     existingGroupNames: string[] = [],
     stripTitles = false,
@@ -301,11 +302,18 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
   }
 
   private parseFreeGroupResponse(response: string, maxIndex: number, minIndex = 1): AIGroupResult[] {
-    // Strip markdown code fences if present
+    // Fast code fence extraction using string index operations
     let cleaned = response.trim()
-    const fenceMatch = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
-    if (fenceMatch) {
-      cleaned = fenceMatch[1].trim()
+    const firstFence = cleaned.indexOf('```')
+    if (firstFence !== -1) {
+      const endFence = cleaned.lastIndexOf('```')
+      if (endFence > firstFence) {
+        let content = cleaned.slice(firstFence + 3, endFence).trim()
+        if (content.toLowerCase().startsWith('json')) {
+          content = content.slice(4).trim()
+        }
+        cleaned = content
+      }
     }
 
     // Find the start of the JSON array
@@ -382,7 +390,7 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
    * or a new group descriptor if no existing group fits.
    */
   async classifyNewTabsIntoGroups(
-    tabs: { url: string; title: string }[],
+    tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
     existingGroupNames: string[],
     stripTitles = false,
   ): Promise<{ index: number; group: string; newGroupName?: string; newGroupColor?: string }[]> {
@@ -415,12 +423,21 @@ Only output the JSON array.`
       if (!jsonMatch) return this.fallbackAllToNew(tabs)
 
       let jsonStr = jsonMatch[0].replace(/,\s*([}\]])/g, '$1')
-      const parsed = JSON.parse(jsonStr) as {
+      let parsed: {
         index: number
         group: string
         newGroupName?: string
         newGroupColor?: string
       }[]
+      try {
+        parsed = JSON.parse(jsonStr)
+      } catch {
+        try {
+          parsed = JSON.parse(repairTruncatedJson(jsonStr))
+        } catch {
+          return this.fallbackAllToNew(tabs)
+        }
+      }
 
       const validGroupNames = new Set(existingGroupNames)
       return parsed
@@ -439,8 +456,8 @@ Only output the JSON array.`
         console.warn('[timTabTool] Prompt blocked due to sensitive content in classification, retrying with URLs only...')
         return this.classifyNewTabsIntoGroups(tabs, existingGroupNames, true)
       }
-      console.error('[timTabTool] Failed to parse classify-new-tabs response. Error:', err)
-      return this.fallbackAllToNew(tabs)
+      console.error('[timTabTool] Classification failed:', err)
+      throw err
     }
   }
 
@@ -449,7 +466,7 @@ Only output the JSON array.`
    * Returns the name of the target group to merge into, or "KEEP" if it should remain separate.
    */
   async decideMergeGroup(
-    tabs: { url: string; title: string }[],
+    tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
     existingGroupNames: string[],
     stripTitles = false,
   ): Promise<string> {
@@ -496,7 +513,7 @@ Only output the JSON object.`
     }
   }
 
-  private fallbackAllToNew(tabs: { url: string; title: string }[]): { index: number; group: string }[] {
+  private fallbackAllToNew(tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[]): { index: number; group: string }[] {
     return tabs.map((_, i) => ({ index: i, group: 'NEW', newGroupName: 'Uncategorized', newGroupColor: 'grey' }))
   }
 
@@ -525,14 +542,17 @@ Only output the JSON object.`
           throw err
         }
 
-        // Permanent API failures should not retry (e.g. prohibited content, 400 Bad Request, 401 Unauthorized, 403 Forbidden)
+        // Permanent API failures should not retry (e.g. prohibited content, token limit exceeded, 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found)
         const isPermanent = 
           errorMsg.includes('PROHIBITED_CONTENT') || 
           errorMsg.includes('Prohibited Use policy') || 
           errorMsg.includes('promptFeedback') ||
+          errorMsg.includes('MAX_TOKENS') ||
+          errorMsg.includes('Exceeded output token limit') ||
           errorMsg.includes('API error 400') ||
           errorMsg.includes('API error 401') ||
-          errorMsg.includes('API error 403')
+          errorMsg.includes('API error 403') ||
+          errorMsg.includes('API error 404')
 
         if (isPermanent || attempt === maxRetries) {
           throw err
@@ -926,6 +946,7 @@ export interface GoogleModelItem {
   inputCost?: number
   outputCost?: number
   costDetails?: string
+  rawMaxOutputTokens?: number
 }
 
 export function getGoogleModelPricing(id: string): { input: number; output: number } {
@@ -1059,7 +1080,8 @@ export async function fetchGoogleModels(apiKey: string, endpoint?: string): Prom
       costDetails = `$${inputCost}/$${outputCost} per 1M`
     }
 
-    const outputLimit = m.outputTokenLimit ? Math.round(m.outputTokenLimit / 1024) : 16
+    const outputLimitTokens = m.outputTokenLimit || 16384
+    const outputLimit = Math.round(outputLimitTokens / 1024)
     const maxTokens = `${outputLimit > 0 ? outputLimit : 16}K`
 
     return {
@@ -1071,6 +1093,7 @@ export async function fetchGoogleModels(apiKey: string, endpoint?: string): Prom
       inputCost,
       outputCost,
       maxTokens,
+      rawMaxOutputTokens: outputLimitTokens,
     }
   })
 

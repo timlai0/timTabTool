@@ -2,9 +2,10 @@
 import { ref, computed, watch, onMounted, onUnmounted, toRaw } from 'vue'
 import { getMessage } from '../../shared/i18n'
 import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS } from '../../shared/constants'
-import { getAutoBatchSize } from '../../shared/utils'
+import { getAutoBatchSize, parseMaxTokensToNumber } from '../../shared/utils'
 import type { ExtensionSettings } from '../../shared/types'
 import { AIClient, SYSTEM_PROMPT, fetchGoogleModels } from '../../shared/ai-client'
+import { APP_VERSION, BUILD_NUMBER, BUILD_HASH, BUILD_TIME } from '../../shared/version'
 
 const props = defineProps<{
   isStandaloneSearch?: boolean
@@ -82,6 +83,19 @@ const fetchingGoogleModels = ref(false)
 const fetchModelsMessage = ref<string | null>(null)
 const fetchModelsError = ref<string | null>(null)
 
+function autoFillModelParams(modelId: string | undefined, customList?: any[]) {
+  const list = customList || currentProviderModels.value || []
+  const targetId = modelId || settings.value.ai.model || (list[0]?.id ?? '')
+  if (!targetId) return
+
+  const selected = list.find((m: any) => m.id === targetId)
+  if (selected) {
+    const tokens = (selected as any).rawMaxOutputTokens || parseMaxTokensToNumber(selected.maxTokens)
+    settings.value.ai.maxTokens = tokens
+    settings.value.ai.batchSize = getAutoBatchSize(tokens)
+  }
+}
+
 async function handleFetchGoogleModels() {
   if (!settings.value.ai.apiKey) {
     fetchModelsError.value = 'Google API Key is required to fetch models.'
@@ -100,6 +114,7 @@ async function handleFetchGoogleModels() {
     if (!settings.value.ai.model && models.length > 0) {
       settings.value.ai.model = models[0].id
     }
+    autoFillModelParams(settings.value.ai.model, models)
     await saveSettings()
   } catch (err) {
     fetchModelsError.value = (err as Error).message
@@ -152,11 +167,7 @@ const modelSelectValue = computed({
     } else {
       isCustomSelected.value = false
       settings.value.ai.model = newValue
-      const chosen = currentProviderModels.value.find(m => m.id === newValue)
-      if (chosen) {
-        const mapping: Record<string, number> = { '65K': 65536, '16K': 16384, '8K': 8192, '4K': 4096 }
-        settings.value.ai.maxTokens = mapping[chosen.maxTokens] || 16384
-      }
+      autoFillModelParams(newValue)
     }
   }
 })
@@ -302,7 +313,11 @@ async function testConnection() {
 async function copyConfig() {
   backupError.value = ''
   try {
-    const rawConfig = toRaw(settings.value)
+    const rawConfig = JSON.parse(JSON.stringify(toRaw(settings.value)))
+    if (rawConfig.ai) {
+      delete rawConfig.ai.customModels
+    }
+    delete rawConfig.customModels
     const jsonStr = JSON.stringify(rawConfig, null, 2)
     await navigator.clipboard.writeText(jsonStr)
     copyText.value = 'Config Copied!'
@@ -359,7 +374,10 @@ async function pasteConfig() {
             <path fill-rule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clip-rule="evenodd" />
           </svg>
         </button>
-        <h1 class="text-[15px] font-semibold tracking-tight" style="color: var(--text-primary);">{{ getMessage('settings') }}</h1>
+        <h1 class="text-[15px] font-semibold tracking-tight flex items-center gap-2" style="color: var(--text-primary);">
+          <span>{{ getMessage('settings') }}</span>
+          <span class="text-[10px] font-medium opacity-70" style="color: var(--text-secondary);">v{{ APP_VERSION }} (b{{ BUILD_NUMBER }})</span>
+        </h1>
       </div>
 
       <!-- Save settings header button -->
@@ -1299,6 +1317,25 @@ async function pasteConfig() {
           <p v-if="backupError" class="text-[10px] text-center" style="color: var(--group-red);">
             {{ backupError }}
           </p>
+        </div>
+
+        <!-- About & Build Info -->
+        <div class="p-3 rounded-sm" style="background: var(--bg-primary); border: 0.5px solid var(--border);">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <img src="/icons/icon-32.png" alt="" class="w-4 h-4 shrink-0" />
+              <div>
+                <div class="text-xs font-semibold" style="color: var(--text-primary);">TabPilot</div>
+                <div class="text-[10px]" style="color: var(--text-secondary);">
+                  Version {{ APP_VERSION }} <span style="color: var(--text-tertiary);">(Build #{{ BUILD_NUMBER }})</span>
+                </div>
+              </div>
+            </div>
+            <div class="text-[9.5px] text-right font-mono" style="color: var(--text-tertiary);">
+              <div>Commit: {{ BUILD_HASH }}</div>
+              <div v-if="BUILD_TIME">{{ new Date(BUILD_TIME).toLocaleDateString() }}</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
