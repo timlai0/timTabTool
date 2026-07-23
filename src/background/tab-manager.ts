@@ -468,6 +468,11 @@ async function rebuildCache(windowId: number): Promise<void> {
 
 const rebuildTimeoutsByWindow = new Map<number, ReturnType<typeof setTimeout>>()
 export function debouncedCacheRebuild(windowId: number): void {
+  const op = activeOperationsMap.get(windowId)
+  if (op && op.type) {
+    // Skip redundant intermediate cache rebuilds while a batch operation (grouping/classifying) is active
+    return
+  }
   const existing = rebuildTimeoutsByWindow.get(windowId)
   if (existing) clearTimeout(existing)
   rebuildTimeoutsByWindow.set(
