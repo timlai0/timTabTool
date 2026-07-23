@@ -800,19 +800,60 @@
   color: #86868B;
 }
 
-.atm-progress-close-btn {
-  font-size: 10px;
-  color: #FF3B30;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  text-decoration: underline;
-  padding: 0;
+.atm-progress-hide-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
   font-weight: 500;
+  line-height: 1;
+  color: #3A3A3C;
+  background: rgba(0, 0, 0, 0.05);
+  border: 0.5px solid rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.atm-progress-hide-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #1C1C1E;
+}
+
+.atm-progress-hide-btn:active {
+  transform: scale(0.96);
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.atm-progress-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  color: #FF3B30;
+  background: rgba(255, 59, 48, 0.08);
+  border: 0.5px solid rgba(255, 59, 48, 0.2);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  outline: none;
+  text-decoration: none;
+  transition: all 0.15s ease;
+  user-select: none;
 }
 
 .atm-progress-close-btn:hover {
-  opacity: 0.8;
+  background: rgba(255, 59, 48, 0.16);
+  color: #D70015;
+}
+
+.atm-progress-close-btn:active {
+  transform: scale(0.96);
 }
 
 .atm-progress-bar-bg {
@@ -878,8 +919,26 @@
   .atm-progress-detail {
     color: #98989D;
   }
+  .atm-progress-hide-btn {
+    color: #E5E5EA;
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+  .atm-progress-hide-btn:hover {
+    background: rgba(255, 255, 255, 0.18);
+    color: #FFFFFF;
+  }
+  .atm-progress-hide-btn:active {
+    background: rgba(255, 255, 255, 0.24);
+  }
   .atm-progress-close-btn {
     color: #FF453A;
+    background: rgba(255, 69, 58, 0.15);
+    border-color: rgba(255, 69, 58, 0.3);
+  }
+  .atm-progress-close-btn:hover {
+    background: rgba(255, 69, 58, 0.25);
+    color: #FF6961;
   }
 }
 
@@ -912,8 +971,30 @@
   color: #98989D;
 }
 
+:host([data-theme="dark"]) .atm-progress-hide-btn {
+  color: #E5E5EA;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+:host([data-theme="dark"]) .atm-progress-hide-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #FFFFFF;
+}
+
+:host([data-theme="dark"]) .atm-progress-hide-btn:active {
+  background: rgba(255, 255, 255, 0.24);
+}
+
 :host([data-theme="dark"]) .atm-progress-close-btn {
   color: #FF453A;
+  background: rgba(255, 69, 58, 0.15);
+  border-color: rgba(255, 69, 58, 0.3);
+}
+
+:host([data-theme="dark"]) .atm-progress-close-btn:hover {
+  background: rgba(255, 69, 58, 0.25);
+  color: #FF6961;
 }
 
 /* ─── Closed Tabs Toggle ─── */
