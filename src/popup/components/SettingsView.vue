@@ -223,14 +223,14 @@ onMounted(async () => {
     connectionSettingsExpanded.value = true
   }
   try {
-    const commands = await (typeof browser !== 'undefined' && browser.commands
-      ? browser.commands.getAll()
+    const commands = await (typeof (globalThis as any).browser !== 'undefined' && (globalThis as any).browser.commands
+      ? (globalThis as any).browser.commands.getAll()
       : chrome.commands.getAll())
-    const searchCmd = commands.find((c) => c.name === 'open-search')
+    const searchCmd = commands.find((c: { name?: string; shortcut?: string }) => c.name === 'open-search')
     if (searchCmd?.shortcut) {
       searchShortcut.value = searchCmd.shortcut
     }
-    const searchSlashCmd = commands.find((c) => c.name === 'open-search-slash')
+    const searchSlashCmd = commands.find((c: { name?: string; shortcut?: string }) => c.name === 'open-search-slash')
     if (searchSlashCmd?.shortcut) {
       searchSlashShortcut.value = searchSlashCmd.shortcut
     }

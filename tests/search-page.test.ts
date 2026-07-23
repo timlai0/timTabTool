@@ -12,14 +12,14 @@ vi.mock('../src/styles/global.css', () => ({}))
 
 describe('Search Page', () => {
   beforeEach(() => {
-    global.window = {
+    ;(globalThis as any).window = {
       addEventListener: vi.fn(),
       matchMedia: vi.fn().mockReturnValue({ matches: false }),
       location: { href: 'chrome-extension://id/search.html' },
       __ATM_SEARCH_LOADED__: false
     } as any
 
-    global.document = {
+    ;(globalThis as any).document = {
       createElement: vi.fn((tag) => ({
         id: '',
         className: '',
@@ -42,7 +42,7 @@ describe('Search Page', () => {
       }
     } as any
 
-    global.chrome = {
+    ;(globalThis as any).chrome = {
       runtime: {
         sendMessage: vi.fn().mockResolvedValue({}),
         onMessage: {

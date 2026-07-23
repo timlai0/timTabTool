@@ -2,14 +2,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 describe('Search Overlay', () => {
   beforeEach(() => {
-    global.window = {
+    ;(globalThis as any).window = {
       addEventListener: vi.fn(),
       matchMedia: vi.fn().mockReturnValue({ matches: false }),
       location: { href: 'https://example.com' },
       __ATM_SEARCH_LOADED__: false
     } as any
 
-    global.document = {
+    ;(globalThis as any).document = {
       createElement: vi.fn((tag) => {
         return {
           id: '',
@@ -34,7 +34,7 @@ describe('Search Overlay', () => {
       }
     } as any
 
-    global.chrome = {
+    ;(globalThis as any).chrome = {
       runtime: {
         sendMessage: vi.fn().mockResolvedValue({}),
         onMessage: {
@@ -50,7 +50,7 @@ describe('Search Overlay', () => {
 
   it('should initialize without errors', async () => {
     await import('../src/content/search-overlay')
-    expect(global.window.__ATM_SEARCH_LOADED__).toBe(true)
-    expect(global.window.addEventListener).toHaveBeenCalled()
+    expect((globalThis as any).window.__ATM_SEARCH_LOADED__).toBe(true)
+    expect((globalThis as any).window.addEventListener).toHaveBeenCalled()
   })
 })

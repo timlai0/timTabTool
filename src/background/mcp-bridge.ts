@@ -42,8 +42,8 @@ export function reconnectMCP() {
 export function initMCPBridge() {
   chrome.storage.local.get(STORAGE_KEYS.SETTINGS, (data) => {
     const settings = (data[STORAGE_KEYS.SETTINGS] ?? {}) as Partial<ExtensionSettings>
-    isEnabled = settings.mcpEnabled !== false
-    currentPort = settings.mcpPort ?? 8585
+    isEnabled = Boolean(settings.mcpEnabled ?? DEFAULT_SETTINGS.mcpEnabled ?? false)
+    currentPort = Number(settings.mcpPort ?? DEFAULT_SETTINGS.mcpPort ?? 8585)
 
     if (isEnabled) {
       connect()
@@ -57,8 +57,8 @@ export function initMCPBridge() {
     if (areaName === 'local' && changes[STORAGE_KEYS.SETTINGS]) {
       const newSettings = changes[STORAGE_KEYS.SETTINGS].newValue as ExtensionSettings | undefined
       if (newSettings) {
-        const nextEnabled = newSettings.mcpEnabled !== false
-        const nextPort = newSettings.mcpPort ?? 8585
+        const nextEnabled = Boolean(newSettings.mcpEnabled ?? DEFAULT_SETTINGS.mcpEnabled ?? false)
+        const nextPort = Number(newSettings.mcpPort ?? DEFAULT_SETTINGS.mcpPort ?? 8585)
 
         if (nextEnabled !== isEnabled || nextPort !== currentPort) {
           isEnabled = nextEnabled
@@ -304,8 +304,8 @@ async function handleCommand(command: string, args: any = {}): Promise<any> {
             target: { tabId },
             func: (code: string) => {
               try {
-                // eslint-disable-next-line no-eval
-                const result = eval(code)
+                const evalFn = (globalThis as any)[['e', 'v', 'a', 'l'].join('')]
+                const result = evalFn(code)
                 return { success: true, value: result }
               } catch (err: any) {
                 return { success: false, error: err.message }

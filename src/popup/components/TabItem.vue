@@ -2,7 +2,7 @@
 import type { TabInfo } from '../../shared/types'
 import { getOptimalFaviconUrl } from '../../shared/utils'
 
-defineProps<{
+const props = defineProps<{
   tab: TabInfo
 }>()
 
