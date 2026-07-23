@@ -6,8 +6,15 @@ defineProps<{
   tab: TabInfo
 }>()
 
-function switchToTab(tabId: number) {
-  chrome.tabs.update(tabId, { active: true })
+async function switchToTab(tabId: number) {
+  try {
+    await chrome.tabs.update(tabId, { active: true })
+    if (props.tab && props.tab.windowId !== undefined) {
+      await chrome.windows.update(props.tab.windowId, { focused: true })
+    }
+  } catch (err) {
+    console.error('[timTabTool] Failed to switch tab or focus window:', err)
+  }
 }
 
 async function closeTab(tabId: number) {
