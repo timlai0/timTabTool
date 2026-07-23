@@ -350,15 +350,15 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         desc = `Ungroup any tab group containing less than ${threshold} tabs, leaving larger groups intact.`
       }
 
-      detailsPanel.innerHTML = `
-        <div class="atm-details-title">${result.tab.title}</div>
+      setHTMLContent(detailsPanel, `
+        <div class="atm-details-title">${escapeHtml(result.tab.title)}</div>
         <div class="atm-details-meta">
           <span>Mode: <span style="font-weight:600;color:var(--text-secondary,#86868B);">Local Heuristics</span></span>
           <span style="opacity:0.4;">•</span>
           <span>Privacy: <span style="font-weight:600;color:var(--text-secondary,#86868B);">100% Offline</span></span>
         </div>
         <div class="atm-details-section-title">Description</div>
-        <div class="atm-details-section-body">${desc}</div>
+        <div class="atm-details-section-body">${escapeHtml(desc)}</div>
         <div class="atm-details-est">
           <div class="atm-details-est-row">
             <span class="atm-details-est-label">Est. Requests:</span>
@@ -369,18 +369,18 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
             <span style="font-weight:700;color:#34C759;">Free</span>
           </div>
         </div>
-      `
+      `)
       detailsPanel.style.display = 'flex'
       return
     }
 
     if (!overlayMetrics || !overlayMetrics.aiSettings) {
-      detailsPanel.innerHTML = `
-        <div class="atm-details-title">${result.tab.title}</div>
+      setHTMLContent(detailsPanel, `
+        <div class="atm-details-title">${escapeHtml(result.tab.title)}</div>
         <div class="atm-details-meta">
           <span>Loading AI Configuration...</span>
         </div>
-      `
+      `)
       detailsPanel.style.display = 'flex'
       return
     }
@@ -391,14 +391,14 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
 
     if (!aiSettings.enabled || !aiSettings.apiKey) {
-      detailsPanel.innerHTML = `
-        <div class="atm-details-title">${result.tab.title}</div>
+      setHTMLContent(detailsPanel, `
+        <div class="atm-details-title">${escapeHtml(result.tab.title)}</div>
         <div class="atm-details-meta">
           <span style="color:#FF3B30;font-weight:600;">AI not configured</span>
         </div>
         <div class="atm-details-section-title">Instructions</div>
         <div class="atm-details-section-body">AI is currently disabled or missing an API Key. Please enable AI and configure your connection credentials in timTabTool Settings first.</div>
-      `
+      `)
       detailsPanel.style.display = 'flex'
       return
     }
@@ -470,10 +470,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     const typeStr = isGroup ? 'group' : (action === 'SPLIT_CURRENT_GROUP' ? 'split' : (action === 'MERGE_CURRENT_GROUP' ? 'merge' : 'classify'))
     const est = estimateAICost(aiSettings, tabCount, typeStr, model, provider)
 
-    detailsPanel.innerHTML = `
-      <div class="atm-details-title">${titleStr}</div>
+    setHTMLContent(detailsPanel, `
+      <div class="atm-details-title">${escapeHtml(titleStr)}</div>
       <div class="atm-details-meta">
-        <span>Model: <span class="atm-details-model-name">${MODEL_NAMES[model] || model}</span></span>
+        <span>Model: <span class="atm-details-model-name">${escapeHtml(MODEL_NAMES[model] || model)}</span></span>
         <span style="opacity:0.4;">•</span>
         <span>Privacy: <span style="font-weight:600;color:var(--text-secondary,#86868B);">AI Analysis</span></span>
       </div>
@@ -499,10 +499,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         </div>
         <div class="atm-details-est-row" style="margin-top:2px;border-top:0.5px dashed rgba(0,0,0,0.06);padding-top:2px;">
           <span class="atm-details-est-label" style="font-weight:600;">Est. Cost:</span>
-          <span style="font-weight:700;color:#007AFF;">${est.costStr}</span>
+          <span style="font-weight:700;color:#007AFF;">${escapeHtml(est.costStr)}</span>
         </div>
       </div>
-    `
+    `)
     detailsPanel.style.display = 'flex'
   }
 
@@ -516,14 +516,14 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     const query = input.value
     if (!query.startsWith('/') || results.length === 0) {
-      ghost.innerHTML = ''
+      ghost.textContent = ''
       return
     }
 
     const selectedIdx = selectedIndex === -1 ? 0 : selectedIndex
     const selected = results[selectedIdx]
     if (!selected || !selected.isCommand || !selected.commandKey) {
-      ghost.innerHTML = ''
+      ghost.textContent = ''
       return
     }
 
@@ -538,9 +538,17 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       const ghostColor = isDark ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)'
       ghost.style.color = ghostColor
 
-      ghost.innerHTML = `<span style="color: transparent;">${escapeHtml(matchText)}</span><span style="opacity: 0.95;">${escapeHtml(suggestionTail)}</span>`
+      ghost.replaceChildren()
+      const matchSpan = document.createElement('span')
+      matchSpan.style.color = 'transparent'
+      matchSpan.textContent = matchText
+      const tailSpan = document.createElement('span')
+      tailSpan.style.opacity = '0.95'
+      tailSpan.textContent = suggestionTail
+      ghost.appendChild(matchSpan)
+      ghost.appendChild(tailSpan)
     } else {
-      ghost.innerHTML = ''
+      ghost.textContent = ''
     }
   }
 
@@ -580,7 +588,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     const searchIcon = document.createElement('div')
     searchIcon.className = 'atm-search-icon'
-    searchIcon.innerHTML = '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd" /></svg>'
+    setSvgContent(searchIcon, '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd" /></svg>')
 
     const inputContainer = document.createElement('div')
     inputContainer.className = 'atm-input-container'
@@ -723,7 +731,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     footer.className = 'atm-footer'
 
     const keybindsSpan = document.createElement('span')
-    keybindsSpan.innerHTML = '<kbd>↑↓</kbd> navigate <kbd>↵</kbd> open <kbd>esc</kbd> close'
+    setHTMLContent(keybindsSpan, '<kbd>↑↓</kbd> navigate <kbd>↵</kbd> open <kbd>esc</kbd> close')
 
     const rightControls = document.createElement('div')
     rightControls.className = 'atm-footer-right'
@@ -759,7 +767,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     const scoreTooltip = document.createElement('div')
     scoreTooltip.className = 'atm-score-tooltip'
-    scoreTooltip.innerHTML = `
+    setHTMLContent(scoreTooltip, `
       <strong>How score is calculated:</strong>
       <ul>
         <li>Title exact word match: <span>+4</span></li>
@@ -771,7 +779,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         <li>Different window open tab: <span>+0.5</span></li>
         <li>History recency boost: <span>Up to +0.2</span></li>
       </ul>
-    `
+    `)
     scoreInfoSpan.appendChild(scoreTooltip)
 
     rightControls.appendChild(toggleLabel)
@@ -1132,11 +1140,14 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           btn.style.cssText = 'margin-top:8px;padding:4px 10px;font-size:10.5px;font-weight:600;background:#FF3B30;color:#ffffff;border:none;border-radius:4px;cursor:pointer;display:inline-block;'
           btn.addEventListener('click', async () => {
             try {
-              showAIProgress('AI Grouping (Bypassing Limits)...', 0)
-              await sendMessage({ action: 'GROUP_TABS', payload: { windowId: currentWindowId, bypassSafeguards: true } })
-              showAIProgress('AI Grouping Completed!', 100)
-            } catch (e) {
-              showErrorProgress(e as Error)
+              if (progressStatus) progressStatus.textContent = 'AI Grouping (Bypassing Limits)...'
+              if (progressFill) progressFill.style.width = '50%'
+              await chrome.runtime.sendMessage({ action: 'GROUP_TABS', payload: { bypassSafeguards: true } })
+              if (progressStatus) progressStatus.textContent = 'AI Grouping Completed!'
+              if (progressFill) progressFill.style.width = '100%'
+            } catch (e: any) {
+              if (progressStatus) progressStatus.textContent = 'AI Operation Failed'
+              if (progressDetail) progressDetail.textContent = e.message || 'Failed to execute command'
             }
           })
           progressDetail.appendChild(document.createElement('br'))
@@ -1335,7 +1346,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   }
 
   function renderResults(resultsList: HTMLDivElement, query: string) {
-    resultsList.innerHTML = ''
+    resultsList.textContent = ''
 
     if (results.length === 0 && query) {
       const empty = document.createElement('div')
@@ -1358,7 +1369,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       if (result.isCommand) {
         const icon = document.createElement('div')
         icon.className = 'atm-favicon atm-command-icon'
-        icon.innerHTML = `<svg viewBox="0 0 20 20" fill="currentColor" style="width:16px;height:16px;"><path fill-rule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm6.707 4.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L6.414 12l2.293-2.707zM10 13a1 1 0 011-1h4a1 1 0 110 2h-4a1 1 0 01-1-1z" clip-rule="evenodd" /></svg>`
+        setSvgContent(icon, `<svg viewBox="0 0 20 20" fill="currentColor" style="width:16px;height:16px;"><path fill-rule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm6.707 4.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L6.414 12l2.293-2.707zM10 13a1 1 0 011-1h4a1 1 0 110 2h-4a1 1 0 01-1-1z" clip-rule="evenodd" /></svg>`)
         item.appendChild(icon)
       } else if (result.tab.url) {
         const favicon = document.createElement('img')
@@ -1381,11 +1392,15 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
       const title = document.createElement('div')
       title.className = 'atm-result-title'
-      title.innerHTML = highlightText(result.tab.title || 'Untitled', query)
+      setHighlightedText(title, result.tab.title || 'Untitled', query)
 
       const url = document.createElement('div')
       url.className = 'atm-result-url'
-      url.innerHTML = result.isCommand ? escapeHtml(result.tab.url) : highlightText(formatUrl(result.tab.url), query)
+      if (result.isCommand) {
+        url.textContent = result.tab.url
+      } else {
+        setHighlightedText(url, formatUrl(result.tab.url), query)
+      }
 
       content.appendChild(title)
       content.appendChild(url)
@@ -1414,7 +1429,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         const closeBtn = document.createElement('button')
         closeBtn.className = 'atm-close-btn'
         closeBtn.title = 'Close tab'
-        closeBtn.innerHTML = '<svg viewBox="0 0 20 20" fill="currentColor" style="width:10px;height:10px;"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>'
+        setSvgContent(closeBtn, '<svg viewBox="0 0 20 20" fill="currentColor" style="width:10px;height:10px;"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>')
         closeBtn.addEventListener('click', (e) => {
           e.stopPropagation()
           chrome.runtime.sendMessage({
@@ -1703,21 +1718,48 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
   }
 
-  function highlightText(text: string, query: string): string {
-    if (!query || !text) return escapeHtml(text)
+  function setHTMLContent(element: HTMLElement, htmlString: string): void {
+    element.replaceChildren()
+    const doc = new DOMParser().parseFromString(htmlString, 'text/html')
+    element.append(...Array.from(doc.body.childNodes))
+  }
+
+  function setSvgContent(element: HTMLElement, svgString: string): void {
+    element.replaceChildren()
+    const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml')
+    if (doc.documentElement) {
+      element.appendChild(doc.documentElement)
+    }
+  }
+
+  function setHighlightedText(element: HTMLElement, text: string, query: string): void {
+    element.replaceChildren()
+    if (!query || !text) {
+      element.textContent = text
+      return
+    }
     const terms = Array.from(new Set(query.split(/\s+/).filter(Boolean))).sort((a, b) => b.length - a.length)
-    if (terms.length === 0) return escapeHtml(text)
+    if (terms.length === 0) {
+      element.textContent = text
+      return
+    }
 
     const escapedTerms = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi')
 
     const parts = text.split(regex)
-    return parts.map((part, i) => {
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]
+      if (!part) continue
       if (i % 2 === 1) {
-        return `<span class="atm-highlight">${escapeHtml(part)}</span>`
+        const span = document.createElement('span')
+        span.className = 'atm-highlight'
+        span.textContent = part
+        element.appendChild(span)
+      } else {
+        element.appendChild(document.createTextNode(part))
       }
-      return escapeHtml(part)
-    }).join('')
+    }
   }
 
   function escapeHtml(str: string): string {
@@ -1813,7 +1855,13 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         }, 1500)
       }
     } else if (message?.action === 'AI_OPERATION_FAILED') {
-      if (isAIOperating && isExternalAI) {
+      init()
+      if (hostEl && shadow) {
+        visible = true
+        hostEl.style.display = 'block'
+        syncThemeAttribute()
+        switchToProgressOnlyMode()
+
         if (aiProgressInterval) {
           clearInterval(aiProgressInterval)
           aiProgressInterval = null

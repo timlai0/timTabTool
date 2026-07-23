@@ -154,3 +154,119 @@ describe('cleanupTabGroups', () => {
     }
   })
 })
+
+describe('sortGroupsByName', () => {
+  let sortGroupsByName: any
+
+  beforeAll(async () => {
+    const managerModule = await import('../src/background/tab-manager')
+    sortGroupsByName = managerModule.sortGroupsByName
+  })
+
+  it('sorts tab groups alphabetically by name and moves group tabs accordingly', async () => {
+    const mockGroups = [
+      { id: 101, title: 'Zebra', windowId: 1 },
+      { id: 102, title: 'Alpha', windowId: 1 },
+      { id: 103, title: 'Beta', windowId: 1 },
+    ]
+
+    const mockTabs = [
+      { id: 0, pinned: true, groupId: -1, windowId: 1 },
+      { id: 1, pinned: false, groupId: 101, windowId: 1 },
+      { id: 2, pinned: false, groupId: 101, windowId: 1 },
+      { id: 3, pinned: false, groupId: 102, windowId: 1 },
+      { id: 4, pinned: false, groupId: 103, windowId: 1 },
+    ]
+
+    const tabGroupsQueryMock = vi.fn().mockResolvedValue(mockGroups)
+    const tabsQueryMock = vi.fn().mockResolvedValue(mockTabs)
+    const tabsMoveMock = vi.fn().mockResolvedValue(undefined)
+
+    const originalTabGroups = chrome.tabGroups
+    const originalTabsQuery = chrome.tabs.query
+    const originalTabsMove = chrome.tabs.move
+
+    chrome.tabGroups = {
+      ...originalTabGroups,
+      TAB_GROUP_ID_NONE: -1,
+      query: tabGroupsQueryMock,
+    } as any
+    chrome.tabs.query = tabsQueryMock
+    chrome.tabs.move = tabsMoveMock
+
+    try {
+      await sortGroupsByName(1)
+
+      expect(tabGroupsQueryMock).toHaveBeenCalledWith({ windowId: 1 })
+      expect(tabsQueryMock).toHaveBeenCalledWith({ windowId: 1 })
+      
+      // Alpha (102, tab [3]) moved first to index 1
+      // Beta (103, tab [4]) moved second to index 2
+      // Zebra (101, tabs [1, 2]) moved third to index 3
+      expect(tabsMoveMock).toHaveBeenNthCalledWith(1, [3], { index: 1 })
+      expect(tabsMoveMock).toHaveBeenNthCalledWith(2, [4], { index: 2 })
+      expect(tabsMoveMock).toHaveBeenNthCalledWith(3, [1, 2], { index: 3 })
+    } finally {
+      chrome.tabGroups = originalTabGroups
+      chrome.tabs.query = originalTabsQuery
+      chrome.tabs.move = originalTabsMove
+    }
+  })
+})
+
+describe('sortGroupsBySize', () => {
+  let sortGroupsBySize: any
+
+  beforeAll(async () => {
+    const managerModule = await import('../src/background/tab-manager')
+    sortGroupsBySize = managerModule.sortGroupsBySize
+  })
+
+  it('sorts tab groups by size descending and moves group tabs accordingly', async () => {
+    const mockGroups = [
+      { id: 101, title: 'Small Group', windowId: 1 },
+      { id: 102, title: 'Big Group', windowId: 1 },
+    ]
+
+    const mockTabs = [
+      { id: 0, pinned: true, groupId: -1, windowId: 1 },
+      { id: 1, pinned: false, groupId: 101, windowId: 1 },
+      { id: 2, pinned: false, groupId: 102, windowId: 1 },
+      { id: 3, pinned: false, groupId: 102, windowId: 1 },
+      { id: 4, pinned: false, groupId: 102, windowId: 1 },
+    ]
+
+    const tabGroupsQueryMock = vi.fn().mockResolvedValue(mockGroups)
+    const tabsQueryMock = vi.fn().mockResolvedValue(mockTabs)
+    const tabsMoveMock = vi.fn().mockResolvedValue(undefined)
+
+    const originalTabGroups = chrome.tabGroups
+    const originalTabsQuery = chrome.tabs.query
+    const originalTabsMove = chrome.tabs.move
+
+    chrome.tabGroups = {
+      ...originalTabGroups,
+      TAB_GROUP_ID_NONE: -1,
+      query: tabGroupsQueryMock,
+    } as any
+    chrome.tabs.query = tabsQueryMock
+    chrome.tabs.move = tabsMoveMock
+
+    try {
+      await sortGroupsBySize(1)
+
+      expect(tabGroupsQueryMock).toHaveBeenCalledWith({ windowId: 1 })
+      expect(tabsQueryMock).toHaveBeenCalledWith({ windowId: 1 })
+
+      // Big Group (102, tabs [2, 3, 4]) has 3 tabs -> moved first to index 1
+      // Small Group (101, tab [1]) has 1 tab -> moved second to index 4
+      expect(tabsMoveMock).toHaveBeenNthCalledWith(1, [2, 3, 4], { index: 1 })
+      expect(tabsMoveMock).toHaveBeenNthCalledWith(2, [1], { index: 4 })
+    } finally {
+      chrome.tabGroups = originalTabGroups
+      chrome.tabs.query = originalTabsQuery
+      chrome.tabs.move = originalTabsMove
+    }
+  })
+})
+

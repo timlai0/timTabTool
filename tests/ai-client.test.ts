@@ -95,6 +95,35 @@ describe('AIClient Retry Logic', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1)
   })
 
+  it('does not retry when output token limit (MAX_TOKENS) is exceeded', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'gemini',
+      apiKey: 'test-key',
+      maxRetries: 3,
+    }
+    const client = new AIClient(config)
+
+    const mockFetch = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            candidates: [{ finishReason: 'MAX_TOKENS' }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    )
+    vi.stubGlobal('fetch', mockFetch)
+
+    await expect(
+      client.classifyNewTabsIntoGroups([{ url: 'https://example.com', title: 'Example' }], [])
+    ).rejects.toThrow('Exceeded output token limit')
+
+    // Should fail instantly on the 1st attempt, zero retries
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+
   it('stops immediately when aborted', async () => {
     const controller = new AbortController()
     const config: AIConfig = {
@@ -284,6 +313,21 @@ describe('AIClient Prompt Formatting', () => {
     
     const formatted = (client as any).formatTabForPrompt(tab, 1, true)
     expect(formatted).toBe('1. (URL: https://github.com/florianlanx/timTabTool/issues/1)')
+  })
+
+  it('includes tab opened time tag when createdAt or lastAccessed is present', () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openai',
+      apiKey: 'test-key',
+      sendFullUrl: false,
+    }
+    const client = new AIClient(config)
+    const tenMinsAgo = Date.now() - 10 * 60 * 1000
+    const tab = { url: 'https://github.com/florianlanx/timTabTool/issues/1', title: 'Issue #1', createdAt: tenMinsAgo }
+
+    const formatted = (client as any).formatTabForPrompt(tab, 1, false)
+    expect(formatted).toBe(`1. Issue #1 (github.com) (Opened: ${new Date(tenMinsAgo).toISOString()})`)
   })
 })
 

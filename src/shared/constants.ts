@@ -53,7 +53,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   showRuleGroupsWhenUngrouped: true,
   useSearchPopup: false,
   sortNewTabs: false,
-  mcpEnabled: true,
+  mcpEnabled: false,
   mcpPort: 8585,
 }
 

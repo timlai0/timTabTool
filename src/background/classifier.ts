@@ -72,12 +72,12 @@ export interface FreeGroupResult {
  * Throws on failure — caller should catch and fall back to rule engine.
  */
 export async function groupTabsFreelyWithAI(
-  tabs: { url?: string; title?: string; id?: number }[],
+  tabs: { url?: string; title?: string; id?: number; lastAccessed?: number; createdAt?: number }[],
   aiConfig: AIConfig,
   signal?: AbortSignal,
 ): Promise<FreeGroupResult[]> {
   const validTabs = tabs.filter(
-    (t): t is { url: string; title: string; id: number } => !!t.id && !!t.url,
+    (t): t is { url: string; title: string; id: number; lastAccessed?: number; createdAt?: number } => !!t.id && !!t.url,
   )
 
   if (validTabs.length === 0) return []
@@ -92,7 +92,12 @@ export async function groupTabsFreelyWithAI(
 
   const client = new AIClient(aiConfig, signal)
   const aiGroups = await client.groupTabsFreely(
-    processedTabs.map((t) => ({ url: t.url, title: t.title || '' })),
+    processedTabs.map((t) => ({
+      url: t.url,
+      title: t.title || '',
+      lastAccessed: t.lastAccessed,
+      createdAt: t.createdAt,
+    })),
   )
 
   return aiGroups.map((g) => ({

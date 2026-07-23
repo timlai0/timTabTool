@@ -59,8 +59,11 @@ try {
   // 5. Add Firefox browser_specific_settings (Gecko ID is MANDATORY for Firefox MV3)
   manifest.browser_specific_settings = {
     gecko: {
-      id: 'timtabtool@florianlanx.github.io',
-      strict_min_version: '109.0'
+      id: 'timtabtool@timlai.de',
+      strict_min_version: '142.0',
+      data_collection_permissions: {
+        required: ['none']
+      }
     }
   };
 
