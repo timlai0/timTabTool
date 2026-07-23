@@ -8,6 +8,7 @@ export interface TabInfo {
   active: boolean
   pinned: boolean
   lastAccessed?: number
+  createdAt?: number
 }
 
 export interface ClassifyResult {
@@ -18,7 +19,7 @@ export interface ClassifyResult {
 
 export type GroupCategory = 'work' | 'dev' | 'learn' | 'social' | 'media' | 'shop' | 'docs' | 'other'
 
-export type ChromeTabGroupColor = 'grey' | 'blue' | 'red' | 'yellow' | 'green' | 'pink' | 'purple' | 'cyan'
+export type ChromeTabGroupColor = 'grey' | 'blue' | 'red' | 'yellow' | 'green' | 'pink' | 'purple' | 'cyan' | 'orange'
 
 export interface GroupDefinition {
   color: ChromeTabGroupColor
@@ -109,9 +110,10 @@ export interface WindowGroupsInfo {
   titlesHidden: boolean
 }
 
-type MessageAction =
+export type MessageAction =
   | 'GROUP_TABS'
   | 'UNGROUP_ALL'
+  | 'UNGROUP_GROUP'
   | 'CLOSE_GROUP'
   | 'CLASSIFY_NEW_TABS'
   | 'EXPAND_ALL_GROUPS'
@@ -144,9 +146,13 @@ type MessageAction =
   | 'CLASSIFY_NEW_TABS_GEMINI'
   | 'CLASSIFY_NEW_TABS_GPT'
   | 'CLOSE_DUPLICATES'
+  | 'CLOSE_POSSIBLE_DUPLICATES'
+  | 'ORGANIZE_POSSIBLE_DUPLICATES'
   | 'CLOSE_DOMAIN'
   | 'ISOLATE_DOMAIN'
   | 'SORT_TABS'
+  | 'SORT_GROUPS_BY_NAME'
+  | 'SORT_GROUPS_BY_SIZE'
   | 'MERGE_WINDOWS'
   | 'MUTE_ALL'
   | 'UNMUTE_ALL'

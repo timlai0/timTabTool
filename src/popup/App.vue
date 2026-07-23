@@ -3,8 +3,9 @@ import { ref, onMounted, computed, watch, onUnmounted, nextTick } from 'vue'
 import { getMessage } from '../shared/i18n'
 import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS } from '../shared/constants'
 import { SYSTEM_PROMPT, AIClient } from '../shared/ai-client'
-import { getAutoBatchSize, getOptimalFaviconUrl } from '../shared/utils'
+import { getAutoBatchSize, getOptimalFaviconUrl, detectDuplicateTabs, normalizeUrl } from '../shared/utils'
 import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInfo } from '../shared/types'
+import { APP_VERSION, BUILD_NUMBER, BUILD_STRING } from '../shared/version'
 import GroupList from './components/GroupList.vue'
 import SettingsView from './components/SettingsView.vue'
 
@@ -128,7 +129,7 @@ onMounted(async () => {
   
   const namesData = await chrome.storage.local.get('customWindowNames')
   if (namesData.customWindowNames) {
-    customWindowNames.value = namesData.customWindowNames
+    customWindowNames.value = namesData.customWindowNames as Record<number, string>
   }
 
   applyTheme(themeMode.value)
@@ -202,113 +203,44 @@ const totalGroups = computed(() =>
 const totalWindows = computed(() => allWindows.value.length)
 
 function removeTrackingParams(urlString: string): string {
-  try {
-    const url = new URL(urlString)
-    const trackingParams = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid', '_gl', 'msclkid', 'mc_cid', 'mc_eid']
-    for (const param of trackingParams) {
-      url.searchParams.delete(param)
-    }
-    return url.toString()
-  } catch {
-    return urlString
-  }
+  return normalizeUrl(urlString)
 }
 
-const exactDuplicatesCount = computed(() => {
-  const urlSeen = new Set<string>()
-  let count = 0
+const duplicateAnalysis = computed(() => {
+  const allTabs: Array<{ id?: number; url?: string; title?: string; favIconUrl?: string; windowId?: number }> = []
   for (const win of allWindows.value) {
     for (const group of win.groups) {
       for (const tab of group.tabs) {
         if (!tab.url) continue
-        if (urlSeen.has(tab.url)) {
-          count++
-        } else {
-          urlSeen.add(tab.url)
-        }
+        allTabs.push({
+          id: tab.id,
+          url: tab.url,
+          title: tab.title || 'Untitled',
+          favIconUrl: tab.favIconUrl,
+          windowId: win.windowId
+        })
       }
     }
   }
-  return count
+  return detectDuplicateTabs(allTabs)
 })
 
-const exactDuplicateTabs = computed(() => {
-  // Logic: Determine the list of all exactly duplicated tabs for the hover tooltip
-  // Programming logic: Get list of exact duplicate tabs to show in the hover tooltip
-  const urlSeen = new Set<string>()
-  const duplicates: Array<{ id: number; title: string; url: string; favIconUrl?: string; windowId: number }> = []
-  for (const win of allWindows.value) {
-    for (const group of win.groups) {
-      for (const tab of group.tabs) {
-        if (!tab.url || tab.id === undefined) continue
-        if (urlSeen.has(tab.url)) {
-          duplicates.push({
-            id: tab.id,
-            title: tab.title || 'Untitled',
-            url: tab.url,
-            favIconUrl: tab.favIconUrl,
-            windowId: win.windowId
-          })
-        } else {
-          urlSeen.add(tab.url)
-        }
-      }
-    }
-  }
-  return duplicates
-})
+const exactDuplicatesCount = computed(() => duplicateAnalysis.value.exactDuplicateCount)
+const exactDuplicateTabs = computed(() => duplicateAnalysis.value.exactDuplicates as Array<{ id: number; title: string; url: string; favIconUrl?: string; windowId: number }>)
 
-
-const possibleDuplicatesCount = computed(() => {
-  const cleanUrlCounts = new Map<string, number>()
-  const exactUrlSeen = new Set<string>()
-  let exactDupes = 0
-  let cleanDupes = 0
-  
-  for (const win of allWindows.value) {
-    for (const group of win.groups) {
-      for (const tab of group.tabs) {
-        if (!tab.url) continue
-        
-        if (exactUrlSeen.has(tab.url)) {
-          exactDupes++
-        } else {
-          exactUrlSeen.add(tab.url)
-        }
-        
-        const cleanUrl = removeTrackingParams(tab.url)
-        const current = cleanUrlCounts.get(cleanUrl) || 0
-        if (current > 0) {
-          cleanDupes++
-        }
-        cleanUrlCounts.set(cleanUrl, current + 1)
-      }
-    }
-  }
-  return cleanDupes - exactDupes
-})
+const possibleDuplicatesCount = computed(() => duplicateAnalysis.value.possibleDuplicateCount)
+const possibleDuplicateClusters = computed(() => duplicateAnalysis.value.possibleDuplicates)
 
 async function closeExactDuplicates() {
-  const urlSeen = new Set<string>()
-  const tabIdsToRemove: number[] = []
-  
-  for (const win of allWindows.value) {
-    for (const group of win.groups) {
-      for (const tab of group.tabs) {
-        if (!tab.url || tab.id === undefined) continue
-        if (urlSeen.has(tab.url)) {
-          tabIdsToRemove.push(tab.id)
-        } else {
-          urlSeen.add(tab.url)
-        }
-      }
-    }
-  }
-  
-  if (tabIdsToRemove.length > 0) {
-    await chrome.tabs.remove(tabIdsToRemove)
-    await loadAllPreviews()
-  }
+  const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent()).id!
+  await chrome.runtime.sendMessage({ action: 'CLOSE_DUPLICATES', payload: currentWinId })
+  await loadAllPreviews()
+}
+
+async function closePossibleDuplicates() {
+  const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent()).id!
+  await chrome.runtime.sendMessage({ action: 'CLOSE_POSSIBLE_DUPLICATES', payload: currentWinId })
+  await loadAllPreviews()
 }
 
 async function focusTab(tabId: number, windowId: number) {
@@ -320,41 +252,8 @@ async function focusTab(tabId: number, windowId: number) {
 }
 
 async function organizePossibleDuplicates() {
-  const cleanUrlToTabs = new Map<string, number[]>()
-  
-  for (const win of allWindows.value) {
-    for (const group of win.groups) {
-      for (const tab of group.tabs) {
-        if (!tab.url || tab.id === undefined) continue
-        const cleanUrl = removeTrackingParams(tab.url)
-        const arr = cleanUrlToTabs.get(cleanUrl) || []
-        arr.push(tab.id)
-        cleanUrlToTabs.set(cleanUrl, arr)
-      }
-    }
-  }
-  
-  const dupesGroups = Array.from(cleanUrlToTabs.values()).filter(arr => arr.length > 1)
-  if (dupesGroups.length === 0) return
-  
   const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent()).id!
-  let firstTabIdToOpen: number | null = null
-
-  const allTabIdsToMove: number[] = []
-  for (const group of dupesGroups) {
-    if (!firstTabIdToOpen) firstTabIdToOpen = group[0]
-    allTabIdsToMove.push(...group)
-  }
-  
-  if (allTabIdsToMove.length > 0) {
-    await chrome.tabs.move(allTabIdsToMove, { windowId: currentWinId, index: -1 })
-  }
-  
-  if (firstTabIdToOpen) {
-    await chrome.tabs.update(firstTabIdToOpen, { active: true })
-    await chrome.windows.update(currentWinId, { focused: true })
-  }
-  
+  await chrome.runtime.sendMessage({ action: 'ORGANIZE_POSSIBLE_DUPLICATES', payload: currentWinId })
   await loadAllPreviews()
 }
 
@@ -527,7 +426,7 @@ function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classi
   const existingGroupNames = type === 'group' 
     ? [] // Group mode doesn't load existing group names here
     : w.groups
-      .filter(g => g.groupName)
+      .filter(g => g.groupId !== undefined && g.groupName && !g.isPinnedGroup)
       .map(g => g.groupName as string)
       
   const est = AIClient.estimateCostAndTokens(
@@ -543,11 +442,10 @@ function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classi
 }
 
 function newTabsCount(w: WindowGroupsInfo): number {
-  // Logic: Count all unpinned tabs that are ungrouped (without group name and without group ID)
-  // Count unpinned tabs in ungrouped groups
+  // Logic: Count all unpinned tabs that are ungrouped (without group ID and not pinned group)
   let count = 0
   for (const g of w.groups) {
-    if (!g.groupName && g.groupId === undefined) {
+    if (g.groupId === undefined && !g.isPinnedGroup) {
       count += g.tabs.filter(t => !t.pinned).length
     }
   }
@@ -591,9 +489,11 @@ async function handleClassifyNew(windowId: number) {
 }
 
 const activePromptWindowId = ref<number | null>(null)
+const activeSortMenuWindowId = ref<number | null>(null)
 const oneShotPromptText = ref<string>('sort all google tabs into 1 group')
 
 function toggleOneShotPromptPopover(windowId: number) {
+  activeSortMenuWindowId.value = null
   if (activePromptWindowId.value === windowId) {
     activePromptWindowId.value = null
   } else {
@@ -602,6 +502,27 @@ function toggleOneShotPromptPopover(windowId: number) {
       oneShotPromptText.value = 'sort all google tabs into 1 group'
     }
   }
+}
+
+function toggleSortMenuPopover(windowId: number) {
+  if (activeSortMenuWindowId.value === windowId) {
+    activeSortMenuWindowId.value = null
+  } else {
+    activeSortMenuWindowId.value = windowId
+    activePromptWindowId.value = null
+  }
+}
+
+async function handleSortGroupsByName(windowId: number) {
+  activeSortMenuWindowId.value = null
+  await chrome.runtime.sendMessage({ action: 'SORT_GROUPS_BY_NAME', payload: { windowId } })
+  await loadAllPreviews()
+}
+
+async function handleSortGroupsBySize(windowId: number) {
+  activeSortMenuWindowId.value = null
+  await chrome.runtime.sendMessage({ action: 'SORT_GROUPS_BY_SIZE', payload: { windowId } })
+  await loadAllPreviews()
 }
 
 async function runOneShotPrompt(windowId: number, customPrompt?: string) {
@@ -793,7 +714,9 @@ const activeHoverAction = ref<'group' | 'classify' | null>(null)
 const hoveredActionWindowId = ref<number | null>(null)
 
 function getClassifyPrompt(w: WindowGroupsInfo) {
-  const existingGroupNames = w.groups.filter(g => g.groupName).map(g => g.groupName)
+  const existingGroupNames = w.groups
+    .filter(g => g.groupId !== undefined && g.groupName && !g.isPinnedGroup)
+    .map(g => g.groupName)
   const uniqueNames = [...new Set(existingGroupNames.filter((n): n is string => !!n))]
   
   let groupListStr = 'None'
@@ -822,7 +745,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
     <header class="flex items-center justify-between px-4 py-3" style="box-shadow: 0 0.5px 0 var(--border);">
       <div class="flex items-center gap-2.5 flex-1 min-w-0 flex-wrap py-0.5">
         <img src="/icons/icon-32.png" alt="" class="w-5 h-5 shrink-0" />
-        <h1 class="text-[15px] font-semibold tracking-tight shrink-0" style="color: var(--text-primary);">timTabTool</h1>
+        <div class="flex items-center gap-1.5 shrink-0" :title="BUILD_STRING">
+          <h1 class="text-[15px] font-semibold tracking-tight" style="color: var(--text-primary);">timTabTool</h1>
+          <span class="text-[9px] font-medium opacity-60 tabular-nums px-1 py-0.2 rounded-xs" style="color: var(--text-secondary); background: var(--hover);">{{ APP_VERSION }}b{{ BUILD_NUMBER }}</span>
+        </div>
         <span class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: var(--hover); border: 1px solid var(--border);">
           {{ totalTabs }} tabs · {{ totalGroups }} groups · {{ totalWindows }} windows
         </span>
@@ -860,9 +786,46 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             </div>
           </span>
           <span v-if="exactDuplicatesCount > 0 && possibleDuplicatesCount > 0">·</span>
-          <button v-if="possibleDuplicatesCount > 0" class="hover:underline focus:outline-none" @click="organizePossibleDuplicates" title="Group and view possible duplicates">
-            {{ possibleDuplicatesCount }} possible dupes
-          </button>
+          <span v-if="possibleDuplicatesCount > 0" class="relative group">
+            <button class="hover:underline focus:outline-none" @click="organizePossibleDuplicates" title="Group and view possible duplicates">
+              {{ possibleDuplicatesCount }} possible dupes
+            </button>
+            <div class="hidden group-hover:block absolute right-0 top-full pt-2 w-[320px] z-50">
+              <div class="p-3 rounded-md shadow-card text-left whitespace-normal leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+                <div class="font-semibold mb-2 text-xs flex items-center justify-between" style="color: var(--accent);">
+                  <span>Possible Dupes ({{ possibleDuplicatesCount }})</span>
+                  <div class="flex items-center gap-1.5">
+                    <button @click.stop="closePossibleDuplicates" class="text-[9px] px-1.5 py-0.5 rounded font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors">
+                      Close Dupes
+                    </button>
+                    <button @click.stop="organizePossibleDuplicates" class="text-[9px] px-1.5 py-0.5 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors" style="color: var(--text-primary);">
+                      Group All
+                    </button>
+                  </div>
+                </div>
+                <div class="max-h-[220px] overflow-y-auto flex flex-col gap-2 scrollbar-thin">
+                  <div v-for="cluster in possibleDuplicateClusters" :key="cluster.cleanUrl" class="p-2 rounded-md bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
+                    <div class="font-medium text-[9.5px] truncate" style="color: var(--accent);">
+                      {{ cluster.domain }} <span class="opacity-60 text-[9px]" style="color: var(--text-secondary);">({{ cluster.tabs.length }} variants)</span>
+                    </div>
+                    <div 
+                      v-for="tab in cluster.tabs" 
+                      :key="tab.id"
+                      class="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                      @click="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
+                    >
+                      <img v-if="getOptimalFaviconUrl(tab.url || '', tab.favIconUrl)" :src="getOptimalFaviconUrl(tab.url || '', tab.favIconUrl)" alt="" class="w-3 h-3 rounded-xs shrink-0" />
+                      <div v-else class="w-3 h-3 rounded-xs bg-gray-500/20 shrink-0" />
+                      <div class="flex-1 min-w-0">
+                        <div class="truncate text-[9.5px]" style="color: var(--text-primary);">{{ tab.title }}</div>
+                        <div class="truncate text-[8.5px]" style="color: var(--text-secondary);">{{ tab.url }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </span>
         </span>
       </div>
       <div class="flex items-center gap-0.5">
@@ -1069,6 +1032,47 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 >
                   {{ getMessage('cleanupGroups') }}
                 </button>
+                <div class="relative inline-block">
+                  <button
+                    class="px-2.5 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all whitespace-nowrap"
+                    :style="activeSortMenuWindowId === w.windowId
+                      ? { background: 'var(--accent)', color: '#fff' }
+                      : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
+                    @click="toggleSortMenuPopover(w.windowId)"
+                    :title="getMessage('sort')"
+                  >
+                    <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M2.24 6.8a.75.75 0 001.06-.04L6 3.94v11.31a.75.75 0 001.5 0V3.94l2.7 2.82a.75.75 0 101.1-1.04l-4-4.17a.75.75 0 00-1.1 0l-4 4.17a.75.75 0 00.04 1.06zm15.52 6.4a.75.75 0 00-1.06.04L14 16.06V4.75a.75.75 0 00-1.5 0v11.31l-2.7-2.82a.75.75 0 10-1.1 1.04l4 4.17a.75.75 0 001.1 0l4-4.17a.75.75 0 00-.04-1.06z" clip-rule="evenodd" />
+                    </svg>
+                    <span>{{ getMessage('sort') }}</span>
+                    <svg class="w-2.5 h-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+                    </svg>
+                  </button>
+
+                  <div v-if="activeSortMenuWindowId === w.windowId" class="absolute left-0 top-full mt-1 w-44 p-1 rounded-md shadow-card z-50 flex flex-col gap-0.5 text-left" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+                    <button
+                      @click="handleSortGroupsByName(w.windowId)"
+                      class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
+                      style="color: var(--text-primary);"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0" style="color: var(--accent);" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M3 3.5A.75.75 0 013.75 3h12.5a.75.75 0 010 1.5H3.75A.75.75 0 013 3.5zm0 4.5A.75.75 0 013.75 7h9.5a.75.75 0 010 1.5H3.75A.75.75 0 013 8zm0 4.5a.75.75 0 01.75-.75h6.5a.75.75 0 010 1.5h-6.5a.75.75 0 01-.75-.75z" clip-rule="evenodd" />
+                      </svg>
+                      <span>{{ getMessage('sortGroupsByName') }}</span>
+                    </button>
+                    <button
+                      @click="handleSortGroupsBySize(w.windowId)"
+                      class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
+                      style="color: var(--text-primary);"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0" style="color: var(--text-secondary);" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M2 3.75A.75.75 0 012.75 3h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 3.75zm0 4.5A.75.75 0 012.75 7h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 8.25zm0 4.5a.75.75 0 01.75-.75h6.5a.75.75 0 010 1.5h-6.5a.75.75 0 01-.75-.75z" clip-rule="evenodd" />
+                      </svg>
+                      <span>{{ getMessage('sortGroupsBySize') }}</span>
+                    </button>
+                  </div>
+                </div>
                 <button
                   class="px-2 py-[4px] rounded-btn flex items-center justify-center transition-colors shrink-0"
                   style="color: var(--text-secondary); background: var(--hover);"

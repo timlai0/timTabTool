@@ -25,16 +25,16 @@ export function parseMaxTokensToNumber(maxTokensStr: string | number | undefined
 }
 
 export function getOptimalFaviconUrl(urlStr: string, fallbackFavIconUrl?: string): string {
-  if (!urlStr) return ''
+  if (!urlStr) return fallbackFavIconUrl || ''
   try {
     const urlObj = new URL(urlStr)
     const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('firefox')
     
-    if (!isFirefox) {
+    if (!isFirefox && typeof chrome !== 'undefined' && chrome.runtime?.id) {
       return `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(urlObj.href)}&size=16`
     }
     
-    // Firefox specific logic
+    // Firefox specific or non-extension fallback logic
     if (fallbackFavIconUrl) {
       let isLocalFavicon = false
       try {
@@ -57,9 +57,10 @@ export function getOptimalFaviconUrl(urlStr: string, fallbackFavIconUrl?: string
       }
     }
     
-    return `https://www.google.com/s2/favicons?sz=16&domain=${urlObj.hostname}`
+    if (!urlObj.hostname) return fallbackFavIconUrl || ''
+    return `https://www.google.com/s2/favicons?sz=16&domain=${encodeURIComponent(urlObj.hostname)}`
   } catch {
-    return ''
+    return fallbackFavIconUrl || ''
   }
 }
 
@@ -80,4 +81,133 @@ export function formatTimeAgo(timestamp: number, now = Date.now()): string {
   const diffDays = Math.floor(diffHours / 24)
   return `${diffDays}d ago`
 }
+
+const TRACKING_PARAMS = new Set([
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id', 'utm_source_platform', 'utm_creative_format', 'utm_marketing_tactic',
+  'fbclid', 'gclid', 'gbraid', 'wbraid', '_gl', 'msclkid', 'mc_cid', 'mc_eid',
+  'ref', 'referrer', 'source', 'feature', 'si', 'igshid', 'fb_action_ids',
+  'twclid', 'ttclid', 'yclid', 'mkt_tok', '_hsenc', '_openstat', 'gad_source',
+  'spm', 'cmpid', 'via', 's_kwcid', 'dclid', 'zanpid'
+])
+
+export interface NormalizeUrlOptions {
+  removeHash?: boolean
+}
+
+export function normalizeUrl(urlString: string, options: NormalizeUrlOptions = {}): string {
+  if (!urlString) return ''
+  try {
+    const url = new URL(urlString)
+    
+    // Clean tracking query params
+    const keysToDelete: string[] = []
+    url.searchParams.forEach((_, key) => {
+      const lowerKey = key.toLowerCase()
+      if (TRACKING_PARAMS.has(lowerKey) || lowerKey.startsWith('utm_') || lowerKey.startsWith('hsa_')) {
+        keysToDelete.push(key)
+      }
+    })
+    for (const key of keysToDelete) {
+      url.searchParams.delete(key)
+    }
+
+    // Sort search parameters for deterministic URL matching
+    url.searchParams.sort()
+
+    // Remove hash fragment if specified (default: true)
+    if (options.removeHash !== false) {
+      url.hash = ''
+    }
+
+    // Normalize trailing slash for path (except root)
+    if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
+      url.pathname = url.pathname.slice(0, -1)
+    }
+
+    // Convert host to lowercase
+    url.hostname = url.hostname.toLowerCase()
+
+    return url.toString()
+  } catch {
+    return urlString.trim()
+  }
+}
+
+export interface MinimalTab {
+  id?: number
+  url?: string
+  title?: string
+  favIconUrl?: string
+  windowId?: number
+}
+
+export interface PossibleDuplicateCluster {
+  cleanUrl: string
+  domain: string
+  tabs: MinimalTab[]
+}
+
+export interface DuplicateDetectionResult {
+  exactDuplicateCount: number
+  possibleDuplicateCount: number
+  exactDuplicates: MinimalTab[]
+  possibleDuplicates: PossibleDuplicateCluster[]
+}
+
+export function detectDuplicateTabs(tabs: MinimalTab[]): DuplicateDetectionResult {
+  const urlSeen = new Map<string, MinimalTab[]>()
+  const cleanUrlMap = new Map<string, MinimalTab[]>()
+
+  for (const tab of tabs) {
+    if (!tab.url) continue
+
+    // Group exact URLs
+    const exactList = urlSeen.get(tab.url) || []
+    exactList.push(tab)
+    urlSeen.set(tab.url, exactList)
+
+    // Group clean URLs
+    const cleanUrl = normalizeUrl(tab.url)
+    const cleanList = cleanUrlMap.get(cleanUrl) || []
+    cleanList.push(tab)
+    cleanUrlMap.set(cleanUrl, cleanList)
+  }
+
+  // Exact duplicate tabs
+  const exactDuplicates: MinimalTab[] = []
+  let exactDuplicateCount = 0
+  for (const group of urlSeen.values()) {
+    if (group.length > 1) {
+      exactDuplicateCount += group.length - 1
+      exactDuplicates.push(...group.slice(1))
+    }
+  }
+
+  // Possible duplicates
+  const possibleDuplicates: PossibleDuplicateCluster[] = []
+  let possibleDuplicateCount = 0
+
+  for (const [cleanUrl, group] of cleanUrlMap.entries()) {
+    if (group.length > 1) {
+      const uniqueExactUrls = new Set(group.map(t => t.url))
+      if (uniqueExactUrls.size > 1) {
+        possibleDuplicateCount += group.length - 1
+        const domain = extractDomain(cleanUrl) || (group[0].url ? extractDomain(group[0].url) : 'unknown')
+        possibleDuplicates.push({
+          cleanUrl,
+          domain,
+          tabs: group
+        })
+      }
+    }
+  }
+
+  return {
+    exactDuplicateCount,
+    possibleDuplicateCount,
+    exactDuplicates,
+    possibleDuplicates
+  }
+}
+
 

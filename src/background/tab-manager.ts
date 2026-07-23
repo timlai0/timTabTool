@@ -1,7 +1,7 @@
 import { classify, classifyTabs, groupTabsFreelyWithAI } from './classifier'
 import type { FreeGroupResult } from './classifier'
 import { GROUP_DEFINITIONS, STORAGE_KEYS, DEFAULT_SETTINGS } from '../shared/constants'
-import { extractDomain } from '../shared/utils'
+import { extractDomain, normalizeUrl, detectDuplicateTabs } from '../shared/utils'
 import { getMessage } from '../shared/i18n'
 import { AIClient } from '../shared/ai-client'
 import type { GroupCategory, GroupedTabs, TabInfo, ExtensionSettings, ChromeTabGroupColor } from '../shared/types'
@@ -1417,22 +1417,66 @@ export function handleTabGroupRemoved(groupId: number): void {
 
 export async function closeDuplicateTabs(windowId: number): Promise<void> {
   const tabs = await chrome.tabs.query({ windowId })
-  const seen = new Set<string>()
-  const dupIds: number[] = []
-  for (const tab of tabs) {
-    if (tab.id === undefined || !tab.url) continue
-    const url = tab.url
-    if (seen.has(url)) {
-      dupIds.push(tab.id)
-    } else {
-      seen.add(url)
-    }
-  }
+  const result = detectDuplicateTabs(tabs)
+  const dupIds = result.exactDuplicates.map(t => t.id).filter((id): id is number => id !== undefined)
+
   if (dupIds.length > 0) {
     await chrome.tabs.remove(dupIds)
     for (const id of dupIds) cacheRemoveTab(id)
   }
 }
+
+export async function closePossibleDuplicateTabs(windowId: number): Promise<void> {
+  const tabs = await chrome.tabs.query({ windowId })
+  const result = detectDuplicateTabs(tabs)
+  const dupIds: number[] = []
+
+  for (const cluster of result.possibleDuplicates) {
+    // Keep the first tab, remove all subsequent variant tabs
+    for (let i = 1; i < cluster.tabs.length; i++) {
+      const id = cluster.tabs[i].id
+      if (id !== undefined) dupIds.push(id)
+    }
+  }
+
+  if (dupIds.length > 0) {
+    await chrome.tabs.remove(dupIds)
+    for (const id of dupIds) cacheRemoveTab(id)
+  }
+}
+
+export async function organizePossibleDuplicateGroups(targetWindowId?: number): Promise<void> {
+  const queryFilter = targetWindowId !== undefined ? { windowId: targetWindowId } : {}
+  const tabs = await chrome.tabs.query(queryFilter)
+  const result = detectDuplicateTabs(tabs)
+
+  if (result.possibleDuplicates.length === 0) return
+
+  const colors: ChromeTabGroupColor[] = ['orange', 'yellow', 'pink', 'purple', 'cyan', 'blue']
+  let colorIdx = 0
+
+  for (const cluster of result.possibleDuplicates) {
+    const tabIds = cluster.tabs.map(t => t.id).filter((id): id is number => id !== undefined)
+    if (tabIds.length < 2) continue
+
+    if (isTabGroupsSupported()) {
+      try {
+        const groupId = (await chrome.tabs.group({ tabIds: tabIds as [number, ...number[]] })) as unknown as number
+        const groupTitle = `Dupes: ${cluster.domain || 'Cluster'}`
+        const groupColor = colors[colorIdx % colors.length]
+        colorIdx++
+
+        await chrome.tabGroups.update(groupId, {
+          title: groupTitle,
+          color: groupColor
+        })
+      } catch (err) {
+        console.error('[timTabTool] Failed to group possible duplicates:', err)
+      }
+    }
+  }
+}
+
 
 export async function closeDomainTabs(windowId: number): Promise<void> {
   const [activeTab] = await chrome.tabs.query({ active: true, windowId })

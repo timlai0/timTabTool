@@ -29,6 +29,8 @@ import {
   splitGroup,
   mergeGroup,
   closeDuplicateTabs,
+  closePossibleDuplicateTabs,
+  organizePossibleDuplicateGroups,
   closeDomainTabs,
   isolateDomainTabs,
   sortTabsByDomainAndTitle,
@@ -104,7 +106,7 @@ chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.create({
       id: 'move-to-other-window',
       title: chrome.i18n.getMessage('contextMenuMoveToOtherWindow') || 'Move Tab to Other Window',
-      contexts: ['tab'] as any[]
+      contexts: ['action']
     })
   }
 })
@@ -704,6 +706,18 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'CLOSE_DUPLICATES': {
       const windowId = await resolveWindowId(message.payload)
       await closeDuplicateTabs(windowId)
+      return { ok: true }
+    }
+
+    case 'CLOSE_POSSIBLE_DUPLICATES': {
+      const windowId = await resolveWindowId(message.payload)
+      await closePossibleDuplicateTabs(windowId)
+      return { ok: true }
+    }
+
+    case 'ORGANIZE_POSSIBLE_DUPLICATES': {
+      const windowId = await resolveWindowId(message.payload)
+      await organizePossibleDuplicateGroups(windowId)
       return { ok: true }
     }
 
