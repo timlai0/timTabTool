@@ -1,5 +1,5 @@
-export const APP_VERSION = '1.1.14'
-export const BUILD_NUMBER = '87'
+export const APP_VERSION = '1.1.15'
+export const BUILD_NUMBER = '88'
 export const BUILD_HASH = typeof __BUILD_HASH__ !== 'undefined' ? __BUILD_HASH__ : 'dev'
 export const BUILD_TIME = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : ''
 

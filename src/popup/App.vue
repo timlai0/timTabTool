@@ -760,7 +760,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             <button v-if="exactDuplicatesCount > 0" class="hover:underline focus:outline-none" @click="closeExactDuplicates" title="Close all exact duplicates">
               {{ exactDuplicatesCount }} exact dupes
             </button>
-            <div class="hidden group-hover:block absolute left-1/2 -translate-x-1/2 top-full pt-2 w-[300px] z-50">
+            <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[310px] max-w-[calc(100vw-32px)] z-50">
               <div class="p-3 rounded-md shadow-card text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
                 <div class="font-semibold mb-2 text-xs flex items-center justify-between" style="color: var(--accent);">
                   <span>Duplicated Tabs ({{ exactDuplicateTabs.length }})</span>
@@ -790,7 +790,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             <button class="hover:underline focus:outline-none" @click="organizePossibleDuplicates" title="Group and view possible duplicates">
               {{ possibleDuplicatesCount }} possible dupes
             </button>
-            <div class="hidden group-hover:block absolute right-0 top-full pt-2 w-[320px] z-50">
+            <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[310px] max-w-[calc(100vw-32px)] z-50">
               <div class="p-3 rounded-md shadow-card text-left whitespace-normal leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
                 <div class="font-semibold mb-2 text-xs flex items-center justify-between" style="color: var(--accent);">
                   <span>Possible Dupes ({{ possibleDuplicatesCount }})</span>
