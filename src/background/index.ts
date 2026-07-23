@@ -5,6 +5,7 @@ import '../shared/polyfill'
 import {
   groupAllTabs,
   ungroupAllTabs,
+  ungroupGroupTabs,
   closeGroupTabs,
   classifyNewTabs,
   autoGroupNewTab,
@@ -23,6 +24,7 @@ import {
   cancelActiveOperation,
   getActiveOperations,
   clearOperationError,
+  clearWindowCache,
   cleanupTabGroups,
   splitGroup,
   mergeGroup,
@@ -30,12 +32,16 @@ import {
   closeDomainTabs,
   isolateDomainTabs,
   sortTabsByDomainAndTitle,
+  sortGroupsByName,
+  sortGroupsBySize,
   mergeAllWindows,
   muteAllTabs,
   unmuteAllTabs,
   closeLeftTabs,
   closeRightTabs,
   isRestrictedUrl,
+  recordTabCreatedTime,
+  removeTabCreatedTime,
 } from './tab-manager'
 import { searchTabs } from './searcher'
 import { recordTabVisit, getHistoryEntries } from './storage'
@@ -138,6 +144,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
 // --- Tab history tracking + cache updates ---
 chrome.tabs.onCreated.addListener((tab) => {
+  if (tab.id !== undefined) recordTabCreatedTime(tab.id)
   cacheAddTab(tab)
   if (tab.windowId !== undefined) debouncedCacheRebuild(tab.windowId)
 })
@@ -156,10 +163,12 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
 })
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  removeTabCreatedTime(tabId)
   cacheRemoveTab(tabId)
 })
 
 chrome.windows.onRemoved.addListener(async (windowId) => {
+  clearWindowCache(windowId)
   const data = await chrome.storage.local.get('customWindowNames')
   if (data.customWindowNames && (data.customWindowNames as Record<number, string>)[windowId]) {
     const newNames = { ...(data.customWindowNames as Record<number, string>) }
@@ -226,20 +235,20 @@ chrome.commands.onCommand.addListener(async (command) => {
   }
 })
 
-async function ensureContentScriptLoaded(tabId: number): Promise<void> {
-  let isLoaded = false
+async function ensureContentScriptLoaded(tabId: number): Promise<boolean> {
   try {
     const [checkResult] = await chrome.scripting.executeScript({
       target: { tabId },
       func: () => !!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__,
     })
-    isLoaded = !!checkResult?.result
+    if (checkResult?.result) return true
   } catch {
     // scripting.executeScript failed — tab may not support it
+    return false
   }
 
   // Inject content script if not loaded
-  if (!isLoaded) {
+  try {
     const manifest = chrome.runtime.getManifest()
     const contentScriptFiles = manifest.content_scripts?.[0]?.js || []
     if (contentScriptFiles.length > 0) {
@@ -247,8 +256,13 @@ async function ensureContentScriptLoaded(tabId: number): Promise<void> {
         target: { tabId },
         files: contentScriptFiles,
       })
+      return true
     }
+  } catch {
+    // Content script file missing or failed to load (e.g. extension recompiled)
+    return false
   }
+  return false
 }
 
 async function broadcastAIStart(windowId: number, action: string) {
@@ -258,14 +272,16 @@ async function broadcastAIStart(windowId: number, action: string) {
     if (activeTab?.id && activeTab.url) {
       if (isRestrictedUrl(activeTab.url)) return
       
-      await ensureContentScriptLoaded(activeTab.id)
+      const loaded = await ensureContentScriptLoaded(activeTab.id)
+      if (!loaded) return
+
       await chrome.tabs.sendMessage(activeTab.id, {
         action: 'START_AI_PROGRESS',
         payload: { commandAction: action }
-      })
+      }).catch(() => {})
     }
-  } catch (err) {
-    console.error('[timTabTool] Failed to broadcast AI start:', err)
+  } catch {
+    // Non-critical progress broadcast error
   }
 }
 
@@ -279,10 +295,10 @@ async function broadcastAIComplete(windowId: number, action: string) {
       await chrome.tabs.sendMessage(activeTab.id, {
         action: 'AI_OPERATION_COMPLETE',
         payload: { commandAction: action }
-      })
+      }).catch(() => {})
     }
-  } catch (err) {
-    console.error('[timTabTool] Failed to broadcast AI complete:', err)
+  } catch {
+    // Non-critical progress broadcast error
   }
 }
 
@@ -296,10 +312,10 @@ async function broadcastAIFailed(windowId: number, action: string, errorMsg: str
       await chrome.tabs.sendMessage(activeTab.id, {
         action: 'AI_OPERATION_FAILED',
         payload: { commandAction: action, error: errorMsg }
-      })
+      }).catch(() => {})
     }
-  } catch (err) {
-    console.error('[timTabTool] Failed to broadcast AI failed:', err)
+  } catch {
+    // Non-critical progress broadcast error
   }
 }
 
@@ -488,6 +504,12 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'CLOSE_GROUP': {
       const tabIds = (message.payload as { tabIds: number[] })?.tabIds || []
       await closeGroupTabs(tabIds)
+      return { ok: true }
+    }
+
+    case 'UNGROUP_GROUP': {
+      const tabIds = (message.payload as { tabIds: number[] })?.tabIds || []
+      await ungroupGroupTabs(tabIds)
       return { ok: true }
     }
 
@@ -700,6 +722,18 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'SORT_TABS': {
       const windowId = await resolveWindowId(message.payload)
       await sortTabsByDomainAndTitle(windowId)
+      return { ok: true }
+    }
+
+    case 'SORT_GROUPS_BY_NAME': {
+      const windowId = await resolveWindowId(message.payload)
+      await sortGroupsByName(windowId)
+      return { ok: true }
+    }
+
+    case 'SORT_GROUPS_BY_SIZE': {
+      const windowId = await resolveWindowId(message.payload)
+      await sortGroupsBySize(windowId)
       return { ok: true }
     }
 

@@ -93,8 +93,10 @@ function estimateSplitCost() {
 }
 
 async function handleCloseGroup() {
-  const tabIds = props.group.tabs.map((t) => t.id)
-  await chrome.runtime.sendMessage({ action: 'CLOSE_GROUP', payload: { tabIds } })
+  const tabIds = props.group.tabs.map((t) => t.id).filter((id): id is number => id !== undefined)
+  if (tabIds.length > 0) {
+    await chrome.runtime.sendMessage({ action: 'UNGROUP_GROUP', payload: { tabIds } })
+  }
   emit('close-group')
 }
 
@@ -224,12 +226,12 @@ function estimateMergeCost() {
           </svg>
         </button>
         <button
-          class="p-1 rounded-md opacity-0 group-hover/row:opacity-100"
-          style="color: var(--text-tertiary);"
-          :title="getMessage('closeGroup')"
+          class="w-[22px] h-[22px] border rounded-[4px] opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0 ml-1 group/ungroup"
+          style="border: 1px solid var(--border); background: var(--hover); color: var(--text-tertiary);"
+          :title="getMessage('ungroupGroup')"
           @click.stop="handleCloseGroup"
         >
-          <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+          <svg class="w-3 h-3 transition-colors group-hover/ungroup:text-red-500" viewBox="0 0 20 20" fill="currentColor">
             <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
           </svg>
         </button>
@@ -366,12 +368,12 @@ function estimateMergeCost() {
           </svg>
         </button>
         <button
-          class="p-1 rounded-md opacity-0 group-hover/row:opacity-100"
-          style="color: var(--text-tertiary);"
-          :title="getMessage('closeGroup')"
+          class="w-[22px] h-[22px] border rounded-[4px] opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0 ml-1 group/ungroup"
+          style="border: 1px solid var(--border); background: var(--hover); color: var(--text-tertiary);"
+          :title="getMessage('ungroupGroup')"
           @click.stop="handleCloseGroup"
         >
-          <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+          <svg class="w-3 h-3 transition-colors group-hover/ungroup:text-red-500" viewBox="0 0 20 20" fill="currentColor">
             <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
           </svg>
         </button>
@@ -481,7 +483,7 @@ function estimateMergeCost() {
         <button
           class="absolute left-0 top-0 w-4 h-4 flex items-center justify-center transition-all opacity-0 group-hover/bar:opacity-100 z-20"
           style="color: var(--text-tertiary);"
-          :title="getMessage('closeGroup')"
+          :title="getMessage('ungroupGroup')"
           @click.stop="handleCloseGroup"
         >
           <svg class="w-2 h-2" viewBox="0 0 20 20" fill="currentColor">

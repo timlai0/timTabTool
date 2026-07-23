@@ -203,6 +203,10 @@
     "message": "Close Group",
     "description": "Button to close all tabs in a group"
   },
+  "ungroupGroup": {
+    "message": "Ungroup Group",
+    "description": "Button to ungroup tabs in a group without closing them"
+  },
   "expandAll": {
     "message": "Expand All",
     "description": "Button to expand all groups in a window"
@@ -290,5 +294,17 @@
   "contextMenuOpenSearchWindow": {
     "message": "Open Search in New Window",
     "description": "Context menu item to open search page in a new window"
+  },
+  "sort": {
+    "message": "Sort",
+    "description": "Button label for sort dropdown menu"
+  },
+  "sortGroupsByName": {
+    "message": "Sort Groups by Name",
+    "description": "Submenu action to sort tab groups alphabetically by name"
+  },
+  "sortGroupsBySize": {
+    "message": "Sort Groups by Size",
+    "description": "Submenu action to sort tab groups by tab count (largest first)"
   }
 }

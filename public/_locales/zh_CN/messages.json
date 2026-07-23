@@ -203,6 +203,10 @@
     "message": "关闭分组",
     "description": "Button to close all tabs in a group"
   },
+  "ungroupGroup": {
+    "message": "解散分组",
+    "description": "Button to ungroup tabs in a group without closing them"
+  },
   "expandAll": {
     "message": "展开全部",
     "description": "Button to expand all groups in a window"
@@ -290,5 +294,17 @@
   "contextMenuOpenSearchWindow": {
     "message": "在新窗口中打开搜索",
     "description": "Context menu item to open search page in a new window"
+  },
+  "sort": {
+    "message": "排序",
+    "description": "Button label for sort dropdown menu"
+  },
+  "sortGroupsByName": {
+    "message": "按名称排序分组",
+    "description": "Submenu action to sort tab groups alphabetically by name"
+  },
+  "sortGroupsBySize": {
+    "message": "按大小排序分组",
+    "description": "Submenu action to sort tab groups by tab count (largest first)"
   }
 }

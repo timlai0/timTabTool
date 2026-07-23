@@ -1348,6 +1348,15 @@ export async function ungroupAllTabs(windowId: number): Promise<void> {
 }
 
 /**
+ * Ungroup a specific set of tab IDs (dissolves the group) without closing the tabs.
+ */
+export async function ungroupGroupTabs(tabIds: number[]): Promise<void> {
+  if (!isTabGroupsSupported() || tabIds.length === 0) return
+  await retryTabOperation(() => chrome.tabs.ungroup(tabIds as [number, ...number[]]))
+  invalidatePreviewCache()
+}
+
+/**
  * Handle Chrome tab group update events for smart title toggling.
  * Always keep the full group title visible regardless of collapse state,
  * so the title is shown in the bookmarks bar on the new tab page.
