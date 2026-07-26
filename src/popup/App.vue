@@ -248,7 +248,9 @@ async function focusTab(tabId: number, windowId: number) {
   // Programming logic: Activate the selected tab and bring its window to the foreground
   await chrome.tabs.update(tabId, { active: true })
   await chrome.windows.update(windowId, { focused: true })
-  window.close() // Close the popup
+  if (!isStandaloneSearch.value) {
+    window.close() // Close popup only if not in standalone search page
+  }
 }
 
 async function organizePossibleDuplicates() {
@@ -257,7 +259,118 @@ async function organizePossibleDuplicates() {
   await loadAllPreviews()
 }
 
+async function closeSingleTab(tabId: number) {
+  await chrome.tabs.remove(tabId)
+  await loadAllPreviews()
+}
+
+async function closeClusterDuplicates(cluster: { cleanUrl: string; domain: string; tabs: Array<{ id?: number }> }) {
+  const idsToClose = cluster.tabs.slice(1).map(t => t.id).filter((id): id is number => id !== undefined)
+  if (idsToClose.length > 0) {
+    await chrome.tabs.remove(idsToClose)
+    await loadAllPreviews()
+  }
+}
+
+async function groupCluster(cluster: { cleanUrl: string; domain: string; tabs: Array<{ id?: number }> }) {
+  const tabIds = cluster.tabs.map(t => t.id).filter((id): id is number => id !== undefined)
+  if (tabIds.length >= 2) {
+    await chrome.runtime.sendMessage({
+      action: 'GROUP_CLUSTER',
+      payload: { tabIds, title: `Dupes: ${cluster.domain}` }
+    })
+    await loadAllPreviews()
+  }
+}
+
+async function jumpToMostRecentTab(windowId?: number) {
+  let targetTabId: number | null = null
+  let targetWindowId: number | null = null
+  let maxTime = -1
+  let activeTab: { id: number; windowId: number } | null = null
+
+  const targetWindows = windowId !== undefined 
+    ? allWindows.value.filter(w => w.windowId === windowId)
+    : allWindows.value
+
+  for (const w of targetWindows) {
+    for (const g of w.groups) {
+      for (const t of g.tabs) {
+        if (t.id === undefined) continue
+        if (t.active) {
+          activeTab = { id: t.id, windowId: w.windowId }
+        }
+        const time = t.lastAccessed || 0
+        if (time > maxTime) {
+          maxTime = time
+          targetTabId = t.id
+          targetWindowId = w.windowId
+        }
+      }
+    }
+  }
+
+  if (activeTab) {
+    targetTabId = activeTab.id
+    targetWindowId = activeTab.windowId
+  }
+
+  if (!targetTabId || !targetWindowId) return
+
+  if (windowTitlesHidden.value[targetWindowId]) {
+    windowTitlesHidden.value[targetWindowId] = false
+  }
+
+  // Ensure all groups are uncollapsed so tab DOM elements exist in DOM
+  expandTriggerCount.value++
+  await nextTick()
+
+  // Activate tab in Chrome
+  try {
+    await chrome.tabs.update(targetTabId, { active: true })
+    await chrome.windows.update(targetWindowId, { focused: true })
+  } catch (err) {
+    console.warn('[timTabTool] Could not activate tab in Chrome:', err)
+  }
+
+  setTimeout(() => {
+    const el = document.querySelector(`[data-tab-id="${targetTabId}"]`) as HTMLElement | null
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.style.boxShadow = '0 0 0 2px var(--accent)'
+      el.style.borderRadius = '4px'
+      el.style.transition = 'box-shadow 0.3s ease'
+      setTimeout(() => {
+        el.style.boxShadow = ''
+      }, 2500)
+    }
+  }, 100)
+}
+
 const isDarkActive = computed(() => document.documentElement.classList.contains('dark'))
+
+const allActiveOperations = ref<Record<number, { type: 'group' | 'classify' | null; error: string | null }>>({})
+
+const activeAIOperationsList = computed(() => {
+  const list: Array<{ windowId: number; type: 'group' | 'classify'; windowName: string }> = []
+  for (const [widStr, status] of Object.entries(allActiveOperations.value)) {
+    const wid = Number(widStr)
+    const opStatus = status as { type: 'group' | 'classify' | null; error: string | null }
+    if (opStatus && opStatus.type) {
+      const winObj = allWindows.value.find(w => w.windowId === wid)
+      const winIndex = allWindows.value.findIndex(w => w.windowId === wid)
+      const name = winObj ? windowLabel(winObj, winIndex >= 0 ? winIndex : 0) : `Window ${wid}`
+      list.push({
+        windowId: wid,
+        type: opStatus.type,
+        windowName: name,
+      })
+    }
+  }
+  return list
+})
+
+const activeAIOperationsCount = computed(() => activeAIOperationsList.value.length)
 
 async function loadAllPreviews(showLoading = false) {
   // Programming logic: only set loading to true on initial load or when requested/empty
@@ -283,6 +396,7 @@ async function loadAllPreviews(showLoading = false) {
     // Query active operations and errors from the background
     const activeOps = await chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' })
     if (activeOps && typeof activeOps === 'object') {
+      allActiveOperations.value = activeOps as Record<number, { type: 'group' | 'classify' | null; error: string | null }>
       let isAnyGrouping = false
       let isAnyClassifying = false
 
@@ -310,6 +424,8 @@ async function loadAllPreviews(showLoading = false) {
       if (isAnyGrouping || isAnyClassifying) {
         startPollingStatus()
       }
+    } else {
+      allActiveOperations.value = {}
     }
   } catch (err) {
     console.error('Failed to load preview:', err)
@@ -327,6 +443,7 @@ function startPollingStatus() {
       try {
         const activeOps = await chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' })
         if (activeOps && typeof activeOps === 'object') {
+          allActiveOperations.value = activeOps as Record<number, { type: 'group' | 'classify' | null; error: string | null }>
           let isAnyGrouping = false
           let isAnyClassifying = false
 
@@ -490,10 +607,12 @@ async function handleClassifyNew(windowId: number) {
 
 const activePromptWindowId = ref<number | null>(null)
 const activeSortMenuWindowId = ref<number | null>(null)
+const activeMoreMenuWindowId = ref<number | null>(null)
 const oneShotPromptText = ref<string>('sort all google tabs into 1 group')
 
 function toggleOneShotPromptPopover(windowId: number) {
   activeSortMenuWindowId.value = null
+  activeMoreMenuWindowId.value = null
   if (activePromptWindowId.value === windowId) {
     activePromptWindowId.value = null
   } else {
@@ -505,11 +624,22 @@ function toggleOneShotPromptPopover(windowId: number) {
 }
 
 function toggleSortMenuPopover(windowId: number) {
+  activePromptWindowId.value = null
+  activeMoreMenuWindowId.value = null
   if (activeSortMenuWindowId.value === windowId) {
     activeSortMenuWindowId.value = null
   } else {
     activeSortMenuWindowId.value = windowId
-    activePromptWindowId.value = null
+  }
+}
+
+function toggleMoreMenuPopover(windowId: number) {
+  activePromptWindowId.value = null
+  activeSortMenuWindowId.value = null
+  if (activeMoreMenuWindowId.value === windowId) {
+    activeMoreMenuWindowId.value = null
+  } else {
+    activeMoreMenuWindowId.value = windowId
   }
 }
 
@@ -562,11 +692,13 @@ async function handleGroup(windowId: number, customPrompt?: string, bypassSafegu
 }
 
 async function handleUngroup(windowId: number) {
+  activeMoreMenuWindowId.value = null
   await chrome.runtime.sendMessage({ action: 'UNGROUP_ALL', payload: { windowId } })
   await loadAllPreviews()
 }
 
 async function handleCleanupGroups(windowId: number) {
+  activeMoreMenuWindowId.value = null
   // Programming logic: Prompt user for minimum tab threshold with a default of 3
   const input = prompt(getMessage('enterMinTabs') || 'Enter minimum tab count for a group:', '3')
   if (input === null) return
@@ -642,6 +774,7 @@ function isWindowCollapsed(windowId: number): boolean {
 }
 
 async function handleToggleAllGroups(windowId: number) {
+  activeMoreMenuWindowId.value = null
   const collapsed = isWindowCollapsed(windowId)
   if (collapsed) {
     expandTriggers.value = { ...expandTriggers.value, [windowId]: (expandTriggers.value[windowId] || 0) + 1 }
@@ -699,6 +832,7 @@ function isTitlesHidden(windowId: number): boolean {
 }
 
 async function handleToggleGroupTitles(windowId: number) {
+  activeMoreMenuWindowId.value = null
   const result = await chrome.runtime.sendMessage({ action: 'TOGGLE_GROUP_TITLES', payload: { windowId } })
   if (result?.hidden !== undefined) {
     windowTitlesHidden.value = { ...windowTitlesHidden.value, [windowId]: result.hidden }
@@ -707,7 +841,9 @@ async function handleToggleGroupTitles(windowId: number) {
 
 async function openSearchOverlay() {
   await chrome.runtime.sendMessage({ action: 'TOGGLE_SEARCH_OVERLAY' })
-  window.close()
+  if (!isStandaloneSearch.value) {
+    window.close()
+  }
 }
 
 const activeHoverAction = ref<'group' | 'classify' | null>(null)
@@ -752,66 +888,131 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
         <span class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: var(--hover); border: 1px solid var(--border);">
           {{ totalTabs }} tabs · {{ totalGroups }} groups · {{ totalWindows }} windows
         </span>
-        <span v-if="exactDuplicatesCount > 0 || possibleDuplicatesCount > 0" class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0 flex items-center gap-1" style="color: var(--text-primary); background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3);">
+
+        <!-- Running AI Operations Indicator -->
+        <span v-if="activeAIOperationsCount > 0" class="relative group shrink-0">
+          <span 
+            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs transition-all animate-pulse" 
+            style="color: #ffffff; background: var(--accent); border: 1px solid var(--accent);"
+          >
+            <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
+            <span>{{ activeAIOperationsCount }} AI op{{ activeAIOperationsCount > 1 ? 's' : '' }} running</span>
+            <svg class="w-2.5 h-2.5 opacity-80" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+            </svg>
+          </span>
+
+          <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[275px] max-w-[calc(100vw-24px)] z-50">
+            <div class="p-3 rounded-md shadow-card text-left leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+              <div class="font-semibold mb-2 text-xs flex items-center justify-between" style="color: var(--accent);">
+                <span class="flex items-center gap-1.5">
+                  <span class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
+                  <span>Active AI Operations ({{ activeAIOperationsCount }})</span>
+                </span>
+              </div>
+              <div class="flex flex-col gap-2">
+                <div 
+                  v-for="op in activeAIOperationsList" 
+                  :key="op.windowId" 
+                  class="p-2.5 rounded-md bg-black/5 dark:bg-white/5 border flex flex-col gap-1 text-[10px]"
+                  style="border-color: var(--border);"
+                >
+                  <div class="flex items-center justify-between gap-2 font-medium">
+                    <span class="truncate flex-1 font-semibold" style="color: var(--text-primary);">{{ op.windowName }}</span>
+                    <span class="text-[9px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wider shrink-0" style="background: var(--accent-soft); color: var(--accent);">
+                      {{ op.type === 'group' ? 'Grouping' : 'Classifying' }}
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between gap-2 text-[9.5px] mt-0.5" style="color: var(--text-secondary);">
+                    <span class="truncate flex-1" :title="'Processing with ' + activeModel">Processing: {{ activeModel }}</span>
+                    <button 
+                      @click.stop="op.type === 'group' ? handleCancelGroup(op.windowId) : handleCancelClassify(op.windowId)" 
+                      class="text-red-500 hover:underline font-semibold cursor-pointer shrink-0"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </span>
+
+        <div v-if="exactDuplicatesCount > 0 || possibleDuplicatesCount > 0" class="relative group flex items-center gap-1 text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3);">
           <svg class="w-3 h-3" style="color: #ef4444;" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
           </svg>
-          <span class="relative group">
-            <button v-if="exactDuplicatesCount > 0" class="hover:underline focus:outline-none" @click="closeExactDuplicates" title="Close all exact duplicates">
-              {{ exactDuplicatesCount }} exact dupes
-            </button>
-            <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[310px] max-w-[calc(100vw-32px)] z-50">
-              <div class="p-3 rounded-md shadow-card text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
-                <div class="font-semibold mb-2 text-xs flex items-center justify-between" style="color: var(--accent);">
-                  <span>Duplicated Tabs ({{ exactDuplicateTabs.length }})</span>
-                  <span class="text-[9px] font-normal" style="color: var(--text-secondary);">Click to focus</span>
+          <button v-if="exactDuplicatesCount > 0" class="hover:underline focus:outline-none cursor-pointer" @click="closeExactDuplicates" title="Close all exact duplicates">
+            {{ exactDuplicatesCount }} exact dupes
+          </button>
+          <span v-if="exactDuplicatesCount > 0 && possibleDuplicatesCount > 0">·</span>
+          <button v-if="possibleDuplicatesCount > 0" class="hover:underline focus:outline-none cursor-pointer" @click="organizePossibleDuplicates" title="Group and view possible duplicates">
+            {{ possibleDuplicatesCount }} possible dupes
+          </button>
+
+          <!-- Single Unified Duplicates Popover Card anchored at left-0 of the red pill badge -->
+          <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[320px] max-w-[calc(100vw-32px)] z-50">
+            <div class="p-3 rounded-md shadow-card text-left whitespace-normal leading-relaxed transition-all duration-200 flex flex-col gap-2.5 max-h-[320px] overflow-y-auto scrollbar-thin" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+              
+              <!-- Exact Duplicates Section -->
+              <div v-if="exactDuplicatesCount > 0">
+                <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" style="color: var(--accent);">
+                  <span>Exact Duplicates ({{ exactDuplicateTabs.length }})</span>
+                  <button @click.stop="closeExactDuplicates" class="text-[9px] px-1.5 py-0.5 rounded font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer">
+                    Close Exact
+                  </button>
                 </div>
-                <div class="max-h-[200px] overflow-y-auto flex flex-col gap-1.5 scrollbar-thin">
+                <div class="flex flex-col gap-1">
                   <div 
                     v-for="tab in exactDuplicateTabs" 
                     :key="tab.id" 
                     class="flex items-center gap-2 text-[10px] p-1.5 rounded-md cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors border-b border-dashed last:border-b-0"
                     style="border-color: var(--border);"
-                    @click="focusTab(tab.id, tab.windowId)"
+                    @click="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
                   >
                     <img v-if="getOptimalFaviconUrl(tab.url, tab.favIconUrl)" :src="getOptimalFaviconUrl(tab.url, tab.favIconUrl)" alt="" class="w-3.5 h-3.5 rounded-xs shrink-0" />
                     <div v-else class="w-3.5 h-3.5 rounded-xs bg-gray-500/20 shrink-0" />
                     <div class="flex-1 min-w-0">
-                      <div class="font-medium truncate" style="color: var(--text-primary);">{{ tab.title }}</div>
-                      <div class="text-[9px] truncate" style="color: var(--text-secondary);">{{ tab.url }}</div>
+                      <div class="font-medium truncate text-[9.5px]" style="color: var(--text-primary);">{{ tab.title }}</div>
+                      <div class="text-[8.5px] truncate" style="color: var(--text-secondary);">{{ tab.url }}</div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </span>
-          <span v-if="exactDuplicatesCount > 0 && possibleDuplicatesCount > 0">·</span>
-          <span v-if="possibleDuplicatesCount > 0" class="relative group">
-            <button class="hover:underline focus:outline-none" @click="organizePossibleDuplicates" title="Group and view possible duplicates">
-              {{ possibleDuplicatesCount }} possible dupes
-            </button>
-            <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[310px] max-w-[calc(100vw-32px)] z-50">
-              <div class="p-3 rounded-md shadow-card text-left whitespace-normal leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
-                <div class="font-semibold mb-2 text-xs flex items-center justify-between" style="color: var(--accent);">
+
+              <!-- Divider if both exist -->
+              <div v-if="exactDuplicatesCount > 0 && possibleDuplicatesCount > 0" class="border-t my-0.5" style="border-color: var(--border);" />
+
+              <!-- Possible Duplicates Section -->
+              <div v-if="possibleDuplicatesCount > 0">
+                <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" style="color: var(--accent);">
                   <span>Possible Dupes ({{ possibleDuplicatesCount }})</span>
                   <div class="flex items-center gap-1.5">
-                    <button @click.stop="closePossibleDuplicates" class="text-[9px] px-1.5 py-0.5 rounded font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors">
+                    <button @click.stop="closePossibleDuplicates" class="text-[9px] px-1.5 py-0.5 rounded font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer">
                       Close Dupes
                     </button>
-                    <button @click.stop="organizePossibleDuplicates" class="text-[9px] px-1.5 py-0.5 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors" style="color: var(--text-primary);">
+                    <button @click.stop="organizePossibleDuplicates" class="text-[9px] px-1.5 py-0.5 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);">
                       Group All
                     </button>
                   </div>
                 </div>
-                <div class="max-h-[220px] overflow-y-auto flex flex-col gap-2 scrollbar-thin">
+                <div class="flex flex-col gap-2">
                   <div v-for="cluster in possibleDuplicateClusters" :key="cluster.cleanUrl" class="p-2 rounded-md bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
-                    <div class="font-medium text-[9.5px] truncate" style="color: var(--accent);">
-                      {{ cluster.domain }} <span class="opacity-60 text-[9px]" style="color: var(--text-secondary);">({{ cluster.tabs.length }} variants)</span>
+                    <div class="font-medium text-[9.5px] flex items-center justify-between gap-1" style="color: var(--accent);">
+                      <span class="truncate min-w-0">{{ cluster.domain }} <span class="opacity-60 text-[9px]" style="color: var(--text-secondary);">({{ cluster.tabs.length }} variants)</span></span>
+                      <div class="flex items-center gap-1 shrink-0">
+                        <button @click.stop="closeClusterDuplicates(cluster)" class="text-[8.5px] px-1 py-0.2 rounded font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer" title="Keep first, close other variants in this cluster">
+                          Dedupe
+                        </button>
+                        <button @click.stop="groupCluster(cluster)" class="text-[8.5px] px-1 py-0.2 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Group these variants into a tab group">
+                          Group
+                        </button>
+                      </div>
                     </div>
                     <div 
                       v-for="tab in cluster.tabs" 
                       :key="tab.id"
-                      class="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                      class="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-black/10 dark:hover:bg-white/10 transition-colors group/tabrow"
                       @click="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
                     >
                       <img v-if="getOptimalFaviconUrl(tab.url || '', tab.favIconUrl)" :src="getOptimalFaviconUrl(tab.url || '', tab.favIconUrl)" alt="" class="w-3 h-3 rounded-xs shrink-0" />
@@ -820,15 +1021,38 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                         <div class="truncate text-[9.5px]" style="color: var(--text-primary);">{{ tab.title }}</div>
                         <div class="truncate text-[8.5px]" style="color: var(--text-secondary);">{{ tab.url }}</div>
                       </div>
+                      <button 
+                        v-if="tab.id !== undefined"
+                        @click.stop="closeSingleTab(tab.id)"
+                        class="w-4 h-4 rounded flex items-center justify-center opacity-0 group-hover/tabrow:opacity-100 hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
+                        style="color: var(--text-tertiary);"
+                        title="Close this tab"
+                      >
+                        <svg class="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
+                          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                 </div>
               </div>
+
             </div>
-          </span>
-        </span>
+          </div>
+        </div>
       </div>
       <div class="flex items-center gap-0.5">
+        <!-- Jump to Most Recent Tab -->
+        <button
+          @click="jumpToMostRecentTab()"
+          class="w-7 h-7 flex items-center justify-center rounded-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
+          style="color: var(--text-secondary);"
+          title="Jump to Most Recently Used / Active Tab in List"
+        >
+          <svg class="w-[15px] h-[15px]" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3.25 3.25a.75.75 0 001.06-1.06L10.75 10.44V5z" clip-rule="evenodd" />
+          </svg>
+        </button>
         <!-- Search -->
         <button
           @click="openSearchOverlay"
@@ -1001,10 +1225,12 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
           <!-- Action buttons -->
           <div v-if="!isWindowSectionCollapsed(w.windowId) && tabGroupsSupported" class="flex flex-col px-3.5 pb-2 relative gap-1.5">
-            <div class="flex items-center justify-between w-full">
-              <div class="flex items-center gap-1.5 flex-wrap">
+            <div class="flex items-center justify-between w-full gap-1">
+              <!-- Left Action Group (Non-wrapping flex row) -->
+              <div class="flex items-center gap-1 shrink-0">
+                <!-- Group Tabs Hero Button -->
                 <button
-                  class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap"
+                  class="px-2.5 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap"
                   :style="groupingWindowId === w.windowId
                     ? { background: 'var(--group-red)', color: '#fff' }
                     : { background: 'var(--accent)', color: '#fff' }"
@@ -1014,39 +1240,66 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 >
                   <span v-if="groupingWindowId === w.windowId" class="inline-flex items-center gap-1">
                     <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
-                    <span>Grouping with {{ activeModel }}...</span>
+                    <span>Grouping...</span>
                   </span>
-                  <span v-else>{{ getMessage('groupTabs') }}</span>
+                  <span v-else class="flex items-center gap-1">
+                    <svg class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.948 5.684a1 1 0 00-1.896 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.896l2.051.683a1 1 0 01.633.633l.683 2.051a1 1 0 001.896 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.896l-2.051-.683a1 1 0 01-.633-.633L6.948 5.684z" clip-rule="evenodd" />
+                    </svg>
+                    <span>{{ getMessage('groupTabs') }}</span>
+                  </span>
                 </button>
+
+                <!-- Classify New Button -->
                 <button
-                  class="px-3 py-[4px] text-[11px] rounded-btn whitespace-nowrap"
-                  style="color: var(--text-secondary); background: var(--hover);"
-                  @click="handleUngroup(w.windowId)"
+                  v-if="newTabsCount(w) > 0"
+                  class="px-2 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap shrink-0"
+                  :style="classifyingWindowId === w.windowId
+                    ? { background: 'var(--group-red)', color: '#fff' }
+                    : { background: 'var(--accent-soft)', color: 'var(--accent)' }"
+                  @click="classifyingWindowId === w.windowId ? handleCancelClassify(w.windowId) : handleClassifyNew(w.windowId)"
+                  @mouseenter="activeHoverAction = 'classify'; hoveredActionWindowId = w.windowId"
+                  @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
+                  :title="getMessage('classifyNewTabs')"
                 >
-                  {{ getMessage('ungroupAll') }}
+                  <span v-if="classifyingWindowId === w.windowId" class="inline-flex items-center gap-1">
+                    <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
+                    <span>Classifying...</span>
+                  </span>
+                  <span v-else class="flex items-center gap-1">
+                    <svg class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
+                    </svg>
+                    <span>Classify ({{ newTabsCount(w) }})</span>
+                  </span>
                 </button>
+
+                <!-- Custom Prompt Icon Button -->
                 <button
-                  class="px-3 py-[4px] text-[11px] rounded-btn whitespace-nowrap"
-                  style="color: var(--text-secondary); background: var(--hover);"
-                  @click="handleCleanupGroups(w.windowId)"
+                  class="p-[5px] rounded-btn flex items-center justify-center transition-all shrink-0"
+                  :style="activePromptWindowId === w.windowId
+                    ? { background: 'var(--accent)', color: '#fff' }
+                    : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
+                  @click="toggleOneShotPromptPopover(w.windowId)"
+                  title="One-Shot AI Prompt (Custom tab grouping instruction)"
                 >
-                  {{ getMessage('cleanupGroups') }}
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.948 5.684a1 1 0 00-1.896 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.896l2.051.683a1 1 0 01.633.633l.683 2.051a1 1 0 001.896 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.896l-2.051-.683a1 1 0 01-.633-.633L6.948 5.684z" />
+                  </svg>
                 </button>
-                <div class="relative inline-block">
+
+                <!-- Sort Popover -->
+                <div class="relative inline-block shrink-0">
                   <button
-                    class="px-2.5 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all whitespace-nowrap"
+                    class="p-[5px] rounded-btn flex items-center justify-center transition-all shrink-0"
                     :style="activeSortMenuWindowId === w.windowId
                       ? { background: 'var(--accent)', color: '#fff' }
                       : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
                     @click="toggleSortMenuPopover(w.windowId)"
                     :title="getMessage('sort')"
                   >
-                    <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                       <path fill-rule="evenodd" d="M2.24 6.8a.75.75 0 001.06-.04L6 3.94v11.31a.75.75 0 001.5 0V3.94l2.7 2.82a.75.75 0 101.1-1.04l-4-4.17a.75.75 0 00-1.1 0l-4 4.17a.75.75 0 00.04 1.06zm15.52 6.4a.75.75 0 00-1.06.04L14 16.06V4.75a.75.75 0 00-1.5 0v11.31l-2.7-2.82a.75.75 0 10-1.1 1.04l4 4.17a.75.75 0 001.1 0l4-4.17a.75.75 0 00-.04-1.06z" clip-rule="evenodd" />
-                    </svg>
-                    <span>{{ getMessage('sort') }}</span>
-                    <svg class="w-2.5 h-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor">
-                      <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
                     </svg>
                   </button>
 
@@ -1073,8 +1326,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                     </button>
                   </div>
                 </div>
+
+                <!-- Copy URLs Markdown Icon Button -->
                 <button
-                  class="px-2 py-[4px] rounded-btn flex items-center justify-center transition-colors shrink-0"
+                  class="p-[5px] rounded-btn flex items-center justify-center transition-colors shrink-0"
                   style="color: var(--text-secondary); background: var(--hover);"
                   @click="copyWindowUrlsAsMarkdown(w)"
                   title="Copy all URLs as Markdown"
@@ -1087,64 +1342,86 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                     <path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2V5z" />
                   </svg>
                 </button>
+
+                <!-- Jump to Most Recent Tab in Window -->
                 <button
-                  class="px-2.5 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all whitespace-nowrap"
-                  :style="activePromptWindowId === w.windowId
-                    ? { background: 'var(--accent)', color: '#fff' }
-                    : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
-                  @click="toggleOneShotPromptPopover(w.windowId)"
-                  title="One-Shot AI Prompt (Custom tab grouping instruction)"
+                  class="p-[5px] rounded-btn flex items-center justify-center transition-colors shrink-0 cursor-pointer"
+                  style="color: var(--text-secondary); background: var(--hover);"
+                  @click="jumpToMostRecentTab(w.windowId)"
+                  title="Jump to Most Recently Used / Active Tab in this Window"
                 >
                   <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.948 5.684a1 1 0 00-1.896 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.896l2.051.683a1 1 0 01.633.633l.683 2.051a1 1 0 001.896 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.896l-2.051-.683a1 1 0 01-.633-.633L6.948 5.684z" />
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3.25 3.25a.75.75 0 001.06-1.06L10.75 10.44V5z" clip-rule="evenodd" />
                   </svg>
-                  <span>{{ getMessage('customPrompt') }}</span>
                 </button>
-                <button
-                  v-if="newTabsCount(w) > 0"
-                  class="px-3 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap"
-                  :style="classifyingWindowId === w.windowId
-                    ? { background: 'var(--group-red)', color: '#fff' }
-                    : { background: 'var(--accent-soft)', color: 'var(--accent)' }"
-                  @click="classifyingWindowId === w.windowId ? handleCancelClassify(w.windowId) : handleClassifyNew(w.windowId)"
-                  @mouseenter="activeHoverAction = 'classify'; hoveredActionWindowId = w.windowId"
-                  @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
-                >
-                  <span v-if="classifyingWindowId === w.windowId" class="inline-flex items-center gap-1">
-                    <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
-                    <span>Classifying with {{ activeModel }}...</span>
-                  </span>
-                  <span v-else>{{ getMessage('classifyNewTabs') }} ({{ newTabsCount(w) }})</span>
-                </button>
-              </div>
 
-              <!-- Toolbar icons -->
-              <div v-if="w.hasGroups" class="flex items-center gap-0 shrink-0 ml-1">
-                <button
-                  class="w-6 h-6 flex items-center justify-center rounded-md"
-                  :style="{ color: isTitlesHidden(w.windowId) ? 'var(--accent)' : 'var(--text-tertiary)' }"
-                  :title="isTitlesHidden(w.windowId) ? getMessage('showGroupTitles') : getMessage('hideGroupTitles')"
-                  @click="handleToggleGroupTitles(w.windowId)"
-                >
-                  <svg class="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M2.5 2a.5.5 0 00-.5.5v3.5a.5.5 0 00.146.354l5.5 5.5a.5.5 0 00.708 0l3.5-3.5a.5.5 0 000-.708l-5.5-5.5A.5.5 0 006 2H2.5zm1.5 2a1 1 0 110 2 1 1 0 010-2z" />
-                  </svg>
-                </button>
-                <button
-                  class="w-6 h-6 flex items-center justify-center rounded-md"
-                  style="color: var(--text-tertiary);"
-                  :title="isWindowCollapsed(w.windowId) ? getMessage('expandAll') : getMessage('collapseAll')"
-                  @click="handleToggleAllGroups(w.windowId)"
-                >
-                  <svg v-if="isWindowCollapsed(w.windowId)" class="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M4 3.5l4 4 4-4" />
-                    <path d="M4 8.5l4 4 4-4" />
-                  </svg>
-                  <svg v-else class="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M4 7l4-4 4 4" />
-                    <path d="M4 12.5l4-4 4 4" />
-                  </svg>
-                </button>
+                <!-- Overflow Menu ⋯ Popover -->
+                <div class="relative inline-block shrink-0">
+                  <button
+                    class="p-[5px] rounded-btn flex items-center justify-center transition-colors shrink-0"
+                    :style="activeMoreMenuWindowId === w.windowId
+                      ? { background: 'var(--accent)', color: '#fff' }
+                      : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
+                    @click="toggleMoreMenuPopover(w.windowId)"
+                    title="More actions"
+                  >
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zM12 10a2 2 0 11-4 0 2 2 0 014 0zM16 12a2 2 0 100-4 2 2 0 000 4z" />
+                    </svg>
+                  </button>
+
+                  <div v-if="activeMoreMenuWindowId === w.windowId" class="absolute right-0 top-full mt-1 w-44 p-1 rounded-md shadow-card z-50 flex flex-col gap-0.5 text-left" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+                    <button
+                      @click="handleUngroup(w.windowId)"
+                      class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
+                      style="color: var(--text-primary);"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M3 4.25A2.25 2.25 0 015.25 2h9.5A2.25 2.25 0 0117 4.25v2.5A2.25 2.25 0 0114.75 9h-9.5A2.25 2.25 0 013 6.75v-2.5zm2.25-.75a.75.75 0 00-.75.75v2.5c0 .414.336.75.75.75h9.5a.75.75 0 00.75-.75v-2.5a.75.75 0 00-.75-.75h-9.5zM2 13.25A.75.75 0 012.75 12.5h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 13.25z" clip-rule="evenodd" />
+                      </svg>
+                      <span>{{ getMessage('ungroupAll') }}</span>
+                    </button>
+                    <button
+                      @click="handleCleanupGroups(w.windowId)"
+                      class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
+                      style="color: var(--text-primary);"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.21-2.35.398a.75.75 0 00-.56.885l.135.539a.75.75 0 00.885.56 25.1 25.1 0 011.89-.37v10.55A2.75 2.75 0 008.75 19h2.5a2.75 2.75 0 002.75-2.75V5.727c.642.096 1.272.22 1.89.37a.75.75 0 00.885-.56l.135-.539a.75.75 0 00-.56-.885 26.6 26.6 0 00-2.35-.398V3.75A2.75 2.75 0 0011.25 1h-2.5zm1.25 1.5c.69 0 1.25.56 1.25 1.25v.266c-.83-.04-1.67-.04-2.5 0V3.75c0-.69.56-1.25 1.25-1.25z" clip-rule="evenodd" />
+                      </svg>
+                      <span>{{ getMessage('cleanupGroups') }}</span>
+                    </button>
+
+                    <template v-if="w.hasGroups">
+                      <div class="my-0.5 border-t" style="border-color: var(--border);" />
+                      <button
+                        @click="handleToggleGroupTitles(w.windowId)"
+                        class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
+                        style="color: var(--text-primary);"
+                      >
+                        <svg class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 16 16" fill="currentColor">
+                          <path d="M2.5 2a.5.5 0 00-.5.5v3.5a.5.5 0 00.146.354l5.5 5.5a.5.5 0 00.708 0l3.5-3.5a.5.5 0 000-.708l-5.5-5.5A.5.5 0 006 2H2.5zm1.5 2a1 1 0 110 2 1 1 0 010-2z" />
+                        </svg>
+                        <span>{{ isTitlesHidden(w.windowId) ? getMessage('showGroupTitles') : getMessage('hideGroupTitles') }}</span>
+                      </button>
+                      <button
+                        @click="handleToggleAllGroups(w.windowId)"
+                        class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
+                        style="color: var(--text-primary);"
+                      >
+                        <svg v-if="isWindowCollapsed(w.windowId)" class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M4 3.5l4 4 4-4" />
+                          <path d="M4 8.5l4 4 4-4" />
+                        </svg>
+                        <svg v-else class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M4 7l4-4 4 4" />
+                          <path d="M4 12.5l4-4 4 4" />
+                        </svg>
+                        <span>{{ isWindowCollapsed(w.windowId) ? getMessage('expandAll') : getMessage('collapseAll') }}</span>
+                      </button>
+                    </template>
+                  </div>
+                </div>
               </div>
             </div>
 

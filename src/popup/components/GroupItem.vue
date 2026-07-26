@@ -28,6 +28,8 @@ const emit = defineEmits<{
 const collapsed = ref(props.mode === 'header' && !props.isActiveGroup)
 const splitting = ref(false)
 const showSplitTooltip = ref(false)
+const merging = ref(false)
+const showMergeTooltip = ref(false)
 
 watch(() => props.expandTrigger, () => { collapsed.value = false })
 watch(() => props.collapseTrigger, () => { collapsed.value = true })
@@ -62,17 +64,43 @@ function getSystemPrompt() {
   return SYSTEM_PROMPT
 }
 
-
-
 function estimateSplitCost() {
   const tabs = props.group.tabs.length
   if (tabs === 0) {
     return { tokens: 0, costStr: 'Free' }
   }
-  const promptLen = getSystemPrompt().length + (aiSettings.value.splitPrompt || '').length
+  const promptLen = getSystemPrompt().length + (aiSettings.value.splitPrompt || '').length + 100
   const promptTokens = Math.ceil(promptLen / 4)
   const inputTokens = promptTokens + tabs * 20
   const outputTokens = 100
+  const totalTokens = inputTokens + outputTokens
+  
+  const provider = aiSettings.value.provider
+  const model = activeModel.value
+  
+  let rates = MODEL_PRICING[model]
+  if (!rates) {
+    rates = PROVIDER_DEFAULTS[provider] || PROVIDER_DEFAULTS.openai
+  }
+  
+  const cost = (inputTokens * rates.input + outputTokens * rates.output) / 1000000
+  let costStr = ''
+  if (cost === 0) costStr = 'Free'
+  else if (cost < 0.0001) costStr = '< $0.0001'
+  else costStr = `~$${cost.toFixed(4)}`
+  
+  return { tokens: totalTokens, costStr }
+}
+
+function estimateMergeCost() {
+  const tabs = props.group.tabs.length
+  if (tabs === 0) {
+    return { tokens: 0, costStr: 'Free' }
+  }
+  const promptLen = getSystemPrompt().length + (aiSettings.value.mergePrompt || '').length
+  const promptTokens = Math.ceil(promptLen / 4)
+  const inputTokens = promptTokens + tabs * 20
+  const outputTokens = 50
   const totalTokens = inputTokens + outputTokens
   
   const provider = aiSettings.value.provider
@@ -119,8 +147,6 @@ async function handleSplitGroup() {
     splitting.value = false
   }
 }
-const showMergeTooltip = ref(false)
-const merging = ref(false)
 
 async function handleMergeGroup() {
   if (!props.group.groupId) return
@@ -133,41 +159,13 @@ async function handleMergeGroup() {
     if (res && typeof res === 'object' && 'error' in res) {
       emit('error', String(res.error))
     } else {
-      emit('split-group') // Reloads the preview cache
+      emit('split-group')
     }
   } catch (err) {
     emit('error', (err as Error).message)
   } finally {
     merging.value = false
   }
-}
-
-function estimateMergeCost() {
-  const tabs = props.group.tabs.length
-  if (tabs === 0) {
-    return { tokens: 0, costStr: 'Free' }
-  }
-  const promptLen = getSystemPrompt().length + (aiSettings.value.mergePrompt || '').length
-  const promptTokens = Math.ceil(promptLen / 4)
-  const inputTokens = promptTokens + tabs * 20
-  const outputTokens = 50
-  const totalTokens = inputTokens + outputTokens
-  
-  const provider = aiSettings.value.provider
-  const model = activeModel.value
-  
-  let rates = MODEL_PRICING[model]
-  if (!rates) {
-    rates = PROVIDER_DEFAULTS[provider] || PROVIDER_DEFAULTS.openai
-  }
-  
-  const cost = (inputTokens * rates.input + outputTokens * rates.output) / 1000000
-  let costStr = ''
-  if (cost === 0) costStr = 'Free'
-  else if (cost < 0.0001) costStr = '< $0.0001'
-  else costStr = `~$${cost.toFixed(4)}`
-  
-  return { tokens: totalTokens, costStr }
 }
 </script>
 
@@ -193,7 +191,7 @@ function estimateMergeCost() {
           v-if="group.groupId"
           class="w-[22px] h-[22px] border rounded-[4px] opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0"
           style="border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);"
-          title="Split this group with AI"
+          title="Split this group with AI (Sends existing tab groups as context)"
           @click.stop="handleSplitGroup"
           :disabled="splitting"
           @mouseenter="showSplitTooltip = true"
@@ -201,10 +199,10 @@ function estimateMergeCost() {
         >
           <svg v-if="splitting" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
           <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M16 3h5v5"/>
-            <path d="M8 3H3v5"/>
-            <path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 4"/>
-            <path d="m15 9 6-6"/>
+            <path d="M12 21v-6a4 4 0 0 0-1.17-2.83L5.5 6.8" />
+            <path d="M12 15a4 4 0 0 1 1.17-2.83L18.5 6.8" />
+            <path d="M5.5 10.5V6.8h3.7" />
+            <path d="M14.8 6.8h3.7v3.7" />
           </svg>
         </button>
         <!-- Merge Group with AI -->
@@ -220,9 +218,9 @@ function estimateMergeCost() {
         >
           <svg v-if="merging" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
           <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m8 6 4-4 4 4"/>
-            <path d="M12 2v10.3a4 4 0 0 1-1.172 2.872L4 22"/>
-            <path d="m20 22-5-5"/>
+            <path d="M5.5 6.8l5.33 5.34A4 4 0 0 1 12 15v6" />
+            <path d="M18.5 6.8l-5.33 5.34A4 4 0 0 0 12 15" />
+            <path d="M9 18l3 3 3-3" />
           </svg>
         </button>
         <button
@@ -242,11 +240,12 @@ function estimateMergeCost() {
         <!-- Split Tooltip -->
         <div
           v-if="showSplitTooltip && aiSettings.enabled && aiSettings.apiKey"
-          class="absolute right-3.5 top-full mt-1 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
+          class="absolute right-3.5 top-full mt-1 block w-[285px] p-3 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
           style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);"
         >
-          <div class="font-semibold mb-1" style="color: var(--accent);">
-            AI Split Group Preview
+          <div class="font-semibold mb-1 flex items-center justify-between" style="color: var(--accent);">
+            <span>AI Split Group Preview</span>
+            <span class="text-[9px] font-normal px-1.5 py-0.5 rounded bg-accent/10" style="color: var(--accent);">Sub-Grouping</span>
           </div>
           <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
             <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
@@ -260,8 +259,12 @@ function estimateMergeCost() {
           </div>
           
           <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">Split Prompt</div>
-          <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
+          <div class="text-[10px] mb-1.5 leading-normal" style="color: var(--text-secondary);">
             {{ aiSettings.splitPrompt || 'You are splitting an existing group of highly related tabs. Create more specific and granular sub-groups based on finer details and relationships.' }}
+          </div>
+
+          <div class="text-[9.5px] italic mb-2 px-2 py-1 rounded bg-black/5 dark:bg-white/5" style="color: var(--accent);">
+            Includes names of all other existing window tab groups for contextual sub-grouping.
           </div>
           
           <div class="mt-2 pt-2 border-t flex flex-col gap-1.5" style="border-color: var(--border);">
@@ -280,11 +283,12 @@ function estimateMergeCost() {
         <!-- Merge Tooltip -->
         <div
           v-if="showMergeTooltip && aiSettings.enabled && aiSettings.apiKey"
-          class="absolute right-3.5 top-full mt-1 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
+          class="absolute right-3.5 top-full mt-1 block w-[285px] p-3 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
           style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);"
         >
-          <div class="font-semibold mb-1" style="color: var(--accent);">
-            AI Merge Group Preview
+          <div class="font-semibold mb-1 flex items-center justify-between" style="color: var(--accent);">
+            <span>AI Merge Group Preview</span>
+            <span class="text-[9px] font-normal px-1.5 py-0.5 rounded bg-accent/10" style="color: var(--accent);">Target Merge</span>
           </div>
           <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
             <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
@@ -298,7 +302,7 @@ function estimateMergeCost() {
           </div>
           
           <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">Merge Prompt</div>
-          <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
+          <div class="text-[10px] mb-2 leading-normal" style="color: var(--text-secondary);">
             {{ aiSettings.mergePrompt || 'Analyze the browser tabs of this group and decide if they should be merged into one of the other existing tab groups. Choose the best fitting existing group from the list. If none of the existing groups are a good fit and this group should remain separate, respond with "KEEP". Be conservative about merging; only merge if the topics are highly related.' }}
           </div>
           
@@ -335,7 +339,7 @@ function estimateMergeCost() {
           v-if="group.groupId"
           class="w-[22px] h-[22px] border rounded-[4px] opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0"
           style="border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);"
-          title="Split this group with AI"
+          title="Split this group with AI (Sends existing tab groups as context)"
           @click.stop="handleSplitGroup"
           :disabled="splitting"
           @mouseenter="showSplitTooltip = true"
@@ -343,10 +347,10 @@ function estimateMergeCost() {
         >
           <svg v-if="splitting" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
           <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M16 3h5v5"/>
-            <path d="M8 3H3v5"/>
-            <path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 4"/>
-            <path d="m15 9 6-6"/>
+            <path d="M12 21v-6a4 4 0 0 0-1.17-2.83L5.5 6.8" />
+            <path d="M12 15a4 4 0 0 1 1.17-2.83L18.5 6.8" />
+            <path d="M5.5 10.5V6.8h3.7" />
+            <path d="M14.8 6.8h3.7v3.7" />
           </svg>
         </button>
         <!-- Merge Group with AI -->
@@ -362,9 +366,9 @@ function estimateMergeCost() {
         >
           <svg v-if="merging" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
           <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m8 6 4-4 4 4"/>
-            <path d="M12 2v10.3a4 4 0 0 1-1.172 2.872L4 22"/>
-            <path d="m20 22-5-5"/>
+            <path d="M5.5 6.8l5.33 5.34A4 4 0 0 1 12 15v6" />
+            <path d="M18.5 6.8l-5.33 5.34A4 4 0 0 0 12 15" />
+            <path d="M9 18l3 3 3-3" />
           </svg>
         </button>
         <button
@@ -389,11 +393,12 @@ function estimateMergeCost() {
         <!-- Split Tooltip -->
         <div
           v-if="showSplitTooltip && aiSettings.enabled && aiSettings.apiKey"
-          class="absolute right-3.5 top-full mt-1 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
+          class="absolute right-3.5 top-full mt-1 block w-[285px] p-3 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
           style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);"
         >
-          <div class="font-semibold mb-1" style="color: var(--accent);">
-            AI Split Group Preview
+          <div class="font-semibold mb-1 flex items-center justify-between" style="color: var(--accent);">
+            <span>AI Split Group Preview</span>
+            <span class="text-[9px] font-normal px-1.5 py-0.5 rounded bg-accent/10" style="color: var(--accent);">Sub-Grouping</span>
           </div>
           <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
             <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
@@ -407,8 +412,12 @@ function estimateMergeCost() {
           </div>
           
           <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">Split Prompt</div>
-          <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
+          <div class="text-[10px] mb-1.5 leading-normal" style="color: var(--text-secondary);">
             {{ aiSettings.splitPrompt || 'You are splitting an existing group of highly related tabs. Create more specific and granular sub-groups based on finer details and relationships.' }}
+          </div>
+
+          <div class="text-[9.5px] italic mb-2 px-2 py-1 rounded bg-black/5 dark:bg-white/5" style="color: var(--accent);">
+            Includes names of all other existing window tab groups for contextual sub-grouping.
           </div>
           
           <div class="mt-2 pt-2 border-t flex flex-col gap-1.5" style="border-color: var(--border);">
@@ -427,11 +436,12 @@ function estimateMergeCost() {
         <!-- Merge Tooltip -->
         <div
           v-if="showMergeTooltip && aiSettings.enabled && aiSettings.apiKey"
-          class="absolute right-3.5 top-full mt-1 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
+          class="absolute right-3.5 top-full mt-1 block w-[285px] p-3 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200"
           style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);"
         >
-          <div class="font-semibold mb-1" style="color: var(--accent);">
-            AI Merge Group Preview
+          <div class="font-semibold mb-1 flex items-center justify-between" style="color: var(--accent);">
+            <span>AI Merge Group Preview</span>
+            <span class="text-[9px] font-normal px-1.5 py-0.5 rounded bg-accent/10" style="color: var(--accent);">Target Merge</span>
           </div>
           <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
             <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
@@ -445,7 +455,7 @@ function estimateMergeCost() {
           </div>
           
           <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">Merge Prompt</div>
-          <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
+          <div class="text-[10px] mb-2 leading-normal" style="color: var(--text-secondary);">
             {{ aiSettings.mergePrompt || 'Analyze the browser tabs of this group and decide if they should be merged into one of the other existing tab groups. Choose the best fitting existing group from the list. If none of the existing groups are a good fit and this group should remain separate, respond with "KEEP". Be conservative about merging; only merge if the topics are highly related.' }}
           </div>
           

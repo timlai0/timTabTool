@@ -7,6 +7,10 @@
     "message": "Manage browser tabs with automated grouping, quick search overlay, and optional privacy-focused AI features.",
     "description": "Extension description"
   },
+  "cmdOpenPopup": {
+    "message": "Open Extension Popup / Window",
+    "description": "Command to open the extension popup window"
+  },
   "cmdOpenSearch": {
     "message": "Open Tab Search",
     "description": "Command to open the search overlay"

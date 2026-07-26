@@ -7,6 +7,10 @@
     "message": "标签页自动驾驶。智能分组、即时搜索、可选 AI 增强 — 全部本地运行，隐私优先。",
     "description": "Extension description"
   },
+  "cmdOpenPopup": {
+    "message": "打开扩展弹窗/窗口",
+    "description": "Command to open the extension popup window"
+  },
   "cmdOpenSearch": {
     "message": "打开标签搜索",
     "description": "Command to open the search overlay"

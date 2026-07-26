@@ -32,7 +32,8 @@ function getFaviconUrl(tab: TabInfo): string {
 
 <template>
   <button
-    class="tab-row w-full flex items-center gap-2.5 px-2 py-[5px] rounded-sm text-left group"
+    :data-tab-id="tab.id"
+    class="tab-row w-full flex items-center gap-2.5 px-2 py-[5px] rounded-sm text-left group transition-all duration-300"
     :class="{ 'active-tab-highlight': tab.active }"
     @click="switchToTab(tab.id)"
     @mousedown.middle.prevent.stop=""

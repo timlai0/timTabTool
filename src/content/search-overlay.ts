@@ -697,9 +697,6 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     progressHideBtn.addEventListener('click', () => {
       visible = false
       if (hostEl) hostEl.style.display = 'none'
-      if (window.location.href.includes('search.html')) {
-        window.close()
-      }
     })
 
     progressHeaderRight.appendChild(progressHideBtn)
@@ -1177,12 +1174,6 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     hostEl.style.display = 'none'
     clearTimeout(debounceTimer)
     resetAIProgressState()
-
-    if (window.location.href.includes('search.html')) {
-      // Logic: Close the popup window on deactivation
-      // Programming logic: Close the standalone popup window when deactivated
-      window.close()
-    }
   }
 
   function toggle(initialQuery = '') {

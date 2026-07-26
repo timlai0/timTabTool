@@ -23,6 +23,7 @@ const settings = ref<ExtensionSettings>({ ...DEFAULT_SETTINGS })
 const saved = ref(false)
 const testing = ref(false)
 const testResult = ref<{ ok: boolean; error?: string } | null>(null)
+const popupShortcut = ref('Ctrl+Shift+S')
 const searchShortcut = ref('Ctrl+Shift+F')
 const searchSlashShortcut = ref('Ctrl+Shift+7')
 const advancedPromptsExpanded = ref(false)
@@ -226,6 +227,10 @@ onMounted(async () => {
     const commands = await (typeof (globalThis as any).browser !== 'undefined' && (globalThis as any).browser.commands
       ? (globalThis as any).browser.commands.getAll()
       : chrome.commands.getAll())
+    const popupCmd = commands.find((c: { name?: string; shortcut?: string }) => c.name === '_execute_action')
+    if (popupCmd?.shortcut) {
+      popupShortcut.value = popupCmd.shortcut
+    }
     const searchCmd = commands.find((c: { name?: string; shortcut?: string }) => c.name === 'open-search')
     if (searchCmd?.shortcut) {
       searchShortcut.value = searchCmd.shortcut
@@ -526,26 +531,26 @@ async function pasteConfig() {
             <button
               type="button"
               @click="connectionSettingsExpanded = !connectionSettingsExpanded"
-              class="w-full flex items-center justify-between px-3.5 py-3 cursor-pointer text-left setting-row focus:outline-none transition-all duration-200"
-              style="background: var(--bg-primary);"
+              class="w-full flex items-center justify-between px-3.5 py-3 cursor-pointer text-left focus:outline-none transition-all duration-200 border-t border-b hover:bg-black/5 dark:hover:bg-white/5"
+              style="background: var(--bg-elevated); border-color: var(--border);"
             >
               <div class="flex items-start gap-2.5">
-                <svg class="w-4 h-4 mt-0.5" style="color: var(--accent);" viewBox="0 0 20 20" fill="currentColor">
+                <svg class="w-4 h-4 mt-0.5 shrink-0" style="color: var(--accent);" viewBox="0 0 20 20" fill="currentColor">
                   <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM4.332 8.027a6.022 6.022 0 011.912-2.706C6.512 5.73 6.974 6 7.5 6A1.5 1.5 0 019 7.5V9a1 1 0 001 1h4a1 1 0 001-1v-.01a5.976 5.976 0 011.603 3.652A6.002 6.002 0 014.332 8.027zM9 14.93A5.99 5.99 0 0110 4c.326 0 .647.026.96.076a5.986 5.986 0 01-1.93 5.378A1 1 0 008.5 10v1.5a1.5 1.5 0 01-1.5 1.5H5.828A5.967 5.967 0 019 14.93z" clip-rule="evenodd" />
                 </svg>
                 <div class="flex flex-col">
-                  <span class="text-xs font-semibold" style="color: var(--text-primary);">AI Provider & Connection Settings</span>
-                  <span class="text-[10px] mt-0.5" style="color: var(--text-tertiary);">
+                  <span class="text-xs font-bold tracking-wide" style="color: var(--text-primary);">AI Provider & Connection Settings</span>
+                  <span class="text-[10.5px] mt-0.5 font-medium" style="color: var(--text-secondary);">
                     Configure API keys, model provider, endpoints, batch sizes, and max tokens
                   </span>
                 </div>
               </div>
               <svg
-                class="w-4 h-4 transition-transform duration-200 transform"
+                class="w-4 h-4 transition-transform duration-200 transform shrink-0"
                 :class="{ 'rotate-180': connectionSettingsExpanded }"
                 viewBox="0 0 20 20"
                 fill="currentColor"
-                style="color: var(--text-secondary);"
+                style="color: var(--accent);"
               >
                 <path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
               </svg>
@@ -662,26 +667,26 @@ async function pasteConfig() {
             <button
               type="button"
               @click="advancedPromptsExpanded = !advancedPromptsExpanded"
-              class="w-full flex items-center justify-between px-3.5 py-3 cursor-pointer text-left setting-row focus:outline-none transition-all duration-200"
-              style="background: var(--bg-primary);"
+              class="w-full flex items-center justify-between px-3.5 py-3 cursor-pointer text-left focus:outline-none transition-all duration-200 border-t border-b hover:bg-black/5 dark:hover:bg-white/5"
+              style="background: var(--bg-elevated); border-color: var(--border);"
             >
               <div class="flex items-start gap-2.5">
-                <svg class="w-4 h-4 mt-0.5" style="color: var(--accent);" viewBox="0 0 20 20" fill="currentColor">
+                <svg class="w-4 h-4 mt-0.5 shrink-0" style="color: var(--accent);" viewBox="0 0 20 20" fill="currentColor">
                   <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
                 </svg>
                 <div class="flex flex-col">
-                  <span class="text-xs font-semibold" style="color: var(--text-primary);">Advanced Prompt Instructions</span>
-                  <span class="text-[10px] mt-0.5" style="color: var(--text-tertiary);">
+                  <span class="text-xs font-bold tracking-wide" style="color: var(--text-primary);">Advanced Prompt Instructions</span>
+                  <span class="text-[10.5px] mt-0.5 font-medium" style="color: var(--text-secondary);">
                     Configure tab grouping rules, coherence guidelines, and system prompts
                   </span>
                 </div>
               </div>
               <svg
-                class="w-4 h-4 transition-transform duration-200 transform"
+                class="w-4 h-4 transition-transform duration-200 transform shrink-0"
                 :class="{ 'rotate-180': advancedPromptsExpanded }"
                 viewBox="0 0 20 20"
                 fill="currentColor"
-                style="color: var(--text-secondary);"
+                style="color: var(--accent);"
               >
                 <path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
               </svg>
@@ -699,16 +704,12 @@ async function pasteConfig() {
                     </label>
                     <div class="relative group/help">
                       <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
                         <div class="font-bold mb-1" style="color: var(--accent);">Tab Grouping Prompt</div>
                         Defines tab clustering logic and categories.
                         
-                        <strong>When to use</strong>: To modify how tabs are grouped, sizes of groups, or target names.
-                        
-                        <strong>Examples</strong>:
-                        • "Limit maximum groups to 4."
-                        • "Create a dedicated group for Dev tools."
-                        • "Group only if at least 3 tabs match."
+                        <strong style="color: var(--accent);">Data sent to AI</strong>:
+                        • List of browser tabs: [Index, Title, Domain or Full URL, Opened timestamp]
                       </div>
                     </div>
                   </div>
@@ -741,12 +742,13 @@ async function pasteConfig() {
                     </label>
                     <div class="relative group/help">
                       <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
                         <div class="font-bold mb-1" style="color: var(--accent);">Batch Coherence</div>
-                        Injected into subsequent batches (batch 2+) alongside the list of group names created in previous batches.
+                        Injected into subsequent batches (batch 2+).
                         
-                        <strong>Default</strong>:
-                        "You should prioritize placing tabs into these existing groups if they fit, rather than creating new, redundant groups."
+                        <strong style="color: var(--accent);">Data sent to AI</strong>:
+                        • Current batch tab list [Index, Title, Domain/URL, Opened timestamp]
+                        • List of existing group names created in previous batches (e.g., ["Dev", "Shopping"])
                       </div>
                     </div>
                   </div>
@@ -779,9 +781,12 @@ async function pasteConfig() {
                     </label>
                     <div class="relative group/help">
                       <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
                         <div class="font-bold mb-1" style="color: var(--accent);">Split Group Prompt</div>
                         Defines how highly related tab groups are divided into finer sub-groups.
+                        
+                        <strong style="color: var(--accent);">Data sent to AI</strong>:
+                        • Target group's tab list: [Index, Title, Domain or Full URL, Opened timestamp]
                       </div>
                     </div>
                   </div>
@@ -814,9 +819,13 @@ async function pasteConfig() {
                     </label>
                     <div class="relative group/help">
                       <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
                         <div class="font-bold mb-1" style="color: var(--accent);">Add New Tabs Prompt</div>
                         Defines instructions for classifying new incoming tabs into existing groups.
+                        
+                        <strong style="color: var(--accent);">Data sent to AI</strong>:
+                        • New tab list [Index, Title, Domain/URL, Opened timestamp]
+                        • List of existing group names in the current window
                       </div>
                     </div>
                   </div>
@@ -849,9 +858,13 @@ async function pasteConfig() {
                     </label>
                     <div class="relative group/help">
                       <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
                         <div class="font-bold mb-1" style="color: var(--accent);">Merge Group Prompt</div>
                         Defines instructions for choosing an existing group to merge this tab group into.
+                        
+                        <strong style="color: var(--accent);">Data sent to AI</strong>:
+                        • Target group's tab list: [Index, Title, Domain or Full URL, Opened timestamp]
+                        • List of all other existing group names in the window
                       </div>
                     </div>
                   </div>
@@ -884,16 +897,12 @@ async function pasteConfig() {
                     </label>
                     <div class="relative group/help">
                       <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[260px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
                         <div class="font-bold mb-1" style="color: var(--accent);">Custom System Prompt</div>
-                        Defines global behavior and style rules.
+                        Defines global behavior, persona, and output style rules.
                         
-                        <strong>When to use</strong>: To enforce global formatting, tone, language, or constraints.
-                        
-                        <strong>Examples</strong>:
-                        • "Always respond in German."
-                        • "Never use emojis."
-                        • "Omit the 'www.' prefix in group names."
+                        <strong style="color: var(--accent);">Data sent to AI</strong>:
+                        • System instructions prepended to every AI prompt
                       </div>
                     </div>
                   </div>
@@ -1034,9 +1043,9 @@ async function pasteConfig() {
         <div class="rounded-sm overflow-hidden flex flex-col" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
           <div class="flex items-center justify-between px-3 py-3 border-b border-white/5 relative group">
             <div>
-              <div class="text-xs font-medium" style="color: var(--text-primary);">{{ getMessage('searchPlaceholder').replace('...', '') }} (Default)</div>
+              <div class="text-xs font-medium" style="color: var(--text-primary);">{{ getMessage('cmdOpenPopup') }}</div>
               <div class="mt-2 flex gap-1 items-center">
-                <template v-for="(key, i) in searchShortcut.split('+')" :key="'f-'+i">
+                <template v-for="(key, i) in popupShortcut.split('+')" :key="'p-'+i">
                   <span v-if="i > 0" class="text-[10px] opacity-40" style="color: var(--text-secondary);">+</span>
                   <kbd class="px-2 py-1 text-[10px] font-mono rounded-[4px] border" style="background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border-color); box-shadow: 0 1px 1px rgba(0,0,0,0.1);">{{ key }}</kbd>
                 </template>
@@ -1050,9 +1059,27 @@ async function pasteConfig() {
               {{ getMessage('changeShortcut') }}
             </button>
           </div>
+          <div class="flex items-center justify-between px-3 py-3 border-b border-white/5 relative group">
+            <div>
+              <div class="text-xs font-medium" style="color: var(--text-primary);">{{ getMessage('cmdOpenSearch') }}</div>
+              <div class="mt-2 flex gap-1 items-center">
+                <template v-for="(key, i) in searchShortcut.split('+')" :key="'f-'+i">
+                  <span v-if="i > 0" class="text-[10px] opacity-40" style="color: var(--text-secondary);">+</span>
+                  <kbd class="px-2 py-1 text-[10px] font-mono rounded-[4px] border" style="background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border-color); box-shadow: 0 1px 1px rgba(0,0,0,0.1);">{{ key }}</kbd>
+                </template>
+              </div>
+            </div>
+            <button
+              @click="openShortcutSettings"
+              class="px-3 py-1.5 text-[11px] font-medium rounded-sm opacity-0 group-hover:opacity-100 transition-opacity"
+              style="color: var(--accent);"
+            >
+              {{ getMessage('changeShortcut') }}
+            </button>
+          </div>
           <div class="flex items-center justify-between px-3 py-3 relative group">
             <div>
-              <div class="text-xs font-medium" style="color: var(--text-primary);">{{ getMessage('searchPlaceholder').replace('...', '') }} (Alternative)</div>
+              <div class="text-xs font-medium" style="color: var(--text-primary);">{{ getMessage('cmdOpenSearchSlash') }}</div>
               <div class="mt-2 flex gap-1 items-center">
                 <template v-for="(key, i) in searchSlashShortcut.split('+')" :key="'s-'+i">
                   <span v-if="i > 0" class="text-[10px] opacity-40" style="color: var(--text-secondary);">+</span>
