@@ -87,7 +87,9 @@ const TRACKING_PARAMS = new Set([
   'fbclid', 'gclid', 'gbraid', 'wbraid', '_gl', 'msclkid', 'mc_cid', 'mc_eid',
   'ref', 'referrer', 'source', 'feature', 'si', 'igshid', 'fb_action_ids',
   'twclid', 'ttclid', 'yclid', 'mkt_tok', '_hsenc', '_openstat', 'gad_source',
-  'spm', 'cmpid', 'via', 's_kwcid', 'dclid', 'zanpid'
+  'spm', 'spm_id_from', 'scm', 'pvid', 'algo_pvid', 'algo_exp_id', 'btsid', 'ws_ab_test',
+  'origin', 'vd_source', 'callback', '_t', 'from_source', 'from', 'is_from_webapp',
+  'sender_device', 'refer', 'bd_vid', 'kwd', 'search_id', 'cmpid', 'via', 's_kwcid', 'dclid', 'zanpid'
 ])
 
 export interface NormalizeUrlOptions {
@@ -202,12 +204,106 @@ export function detectDuplicateTabs(tabs: MinimalTab[]): DuplicateDetectionResul
     }
   }
 
+
   return {
     exactDuplicateCount,
     possibleDuplicateCount,
     exactDuplicates,
     possibleDuplicates
   }
+}
+
+/**
+ * Extract clean JSON substring (array or object) from a raw string, handling markdown code blocks,
+ * matching open/close bracket depth, and ignoring trailing non-JSON text.
+ */
+export function extractJsonSubstring(raw: string, type: 'array' | 'object' | 'auto' = 'auto'): string {
+  let cleaned = raw.trim()
+
+  // 1. Extract content inside markdown code block if present
+  const firstFence = cleaned.indexOf('```')
+  if (firstFence !== -1) {
+    const endFence = cleaned.lastIndexOf('```')
+    if (endFence > firstFence) {
+      let content = cleaned.slice(firstFence + 3, endFence).trim()
+      if (content.toLowerCase().startsWith('json')) {
+        content = content.slice(4).trim()
+      }
+      cleaned = content
+    }
+  }
+
+  // 2. Determine target bracket type
+  let openChar = ''
+  let closeChar = ''
+
+  if (type === 'array') {
+    openChar = '['
+    closeChar = ']'
+  } else if (type === 'object') {
+    openChar = '{'
+    closeChar = '}'
+  } else {
+    const arrIdx = cleaned.indexOf('[')
+    const objIdx = cleaned.indexOf('{')
+    if (arrIdx !== -1 && (objIdx === -1 || arrIdx < objIdx)) {
+      openChar = '['
+      closeChar = ']'
+    } else if (objIdx !== -1) {
+      openChar = '{'
+      closeChar = '}'
+    } else {
+      return cleaned
+    }
+  }
+
+  const startIdx = cleaned.indexOf(openChar)
+  if (startIdx === -1) return cleaned
+
+  // 3. Balance bracket depth while accounting for string escaping
+  let depth = 0
+  let endIdx = -1
+  let inString = false
+  let escaped = false
+
+  for (let i = startIdx; i < cleaned.length; i++) {
+    const char = cleaned[i]
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (char === '\\') {
+      escaped = true
+      continue
+    }
+    if (char === '"') {
+      inString = !inString
+      continue
+    }
+    if (!inString) {
+      if (char === openChar) {
+        depth++
+      } else if (char === closeChar) {
+        depth--
+        if (depth === 0) {
+          endIdx = i
+          break
+        }
+      }
+    }
+  }
+
+  if (endIdx !== -1) {
+    return cleaned.slice(startIdx, endIdx + 1)
+  }
+
+  // Fallback if brackets are unclosed: slice to last occurrence of closeChar
+  const lastClose = cleaned.lastIndexOf(closeChar)
+  if (lastClose > startIdx) {
+    return cleaned.slice(startIdx, lastClose + 1)
+  }
+
+  return cleaned.slice(startIdx)
 }
 
 

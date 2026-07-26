@@ -725,6 +725,9 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
   }
 
   const controller = new AbortController()
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error('Operation timed out (Chrome 5-minute limit approaching). Please process fewer tabs at once.'))
+  }, 270_000)
   activeAbortControllers.set(windowId, controller)
   activeOperationsMap.set(windowId, { type: 'group', error: null })
 
@@ -759,6 +762,13 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
 
         // AI succeeded! We can now ungroup all tabs and apply AI groups safely
         await ungroupAllTabs(windowId)
+
+        // Bulk move tabs into sorted order before grouping to prevent UI freezing
+        const orderedTabIds = freeGroups.flatMap((g) => g.tabIds)
+        const pinnedCount = tabs.length - unpinnedTabs.length
+        if (orderedTabIds.length > 0) {
+          await retryTabOperation(() => chrome.tabs.move(orderedTabIds, { index: pinnedCount }))
+        }
 
         for (const group of freeGroups) {
           if (controller.signal.aborted) return
@@ -827,6 +837,17 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
     if (controller.signal.aborted) return
 
     const groups = classifyTabs(unpinnedTabs)
+    
+    // Bulk move tabs into sorted order before grouping to prevent UI freezing
+    const orderedTabIds: number[] = []
+    for (const tabIds of groups.values()) {
+      orderedTabIds.push(...tabIds)
+    }
+    const pinnedCount = tabs.length - unpinnedTabs.length
+    if (orderedTabIds.length > 0) {
+      await retryTabOperation(() => chrome.tabs.move(orderedTabIds, { index: pinnedCount }))
+    }
+
     for (const [category, tabIds] of groups) {
       if (controller.signal.aborted) return
       if (tabIds.length === 0) continue
@@ -861,6 +882,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
+    clearTimeout(timeoutId)
     await updateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
@@ -887,6 +909,9 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
   }
 
   const controller = new AbortController()
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error('Operation timed out (Chrome 5-minute limit approaching). Please process fewer tabs at once.'))
+  }, 270_000)
   activeAbortControllers.set(windowId, controller)
   activeOperationsMap.set(windowId, { type: 'classify', error: null })
 
@@ -941,46 +966,70 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
 
     const hideTitles = titlesHiddenMap.get(windowId) ?? false
 
+    // Group tabs by destination to minimize API calls
+    const existingGroupUpdates = new Map<number, number[]>() // groupId -> tabIds
+    const newGroupUpdates = new Map<string, { tabIds: number[], color: ChromeTabGroupColor }>() // groupName -> {tabIds, color}
+
     for (const item of classifications) {
-      if (controller.signal.aborted) return
       const tab = newTabs[item.index]
       if (!tab?.id) continue
 
       if (item.group !== 'NEW' && groupNameToId.has(item.group)) {
         const targetGroupId = groupNameToId.get(item.group)!
-        await retryTabOperation(() =>
-          chrome.tabs.group({ tabIds: [tab.id!], groupId: targetGroupId }),
-        )
+        if (!existingGroupUpdates.has(targetGroupId)) existingGroupUpdates.set(targetGroupId, [])
+        existingGroupUpdates.get(targetGroupId)!.push(tab.id)
       } else {
         const name = item.newGroupName || 'Other'
         const color = (item.newGroupColor as ChromeTabGroupColor) || 'grey'
-        // Check if we already created this new group in this batch
+        
         if (groupNameToId.has(name)) {
           const targetGroupId = groupNameToId.get(name)!
-          await retryTabOperation(() =>
-            chrome.tabs.group({ tabIds: [tab.id!], groupId: targetGroupId }),
-          )
+          if (!existingGroupUpdates.has(targetGroupId)) existingGroupUpdates.set(targetGroupId, [])
+          existingGroupUpdates.get(targetGroupId)!.push(tab.id)
         } else {
-          const groupId = await retryTabOperation(() =>
-            chrome.tabs.group({
-              tabIds: [tab.id!],
-              createProperties: { windowId },
-            }),
-          )
-          groupTitleMap.set(groupId, name)
-          updatingGroups.add(groupId)
-          try {
-            await retryTabOperation(() =>
-              chrome.tabGroups.update(groupId, {
-                title: hideTitles ? '' : name,
-                color,
-              }),
-            )
-          } finally {
-            updatingGroups.delete(groupId)
-          }
-          groupNameToId.set(name, groupId)
+          if (!newGroupUpdates.has(name)) newGroupUpdates.set(name, { tabIds: [], color })
+          newGroupUpdates.get(name)!.tabIds.push(tab.id)
         }
+      }
+    }
+
+    if (controller.signal.aborted) return
+
+    // Apply updates for existing groups
+    for (const [groupId, tabIds] of existingGroupUpdates) {
+      if (controller.signal.aborted) return
+      await retryTabOperation(() => chrome.tabs.group({ tabIds: tabIds as [number, ...number[]], groupId }))
+    }
+
+    // For new groups, we can bulk move them first so they are adjacent
+    const orderedNewTabIds = Array.from(newGroupUpdates.values()).flatMap(g => g.tabIds)
+    if (orderedNewTabIds.length > 0) {
+      const allTabs2 = await chrome.tabs.query({ windowId })
+      const pinnedCount = allTabs2.filter((t) => t.pinned).length
+      await retryTabOperation(() => chrome.tabs.move(orderedNewTabIds, { index: pinnedCount }))
+    }
+
+    // Create new groups
+    for (const [name, data] of newGroupUpdates) {
+      if (controller.signal.aborted) return
+      const groupId = await retryTabOperation(() =>
+        chrome.tabs.group({
+          tabIds: data.tabIds as [number, ...number[]],
+          createProperties: { windowId },
+        }),
+      )
+      groupTitleMap.set(groupId, name)
+      groupNameToId.set(name, groupId)
+      updatingGroups.add(groupId)
+      try {
+        await retryTabOperation(() =>
+          chrome.tabGroups.update(groupId, {
+            title: hideTitles ? '' : name,
+            color: data.color,
+          }),
+        )
+      } finally {
+        updatingGroups.delete(groupId)
       }
     }
 
@@ -997,6 +1046,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
+    clearTimeout(timeoutId)
     await updateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
@@ -1037,6 +1087,9 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
   }
 
   const controller = new AbortController()
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error('Operation timed out (Chrome 5-minute limit approaching).'))
+  }, 270_000)
   activeAbortControllers.set(windowId, controller)
   activeOperationsMap.set(windowId, { type: 'group', error: null })
 
@@ -1063,8 +1116,18 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
       createdAt: t.id !== undefined ? tabCreatedTimesMap.get(t.id) ?? t.lastAccessed : t.lastAccessed,
     }))
     
+    // Query other existing tab groups in this window for context
+    const allGroups = await chrome.tabGroups.query({ windowId })
+    const otherGroupNames = allGroups
+      .filter((g) => g.id !== groupId)
+      .map((g) => groupTitleMap.get(g.id) || g.title)
+      .filter((title): title is string => Boolean(title?.trim()))
+
     // Append a context instruction to settings.ai.splitPrompt to guide the AI to split this specific group
-    const splitPrompt = `${settings.ai.splitPrompt || ''}\n\nContext: You are splitting an existing group of highly related tabs. Create more specific and granular sub-groups based on finer details.`
+    let splitPrompt = `${settings.ai.splitPrompt || 'You are splitting an existing group of highly related tabs. Create more specific and granular sub-groups based on finer details and relationships.'}`
+    if (otherGroupNames.length > 0) {
+      splitPrompt += `\n\nOther existing tab groups in this window for context: ${otherGroupNames.map(name => `"${name}"`).join(', ')}. Create distinct, specific sub-group names that complement these existing groups.`
+    }
     
     const client = new AIClient({
       ...settings.ai,
@@ -1072,9 +1135,21 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
       groupingPrompt: splitPrompt
     }, controller.signal)
 
-    const subGroups = await client.groupTabsFreely(tabInputs)
+    const subGroups = await client.groupTabsFreely(tabInputs, otherGroupNames)
 
     if (controller.signal.aborted) return
+
+    // Bulk move tabs into sorted order before sub-grouping
+    const orderedTabIds = subGroups.flatMap((g) => {
+      return g.tabIndices
+        .map((idx) => tabs[idx - 1]?.id)
+        .filter((id): id is number => id !== undefined)
+    })
+    
+    const groupStartIndex = tabs[0]?.index ?? 0
+    if (orderedTabIds.length > 0) {
+      await retryTabOperation(() => chrome.tabs.move(orderedTabIds, { index: groupStartIndex }))
+    }
 
     // Apply the sub-groups to Chrome
     for (const subGroup of subGroups) {
@@ -1112,6 +1187,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
+    clearTimeout(timeoutId)
     await updateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
@@ -1141,6 +1217,9 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
   }
 
   const controller = new AbortController()
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error('Operation timed out (Chrome 5-minute limit approaching).'))
+  }, 270_000)
   activeAbortControllers.set(windowId, controller)
   activeOperationsMap.set(windowId, { type: 'group', error: null })
 
@@ -1197,9 +1276,16 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
       const targetGroupId = groupNameToId.get(mergeTarget)!
       const tabIds = tabs.map((t) => t.id).filter((id): id is number => id !== undefined)
       
-      await retryTabOperation(() =>
-        chrome.tabs.group({ tabIds: tabIds as [number, ...number[]], groupId: targetGroupId })
-      )
+      if (tabIds.length > 0) {
+        const targetTabs = await chrome.tabs.query({ groupId: targetGroupId })
+        if (targetTabs.length > 0) {
+          const targetIndex = targetTabs[targetTabs.length - 1].index + 1
+          await retryTabOperation(() => chrome.tabs.move(tabIds, { index: targetIndex }))
+        }
+        await retryTabOperation(() =>
+          chrome.tabs.group({ tabIds: tabIds as [number, ...number[]], groupId: targetGroupId })
+        )
+      }
     }
 
     // Rebuild cache
@@ -1211,6 +1297,7 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
+    clearTimeout(timeoutId)
     await updateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
@@ -1220,6 +1307,8 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
     }
   }
 }
+
+
 
 /**
  * Cancel any running AI-enhanced grouping or classification for this window.

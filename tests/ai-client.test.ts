@@ -95,7 +95,7 @@ describe('AIClient Retry Logic', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1)
   })
 
-  it('does not retry when output token limit (MAX_TOKENS) is exceeded', async () => {
+  it('attempts to continue up to maxContinuations times when output token limit (MAX_TOKENS) is exceeded', async () => {
     const config: AIConfig = {
       enabled: true,
       provider: 'gemini',
@@ -116,12 +116,11 @@ describe('AIClient Retry Logic', () => {
     )
     vi.stubGlobal('fetch', mockFetch)
 
-    await expect(
-      client.classifyNewTabsIntoGroups([{ url: 'https://example.com', title: 'Example' }], [])
-    ).rejects.toThrow('Exceeded output token limit')
+    const result = await client.classifyNewTabsIntoGroups([{ url: 'https://example.com', title: 'Example' }], [])
 
-    // Should fail instantly on the 1st attempt, zero retries
-    expect(mockFetch).toHaveBeenCalledTimes(1)
+    // 1 initial request + 3 continuations = 4 attempts
+    expect(mockFetch).toHaveBeenCalledTimes(4)
+    expect(result[0].group).toBe('NEW')
   })
 
   it('stops immediately when aborted', async () => {

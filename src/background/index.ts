@@ -269,15 +269,24 @@ async function ensureContentScriptLoaded(tabId: number): Promise<boolean> {
 
 async function broadcastAIStart(windowId: number, action: string) {
   try {
+    // Broadcast to internal extension views (e.g. search.html)
+    chrome.runtime.sendMessage({
+      action: 'START_AI_PROGRESS',
+      payload: { commandAction: action }
+    }).catch(() => {})
+
     const tabs = await chrome.tabs.query({ active: true, windowId })
-    const activeTab = tabs[0]
-    if (activeTab?.id && activeTab.url) {
-      if (isRestrictedUrl(activeTab.url)) return
-      
-      const loaded = await ensureContentScriptLoaded(activeTab.id)
+    let targetTab = tabs[0]
+    if (!targetTab || !targetTab.url || isRestrictedUrl(targetTab.url)) {
+      const winTabs = await chrome.tabs.query({ windowId })
+      targetTab = winTabs.find(t => t.id && t.url && !isRestrictedUrl(t.url))
+    }
+
+    if (targetTab?.id && targetTab.url) {
+      const loaded = await ensureContentScriptLoaded(targetTab.id)
       if (!loaded) return
 
-      await chrome.tabs.sendMessage(activeTab.id, {
+      await chrome.tabs.sendMessage(targetTab.id, {
         action: 'START_AI_PROGRESS',
         payload: { commandAction: action }
       }).catch(() => {})
@@ -289,12 +298,21 @@ async function broadcastAIStart(windowId: number, action: string) {
 
 async function broadcastAIComplete(windowId: number, action: string) {
   try {
+    // Broadcast to internal extension views
+    chrome.runtime.sendMessage({
+      action: 'AI_OPERATION_COMPLETE',
+      payload: { commandAction: action }
+    }).catch(() => {})
+
     const tabs = await chrome.tabs.query({ active: true, windowId })
-    const activeTab = tabs[0]
-    if (activeTab?.id && activeTab.url) {
-      if (isRestrictedUrl(activeTab.url)) return
-      
-      await chrome.tabs.sendMessage(activeTab.id, {
+    let targetTab = tabs[0]
+    if (!targetTab || !targetTab.url || isRestrictedUrl(targetTab.url)) {
+      const winTabs = await chrome.tabs.query({ windowId })
+      targetTab = winTabs.find(t => t.id && t.url && !isRestrictedUrl(t.url))
+    }
+
+    if (targetTab?.id && targetTab.url) {
+      await chrome.tabs.sendMessage(targetTab.id, {
         action: 'AI_OPERATION_COMPLETE',
         payload: { commandAction: action }
       }).catch(() => {})
@@ -306,12 +324,21 @@ async function broadcastAIComplete(windowId: number, action: string) {
 
 async function broadcastAIFailed(windowId: number, action: string, errorMsg: string) {
   try {
+    // Broadcast to internal extension views
+    chrome.runtime.sendMessage({
+      action: 'AI_OPERATION_FAILED',
+      payload: { commandAction: action, error: errorMsg }
+    }).catch(() => {})
+
     const tabs = await chrome.tabs.query({ active: true, windowId })
-    const activeTab = tabs[0]
-    if (activeTab?.id && activeTab.url) {
-      if (isRestrictedUrl(activeTab.url)) return
-      
-      await chrome.tabs.sendMessage(activeTab.id, {
+    let targetTab = tabs[0]
+    if (!targetTab || !targetTab.url || isRestrictedUrl(targetTab.url)) {
+      const winTabs = await chrome.tabs.query({ windowId })
+      targetTab = winTabs.find(t => t.id && t.url && !isRestrictedUrl(t.url))
+    }
+
+    if (targetTab?.id && targetTab.url) {
+      await chrome.tabs.sendMessage(targetTab.id, {
         action: 'AI_OPERATION_FAILED',
         payload: { commandAction: action, error: errorMsg }
       }).catch(() => {})
@@ -718,6 +745,17 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'ORGANIZE_POSSIBLE_DUPLICATES': {
       const windowId = await resolveWindowId(message.payload)
       await organizePossibleDuplicateGroups(windowId)
+      return { ok: true }
+    }
+
+    case 'GROUP_CLUSTER': {
+      const { tabIds, title } = (message.payload as { tabIds: number[]; title: string }) || {}
+      if (Array.isArray(tabIds) && tabIds.length > 0) {
+        const groupId = await chrome.tabs.group({ tabIds: tabIds as [number, ...number[]] })
+        if (title) {
+          await chrome.tabGroups.update(groupId, { title, color: 'orange' })
+        }
+      }
       return { ok: true }
     }
 

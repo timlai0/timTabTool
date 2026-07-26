@@ -1,8 +1,8 @@
 import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory } from './types'
 import { DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS, DEFAULT_ENDPOINTS } from './constants'
-import { getAutoBatchSize, formatTimeAgo, extractDomain } from './utils'
+import { getAutoBatchSize, formatTimeAgo, extractDomain, extractJsonSubstring } from './utils'
 
-export const SYSTEM_PROMPT = 'You are a helpful assistant that classifies browser tabs into categories. Be concise.'
+export const SYSTEM_PROMPT = 'You are an expert AI browser assistant specialized in tab organization, semantic topic clustering, and tab group naming. Always produce clean, structured output.'
 
 
 
@@ -24,8 +24,8 @@ export class AIClient {
   private static globalRequestTimestamps: number[] = []
   private instanceRequestCount = 0
 
-  static readonly MAX_REQUESTS_PER_RUN = 15
-  static readonly MAX_REQUESTS_PER_MINUTE = 30
+  static readonly MAX_REQUESTS_PER_RUN = 30
+  static readonly MAX_REQUESTS_PER_MINUTE = 50
 
   constructor(config: AIConfig, signal?: AbortSignal) {
     this.config = config
@@ -200,6 +200,7 @@ Only output the JSON array, no other text.`
    */
   async groupTabsFreely(
     tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
+    initialExistingGroupNames: string[] = []
   ): Promise<AIGroupResult[]> {
     if (tabs.length === 0) return []
 
@@ -212,14 +213,14 @@ Only output the JSON array, no other text.`
     }
 
     if (tabs.length <= batchSize) {
-      return this.groupTabsBatch(tabs, 0)
+      return this.groupTabsBatch(tabs, 0, initialExistingGroupNames)
     }
 
     const allResults: AIGroupResult[] = []
+    const combinedExistingNames = [...initialExistingGroupNames]
     for (let i = 0; i < tabs.length; i += batchSize) {
       const batch = tabs.slice(i, i + batchSize)
-      const existingGroupNames = allResults.map((r) => r.name)
-      const batchResults = await this.groupTabsBatch(batch, i, existingGroupNames)
+      const batchResults = await this.groupTabsBatch(batch, i, combinedExistingNames)
       
       // Merge batch results into allResults based on case-insensitive group name
       for (const group of batchResults) {
@@ -229,6 +230,7 @@ Only output the JSON array, no other text.`
           existing.tabIndices.push(...group.tabIndices)
         } else {
           allResults.push(group)
+          combinedExistingNames.push(group.name)
         }
       }
     }
@@ -253,10 +255,11 @@ Only output the JSON array, no other text.`
     }
 
     const shortTitle = tab.title.length > 40 ? tab.title.slice(0, 40) + '…' : tab.title
+    const quotedTitle = `"${shortTitle}"`
     if (this.config.sendFullUrl) {
-      return `${index}. ${shortTitle} (URL: ${urlString})${timeTag}`
+      return `${index}. ${quotedTitle} (URL: ${urlString})${timeTag}`
     }
-    return `${index}. ${shortTitle} (${domain})${timeTag}`
+    return `${index}. ${quotedTitle} (${domain})${timeTag}`
   }
 
   private async groupTabsBatch(
@@ -302,30 +305,12 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
   }
 
   private parseFreeGroupResponse(response: string, maxIndex: number, minIndex = 1): AIGroupResult[] {
-    // Fast code fence extraction using string index operations
-    let cleaned = response.trim()
-    const firstFence = cleaned.indexOf('```')
-    if (firstFence !== -1) {
-      const endFence = cleaned.lastIndexOf('```')
-      if (endFence > firstFence) {
-        let content = cleaned.slice(firstFence + 3, endFence).trim()
-        if (content.toLowerCase().startsWith('json')) {
-          content = content.slice(4).trim()
-        }
-        cleaned = content
-      }
-    }
-
-    // Find the start of the JSON array
-    const startIdx = cleaned.indexOf('[')
-    if (startIdx === -1) {
+    const extracted = extractJsonSubstring(response, 'array')
+    if (!extracted.startsWith('[')) {
       throw new Error(`No JSON array found in AI response: ${response.slice(0, 200)}`)
     }
 
-    let jsonStr = cleaned.slice(startIdx)
-
-    // Clean trailing commas before ] or } (common LLM mistake)
-    jsonStr = jsonStr.replace(/,\s*([}\]])/g, '$1')
+    let jsonStr = extracted.replace(/,\s*([}\]])/g, '$1')
 
     // Try to parse directly first
     let parsed: { name: string; tabIndices: number[]; color?: string }[]
@@ -418,11 +403,10 @@ Only output the JSON array.`
     try {
       const response = await this.chat(prompt, true)
 
-      const cleaned = response.trim()
-      const jsonMatch = cleaned.match(/\[[\s\S]*\]/)
-      if (!jsonMatch) return this.fallbackAllToNew(tabs)
+      const extracted = extractJsonSubstring(response, 'array')
+      if (!extracted.startsWith('[')) return this.fallbackAllToNew(tabs)
 
-      let jsonStr = jsonMatch[0].replace(/,\s*([}\]])/g, '$1')
+      let jsonStr = extracted.replace(/,\s*([}\]])/g, '$1')
       let parsed: {
         index: number
         group: string
@@ -490,11 +474,10 @@ Only output the JSON object.`
 
     try {
       const response = await this.chat(prompt, true)
-      const cleaned = response.trim()
-      const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-      if (!jsonMatch) return 'KEEP'
+      const extracted = extractJsonSubstring(response, 'object')
+      const jsonStr = extracted.replace(/,\s*([}\]])/g, '$1')
 
-      const parsed = JSON.parse(jsonMatch[0].replace(/,\s*([}\]])/g, '$1')) as { mergeTarget: string }
+      const parsed = JSON.parse(jsonStr) as { mergeTarget?: string }
       const target = parsed.mergeTarget || 'KEEP'
       const validNames = new Set(existingGroupNames.map(n => n.toLowerCase()))
       if (target !== 'KEEP' && validNames.has(target.toLowerCase())) {
@@ -508,7 +491,7 @@ Only output the JSON object.`
         console.warn('[timTabTool] Prompt blocked in merge analysis, retrying with URLs only...')
         return this.decideMergeGroup(tabs, existingGroupNames, true)
       }
-      console.error('[timTabTool] Failed to decide merge group. Error:', err)
+      console.warn('[timTabTool] Failed to decide merge group, keeping group untouched. Detail:', err)
       return 'KEEP'
     }
   }
@@ -676,145 +659,212 @@ Only output the JSON object.`
   }
 
   private async chatOpenAI(userMessage: string, jsonMode?: boolean): Promise<string> {
-    const response = await fetch(`${this.getBaseUrl()}/chat/completions`, {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify({
-        model: this.config.model || this.defaultModel,
-        messages: [
-          { role: 'system', content: this.systemPrompt },
-          { role: 'user', content: userMessage },
-        ],
-        temperature: 0,
-        max_tokens: this.config.maxTokens || 16384,
-        ...(jsonMode && { response_format: { type: 'json_object' } }),
-      }),
-      signal: this.signal,
-    })
+    const maxContinuations = 3
+    let continuations = 0
+    let accumulatedContent = ''
+    
+    const messages = [
+      { role: 'system', content: this.systemPrompt },
+      { role: 'user', content: userMessage },
+    ]
 
-    if (!response.ok) {
-      let err = await response.text()
-      if (!err.trim()) {
-        err = response.statusText || 'Unknown Error'
-      }
-      throw new Error(`API error ${response.status}: ${err}`)
-    }
+    while (continuations <= maxContinuations) {
+      const response = await fetch(`${this.getBaseUrl()}/chat/completions`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          model: this.config.model || this.defaultModel,
+          messages,
+          temperature: 0,
+          max_tokens: this.config.maxTokens || 16384,
+          ...(jsonMode && { response_format: { type: 'json_object' } }),
+        }),
+        signal: this.signal,
+      })
 
-    const data = await response.json()
-    const choice = data.choices?.[0]
-    if (choice) {
-      const finishReason = choice.finish_reason
-      if (finishReason === 'length') {
-        throw new Error('AI response was cut off: Exceeded output token limit ("finish_reason": "length").')
-      } else if (finishReason && finishReason !== 'stop' && finishReason !== 'tool_calls') {
-        throw new Error(`AI response failed: ${finishReason}`)
+      if (!response.ok) {
+        let err = await response.text()
+        if (!err.trim()) {
+          err = response.statusText || 'Unknown Error'
+        }
+        throw new Error(`API error ${response.status}: ${err}`)
       }
+
+      const data = await response.json()
+      const choice = data.choices?.[0]
+      const text = choice?.message?.content || ''
+      accumulatedContent += text
+
+      if (choice) {
+        const finishReason = choice.finish_reason
+        if (finishReason === 'length') {
+          if (continuations >= maxContinuations) {
+            break
+          }
+          continuations++
+          messages.push({ role: 'assistant', content: text })
+          messages.push({ role: 'user', content: 'Continue exactly from where you left off. Do not repeat previous text.' })
+          continue
+        } else if (finishReason && finishReason !== 'stop' && finishReason !== 'tool_calls') {
+          throw new Error(`AI response failed: ${finishReason}`)
+        }
+      }
+      break
     }
-    return choice?.message?.content || ''
+    
+    return accumulatedContent
   }
 
   private async chatClaude(userMessage: string, jsonMode?: boolean): Promise<string> {
     const baseUrl = this.config.endpoint || DEFAULT_ENDPOINTS.claude
+    const maxContinuations = 3
+    let continuations = 0
+    let accumulatedContent = ''
+    
     const messages: { role: string; content: string }[] = [
       { role: 'user', content: userMessage },
-      ...(jsonMode ? [{ role: 'assistant', content: '[' }] : []),
     ]
-    const response = await fetch(`${baseUrl}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.config.apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: this.config.model || this.defaultModel,
-        max_tokens: this.config.maxTokens || 16384,
-        system: this.systemPrompt,
-        messages,
-      }),
-      signal: this.signal,
-    })
+    if (jsonMode) {
+      messages.push({ role: 'assistant', content: '[' })
+    }
 
-    if (!response.ok) {
-      let err = await response.text()
-      if (!err.trim()) {
-        err = response.statusText || 'Unknown Error'
+    while (continuations <= maxContinuations) {
+      const response = await fetch(`${baseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.config.apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: this.config.model || this.defaultModel,
+          max_tokens: this.config.maxTokens || 16384,
+          system: this.systemPrompt,
+          messages,
+        }),
+        signal: this.signal,
+      })
+
+      if (!response.ok) {
+        let err = await response.text()
+        if (!err.trim()) {
+          err = response.statusText || 'Unknown Error'
+        }
+        throw new Error(`API error ${response.status}: ${err}`)
       }
-      throw new Error(`API error ${response.status}: ${err}`)
-    }
 
-    const data = await response.json()
-    const stopReason = data.stop_reason
-    if (stopReason === 'max_tokens') {
-      throw new Error('AI response was cut off: Exceeded output token limit ("stop_reason": "max_tokens").')
-    } else if (stopReason && stopReason !== 'end_turn' && stopReason !== 'stop_sequence') {
-      throw new Error(`AI response failed: ${stopReason}`)
+      const data = await response.json()
+      const text = data.content?.[0]?.text || ''
+      
+      if (continuations === 0 && jsonMode) {
+        accumulatedContent += '[' + text
+      } else {
+        accumulatedContent += text
+      }
+
+      const stopReason = data.stop_reason
+      if (stopReason === 'max_tokens') {
+        if (continuations >= maxContinuations) {
+          break
+        }
+        continuations++
+        
+        const lastMsg = messages[messages.length - 1]
+        if (lastMsg && lastMsg.role === 'assistant') {
+          lastMsg.content += text
+        } else {
+          messages.push({ role: 'assistant', content: text })
+        }
+        messages.push({ role: 'user', content: 'Continue exactly from where you left off. Do not repeat previous text.' })
+        continue
+      } else if (stopReason && stopReason !== 'end_turn' && stopReason !== 'stop_sequence') {
+        throw new Error(`AI response failed: ${stopReason}`)
+      }
+      break
     }
-    const text = data.content?.[0]?.text || ''
-    return jsonMode ? '[' + text : text
+    
+    return accumulatedContent
   }
 
   private async chatGemini(userMessage: string, jsonMode?: boolean): Promise<string> {
     const baseUrl = this.config.endpoint || DEFAULT_ENDPOINTS.gemini
     const model = this.config.model || this.defaultModel
-    const response = await fetch(
-      `${baseUrl}/v1beta/models/${model}:generateContent?key=${this.config.apiKey}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: this.systemPrompt }],
-          },
-          contents: [
-            { role: 'user', parts: [{ text: userMessage }] },
-          ],
-          generationConfig: {
-            temperature: 0,
-            maxOutputTokens: this.config.maxTokens || 16384,
-            ...(jsonMode && { responseMimeType: 'application/json' }),
-          },
-        }),
-        signal: this.signal,
-      },
-    )
-
-    if (!response.ok) {
-      let errText = await response.text()
-      try {
-        const parsed = JSON.parse(errText)
-        if (parsed.promptFeedback?.blockReason === 'PROHIBITED_CONTENT' || parsed.error?.message?.includes('PROHIBITED_CONTENT')) {
-          throw new Error(`PROHIBITED_CONTENT: ${parsed.promptFeedback?.blockReasonMessage || parsed.error?.message || 'Prohibited content blocked.'}`)
-        }
-      } catch {
-        // Not JSON
-      }
-      if (!errText.trim()) {
-        errText = response.statusText || 'Unknown Error'
-      }
-      throw new Error(`API error ${response.status}: ${errText}`)
-    }
-
-    const data = await response.json()
+    const maxContinuations = 3
+    let continuations = 0
+    let accumulatedContent = ''
     
-    // Check if the prompt itself was blocked by safety filters
-    if (data.promptFeedback?.blockReason === 'PROHIBITED_CONTENT') {
-      throw new Error(`PROHIBITED_CONTENT: ${data.promptFeedback.blockReasonMessage || 'Prohibited content blocked.'}`)
-    }
+    const contents: any[] = [
+      { role: 'user', parts: [{ text: userMessage }] },
+    ]
 
-    const candidate = data.candidates?.[0]
-    if (candidate) {
-      const finishReason = candidate.finishReason
-      if (finishReason === 'MAX_TOKENS') {
-        throw new Error('AI response was cut off: Exceeded output token limit ("finishReason": "MAX_TOKENS").')
-      } else if (finishReason && finishReason !== 'STOP') {
-        throw new Error(`AI response failed: ${finishReason}`)
+    while (continuations <= maxContinuations) {
+      const response = await fetch(
+        `${baseUrl}/v1beta/models/${model}:generateContent?key=${this.config.apiKey}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            systemInstruction: {
+              parts: [{ text: this.systemPrompt }],
+            },
+            contents,
+            generationConfig: {
+              temperature: 0,
+              maxOutputTokens: this.config.maxTokens || 16384,
+              ...(jsonMode && { responseMimeType: 'application/json' }),
+            },
+          }),
+          signal: this.signal,
+        },
+      )
+
+      if (!response.ok) {
+        let errText = await response.text()
+        try {
+          const parsed = JSON.parse(errText)
+          if (parsed.promptFeedback?.blockReason === 'PROHIBITED_CONTENT' || parsed.error?.message?.includes('PROHIBITED_CONTENT')) {
+            throw new Error(`PROHIBITED_CONTENT: ${parsed.promptFeedback?.blockReasonMessage || parsed.error?.message || 'Prohibited content blocked.'}`)
+          }
+        } catch {
+          // Not JSON
+        }
+        if (!errText.trim()) {
+          errText = response.statusText || 'Unknown Error'
+        }
+        throw new Error(`API error ${response.status}: ${errText}`)
       }
+
+      const data = await response.json()
+      
+      if (data.promptFeedback?.blockReason === 'PROHIBITED_CONTENT') {
+        throw new Error(`PROHIBITED_CONTENT: ${data.promptFeedback.blockReasonMessage || 'Prohibited content blocked.'}`)
+      }
+
+      const candidate = data.candidates?.[0]
+      const text = candidate?.content?.parts?.[0]?.text || ''
+      accumulatedContent += text
+
+      if (candidate) {
+        const finishReason = candidate.finishReason
+        if (finishReason === 'MAX_TOKENS') {
+          if (continuations >= maxContinuations) {
+            break
+          }
+          continuations++
+          contents.push({ role: 'model', parts: [{ text }] })
+          contents.push({ role: 'user', parts: [{ text: 'Continue exactly from where you left off. Do not repeat previous text.' }] })
+          continue
+        } else if (finishReason && finishReason !== 'STOP') {
+          throw new Error(`AI response failed: ${finishReason}`)
+        }
+      }
+      break
     }
-    return candidate?.content?.parts?.[0]?.text || ''
+    
+    return accumulatedContent
   }
 
   private getBaseUrl(): string {

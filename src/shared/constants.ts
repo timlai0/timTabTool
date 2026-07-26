@@ -15,14 +15,32 @@ export const GROUP_DEFINITIONS: Record<GroupCategory, GroupDefinition> = {
 
 export const DEFAULT_GROUPING_PROMPT = `Organize these browser tabs into logical, well-defined groups.
 Guidelines:
-1. Create 2-6 groups. Avoid creating too many single-tab groups.
-2. Group names must be concise (1-3 words) and descriptive (e.g., "Web Development", "Shopping").
-3. Use the same language as the tab titles.
-4. Group related items aggressively rather than fragmenting them.`
+1. Create 2-6 groups based on clear semantic topics. Avoid creating unnecessary single-tab groups.
+2. Group names must be concise (1-3 words) and descriptive (e.g., "Web Dev", "Shopping", "Research").
+3. Preserve the primary language of the tab titles.
+4. Group related items logically rather than over-fragmenting them.`
 
-export const DEFAULT_SPLIT_PROMPT = 'You are splitting an existing group of highly related tabs. Create more specific and granular sub-groups based on finer details and relationships.'
-export const DEFAULT_CLASSIFY_PROMPT = 'You are classifying new tabs. Decide if each new tab belongs to one of the existing groups or if a new group should be created. Be conservative about creating new groups.'
-export const DEFAULT_MERGE_PROMPT = 'Analyze the browser tabs of this group and decide if they should be merged into one of the other existing tab groups. Choose the best fitting existing group from the list. If none of the existing groups are a good fit and this group should remain separate, respond with "KEEP". Be conservative about merging; only merge if the topics are highly related.'
+export const DEFAULT_SPLIT_PROMPT = `You are splitting an existing group into tighter, more granular sub-groups.
+Guidelines:
+1. Identify specific sub-topics, projects, channels, or content types within this group.
+2. Create concise, descriptive sub-group titles reflecting exact themes (e.g., "API Docs", "React Components").
+3. Group closely related items together and avoid single-tab groups unless necessary.`
+
+export const DEFAULT_CLASSIFY_PROMPT = `You are organizing new incoming browser tabs.
+Guidelines:
+1. Check if each new tab logically belongs inside one of the existing window tab groups.
+2. If a tab fits an existing group, assign it to that group name.
+3. If a tab represents a distinct new topic, create a new concise, descriptive group title.
+4. Be conservative about creating new single-tab groups.`
+
+export const DEFAULT_MERGE_PROMPT = `Analyze the browser tabs in this target group against the list of other existing tab groups in this window.
+Guidelines:
+1. Decide if this target group's tabs semantically belong inside one of the existing tab groups.
+2. If a strong thematic match exists, select the exact name of that existing group.
+3. If no existing group is a strong semantic fit, respond with "KEEP".
+4. Be conservative: only merge when topics clearly overlap.`
+
+export const DEFAULT_COHERENCE_PROMPT = `Prioritize placing tabs into the existing group names created in previous batches if there is a strong semantic fit. Only create a new group name if the tab represents a genuinely new topic that cannot belong in any existing group.`
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   ai: {
@@ -36,7 +54,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     sendRandomOrder: false,
     fallbackToSort: false,
     maxTokens: 16384,
-    coherencePrompt: 'You should try to place tabs into these existing groups if they are a strong semantic fit. However, if the existing groups are a poor fit or if the previous grouping structure seems bad, feel free to create a new group. Do not force tabs into mismatched groups.',
+    coherencePrompt: DEFAULT_COHERENCE_PROMPT,
     splitPrompt: DEFAULT_SPLIT_PROMPT,
     classifyPrompt: DEFAULT_CLASSIFY_PROMPT,
     mergePrompt: DEFAULT_MERGE_PROMPT,
