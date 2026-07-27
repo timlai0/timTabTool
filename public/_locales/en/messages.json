@@ -192,7 +192,7 @@
     "description": "Tab group label: Docs"
   },
   "groupOther": {
-    "message": "Other",
+    "message": "_ungrouped_",
     "description": "Tab group label: Other"
   },
   "shortcutTitle": {

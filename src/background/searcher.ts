@@ -47,7 +47,7 @@ export function searchTabs(
 
   // Score open tabs
   for (const tab of openTabs) {
-    const { score: matchScore, details: matchDetails } = computeScore(terms, tab.title, tab.url)
+    const { score: matchScore, details: matchDetails } = computeScore(terms, tab.title, tab.url, tab.groupTitle)
     if (matchScore > 0) {
       const isSameWindow = currentWindowId !== undefined && tab.windowId === currentWindowId
       const windowBoost = isSameWindow ? 1 : 0.5
@@ -93,9 +93,10 @@ export function searchTabs(
 /**
  * Compute a relevance score for a tab against search terms.
  */
-function computeScore(terms: SearchTerm[], title: string, url: string): { score: number; details: string } {
+function computeScore(terms: SearchTerm[], title: string, url: string, groupTitle?: string): { score: number; details: string } {
   const titleLower = (title || '').toLowerCase()
   const urlLower = (url || '').toLowerCase()
+  const groupTitleLower = (groupTitle || '').toLowerCase()
 
   let totalScore = 0
   const detailsParts: string[] = []
@@ -110,6 +111,7 @@ function computeScore(terms: SearchTerm[], title: string, url: string): { score:
   for (const { term, wordBoundaryRegex } of terms) {
     let titleScore = 0
     let urlScore = 0
+    let groupScore = 0
 
     // Title match
     if (titleLower.includes(term)) {
@@ -133,15 +135,27 @@ function computeScore(terms: SearchTerm[], title: string, url: string): { score:
       }
     }
 
-    if (titleScore === 0 && urlScore === 0) {
+    // Group Title match
+    if (groupTitleLower.includes(term)) {
+      groupScore += 2
+      if (wordBoundaryRegex.test(groupTitle || '')) {
+        groupScore += 1
+      }
+      if (groupTitleLower.startsWith(term)) {
+        groupScore += 1
+      }
+    }
+
+    if (titleScore === 0 && urlScore === 0 && groupScore === 0) {
       // If any term doesn't match, return 0 (AND logic)
       return { score: 0, details: '' }
     }
     
     if (titleScore > 0) detailsParts.push(`Title +${titleScore}`)
     if (urlScore > 0) detailsParts.push(`URL +${urlScore}`)
+    if (groupScore > 0) detailsParts.push(`Group +${groupScore}`)
     
-    totalScore += (titleScore + urlScore)
+    totalScore += (titleScore + urlScore + groupScore)
   }
 
   return { score: totalScore, details: detailsParts.join(' | ') }

@@ -186,6 +186,37 @@
   color: #86868B;
 }
 
+.atm-group-chip {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  font-weight: 600;
+  vertical-align: text-bottom;
+}
+
+.atm-color-grey { background: rgba(95, 99, 104, 0.15); color: #5F6368; }
+.atm-color-blue { background: rgba(26, 115, 232, 0.15); color: #1A73E8; }
+.atm-color-red { background: rgba(217, 48, 37, 0.15); color: #D93025; }
+.atm-color-yellow { background: rgba(249, 171, 0, 0.15); color: #F9AB00; }
+.atm-color-green { background: rgba(30, 142, 62, 0.15); color: #1E8E3E; }
+.atm-color-pink { background: rgba(208, 24, 132, 0.15); color: #D01884; }
+.atm-color-purple { background: rgba(147, 52, 230, 0.15); color: #9334E6; }
+.atm-color-cyan { background: rgba(0, 123, 131, 0.15); color: #007B83; }
+.atm-color-orange { background: rgba(232, 113, 10, 0.15); color: #E8710A; }
+
+[data-theme="dark"] .atm-color-grey { background: rgba(218, 220, 224, 0.15); color: #DADCE0; }
+[data-theme="dark"] .atm-color-blue { background: rgba(138, 180, 248, 0.15); color: #8AB4F8; }
+[data-theme="dark"] .atm-color-red { background: rgba(242, 139, 130, 0.15); color: #F28B82; }
+[data-theme="dark"] .atm-color-yellow { background: rgba(253, 214, 99, 0.15); color: #FDD663; }
+[data-theme="dark"] .atm-color-green { background: rgba(129, 201, 149, 0.15); color: #81C995; }
+[data-theme="dark"] .atm-color-pink { background: rgba(255, 139, 203, 0.15); color: #FF8BCB; }
+[data-theme="dark"] .atm-color-purple { background: rgba(215, 174, 239, 0.15); color: #D7AEEF; }
+[data-theme="dark"] .atm-color-cyan { background: rgba(120, 217, 236, 0.15); color: #78D9EC; }
+[data-theme="dark"] .atm-color-orange { background: rgba(252, 173, 112, 0.15); color: #FCAD70; }
+
+
 .atm-score-details {
   display: none;
   font-size: 9px;

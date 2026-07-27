@@ -981,15 +981,6 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (progressContainer) {
       progressContainer.style.pointerEvents = 'auto'
     }
-    const inputWrap = shadow.querySelector('.atm-input-wrap') as HTMLDivElement
-    const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
-    const detailsPanel = shadow.querySelector('.atm-details-panel') as HTMLDivElement
-    const footer = shadow.querySelector('.atm-footer') as HTMLDivElement
-
-    if (inputWrap) inputWrap.style.visibility = 'visible'
-    if (resultsList) resultsList.style.visibility = 'visible'
-    if (detailsPanel) detailsPanel.style.visibility = 'visible'
-    if (footer) footer.style.visibility = 'visible'
   }
 
   async function runAICommand(result: SearchResultItem) {
@@ -1098,10 +1089,16 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         progressDetail.textContent = 'Operation completed successfully.'
       }
 
-      // Automatically close the overlay after 1.5 seconds
+      // Reset the progress state after 1.5 seconds instead of hiding the entire overlay
       if (aiProgressTimeout) clearTimeout(aiProgressTimeout)
-      aiProgressTimeout = setTimeout(() => {
-        hide()
+      aiProgressTimeout = window.setTimeout(() => {
+        resetAIProgressState()
+        const input = shadow?.querySelector('.atm-input') as HTMLInputElement
+        const resultsList = shadow?.querySelector('.atm-results') as HTMLDivElement
+        if (input && resultsList) {
+          input.focus()
+          doSearch(input.value, resultsList)
+        }
       }, 1500)
 
     } catch (err: any) {
@@ -1409,6 +1406,13 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       const title = document.createElement('div')
       title.className = 'atm-result-title'
       setHighlightedText(title, result.tab.title || 'Untitled', query)
+      
+      if ('groupTitle' in result.tab && result.tab.groupTitle) {
+        const chip = document.createElement('span')
+        chip.className = `atm-group-chip atm-color-${result.tab.groupColor || 'grey'}`
+        chip.textContent = result.tab.groupTitle
+        title.appendChild(chip)
+      }
 
       const url = document.createElement('div')
       url.className = 'atm-result-url'
@@ -1519,7 +1523,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     if (e.key === 'Escape') {
       e.preventDefault()
-      hide()
+      if (_input.value) {
+        _input.value = ''
+        doSearch('', resultsList)
+      } else {
+        hide()
+      }
       return
     }
 
@@ -1675,10 +1684,16 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         progressDetail.textContent = `Default model is now set to ${displayName}.`
       }
 
-      // Auto close after 1.5 seconds
+      // Reset the progress state after 1.5 seconds instead of hiding the entire overlay
       if (aiProgressTimeout) clearTimeout(aiProgressTimeout)
-      aiProgressTimeout = setTimeout(() => {
-        hide()
+      aiProgressTimeout = window.setTimeout(() => {
+        resetAIProgressState()
+        const input = shadow?.querySelector('.atm-input') as HTMLInputElement
+        const resultsList = shadow?.querySelector('.atm-results') as HTMLDivElement
+        if (input && resultsList) {
+          input.focus()
+          doSearch(input.value, resultsList)
+        }
       }, 1500)
 
     } catch (err: any) {
@@ -1845,7 +1860,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         }
       }
     } else if (message?.action === 'AI_OPERATION_COMPLETE') {
-      if (isAIOperating && isExternalAI) {
+      if (isAIOperating) {
         if (aiProgressInterval) {
           clearInterval(aiProgressInterval)
           aiProgressInterval = null

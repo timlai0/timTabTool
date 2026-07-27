@@ -49,6 +49,8 @@ function getFaviconUrl(tab: TabInfo): string {
         v-if="getFaviconUrl(tab)"
         :src="getFaviconUrl(tab)"
         alt=""
+        loading="lazy"
+        decoding="async"
         class="w-3.5 h-3.5"
         @error="($event.target as HTMLImageElement).style.display = 'none'"
       />
