@@ -270,6 +270,10 @@ async function ensureContentScriptLoaded(tabId: number): Promise<boolean> {
 
 async function broadcastAIStart(windowId: number, action: string) {
   try {
+    // Clear stale AI results from storage and notify UI
+    await chrome.storage.local.remove(STORAGE_KEYS.LAST_AI_RESULT)
+    chrome.runtime.sendMessage({ action: 'LAST_AI_RESULT_UPDATED', payload: null }).catch(() => {})
+
     // Broadcast to internal extension views (e.g. search.html)
     chrome.runtime.sendMessage({
       action: 'START_AI_PROGRESS',

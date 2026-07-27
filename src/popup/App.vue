@@ -490,26 +490,10 @@ async function loadAllPreviews(showLoading = false) {
     loading.value = true
   }
   try {
-    const [result, activeOps] = await Promise.all([
-      chrome.runtime.sendMessage({ action: 'GET_ALL_WINDOWS_PREVIEW' }),
-      chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' })
-    ])
+    // Eagerly fetch active operations so the UI can instantly display the animated spinner
+    const activeOps = await chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' }).catch(() => null)
     
-    if (Array.isArray(result)) {
-      const sorted = (result as WindowGroupsInfo[]).sort((a, b) => {
-        if (a.windowId === currentWindowId.value) return -1
-        if (b.windowId === currentWindowId.value) return 1
-        return 0
-      })
-      allWindows.value = sorted
-      const titlesState: Record<number, boolean> = {}
-      for (const w of sorted) {
-        titlesState[w.windowId] = w.titlesHidden
-      }
-      windowTitlesHidden.value = titlesState
-    }
-
-    // Process active operations and errors from the background
+    // Process active operations and errors immediately
     if (activeOps && typeof activeOps === 'object') {
       allActiveOperations.value = activeOps as Record<number, { type: 'group' | 'classify' | null; error: string | null }>
       let isAnyGrouping = false
@@ -529,7 +513,7 @@ async function loadAllPreviews(showLoading = false) {
 
         if (opStatus.error) {
           showError(opStatus.error)
-          await chrome.runtime.sendMessage({ action: 'CLEAR_OPERATION_ERROR', payload: { windowId: wid } })
+          chrome.runtime.sendMessage({ action: 'CLEAR_OPERATION_ERROR', payload: { windowId: wid } }).catch(() => {})
         }
       }
 
@@ -541,6 +525,23 @@ async function loadAllPreviews(showLoading = false) {
       }
     } else {
       allActiveOperations.value = {}
+    }
+
+    // Now fetch the heavier previews which might take 100-200ms if cache is empty
+    const result = await chrome.runtime.sendMessage({ action: 'GET_ALL_WINDOWS_PREVIEW' })
+    
+    if (Array.isArray(result)) {
+      const sorted = (result as WindowGroupsInfo[]).sort((a, b) => {
+        if (a.windowId === currentWindowId.value) return -1
+        if (b.windowId === currentWindowId.value) return 1
+        return 0
+      })
+      allWindows.value = sorted
+      const titlesState: Record<number, boolean> = {}
+      for (const w of sorted) {
+        titlesState[w.windowId] = w.titlesHidden
+      }
+      windowTitlesHidden.value = titlesState
     }
   } catch (err) {
     console.error('Failed to load preview:', err)
