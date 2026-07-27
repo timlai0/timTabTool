@@ -9,6 +9,9 @@ export interface TabInfo {
   pinned: boolean
   lastAccessed?: number
   createdAt?: number
+  groupId?: number
+  groupTitle?: string
+  groupColor?: string
 }
 
 export interface ClassifyResult {
@@ -178,4 +181,5 @@ export interface LastAIResult {
   groupsAfter?: number
   createdGroupNames?: string[]
   summary: string
+  error?: string
 }

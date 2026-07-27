@@ -325,6 +325,18 @@ async function broadcastAIComplete(windowId: number, action: string) {
 
 async function broadcastAIFailed(windowId: number, action: string, errorMsg: string) {
   try {
+    const lastResult = {
+      timestamp: Date.now(),
+      actionType: action.toLowerCase(),
+      actionTitle: action,
+      windowId: windowId,
+      tabsProcessed: 0,
+      summary: 'AI Operation Failed',
+      error: errorMsg
+    }
+    await chrome.storage.local.set({ [STORAGE_KEYS.LAST_AI_RESULT]: lastResult })
+    chrome.runtime.sendMessage({ action: 'LAST_AI_RESULT_UPDATED', payload: lastResult }).catch(() => {})
+
     // Broadcast to internal extension views
     chrome.runtime.sendMessage({
       action: 'AI_OPERATION_FAILED',
@@ -885,19 +897,34 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       const query = payload?.query ?? ''
       const currentWindowId = payload?.windowId ?? sender?.tab?.windowId
       const tabs = await chrome.tabs.query({})
+      let tabGroups: chrome.tabGroups.TabGroup[] = []
+      if (typeof chrome.tabGroups !== 'undefined') {
+        tabGroups = await chrome.tabGroups.query({})
+      }
+      const groupMap = new Map<number, chrome.tabGroups.TabGroup>()
+      for (const g of tabGroups) {
+        groupMap.set(g.id, g)
+      }
       const openTabs: TabInfo[] = tabs
         .filter((t) => t.id !== undefined)
-        .map((t) => ({
-          id: t.id!,
-          url: t.url || '',
-          title: t.title || '',
-          favIconUrl: t.favIconUrl,
-          windowId: t.windowId,
-          index: t.index,
-          active: t.active,
-          pinned: t.pinned,
-          lastAccessed: t.lastAccessed,
-        }))
+        .map((t) => {
+          const groupId = t.groupId !== -1 && typeof chrome.tabGroups !== 'undefined' && t.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE ? t.groupId : undefined
+          const group = groupId ? groupMap.get(groupId) : undefined
+          return {
+            id: t.id!,
+            url: t.url || '',
+            title: t.title || '',
+            favIconUrl: t.favIconUrl,
+            windowId: t.windowId,
+            index: t.index,
+            active: t.active,
+            pinned: t.pinned,
+            lastAccessed: t.lastAccessed,
+            groupId,
+            groupTitle: group?.title,
+            groupColor: group?.color,
+          }
+        })
       const history = await getHistoryEntries()
       return searchTabs(query, openTabs, history, currentWindowId)
     }

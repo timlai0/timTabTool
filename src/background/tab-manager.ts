@@ -165,8 +165,8 @@ function sortGroups(groups: GroupedTabs[]): GroupedTabs[] {
   return groups.sort((a, b) => {
     if (a.isPinnedGroup || a.groupName === 'Pinned') return -1
     if (b.isPinnedGroup || b.groupName === 'Pinned') return 1
-    const isOtherA = a.category === 'other' && !a.groupId && (a.groupName === 'Other' || !a.groupName)
-    const isOtherB = b.category === 'other' && !b.groupId && (b.groupName === 'Other' || !b.groupName)
+    const isOtherA = a.category === 'other' && !a.groupId && (a.groupName === '_ungrouped_' || !a.groupName)
+    const isOtherB = b.category === 'other' && !b.groupId && (b.groupName === '_ungrouped_' || !b.groupName)
     if (isOtherA && !isOtherB) return 1
     if (isOtherB && !isOtherA) return -1
     if (a.groupId && b.groupId) return 0
@@ -218,7 +218,7 @@ function freeGroupsToGroupedTabs(
     if (unpinnedInfos.length > 0) {
       result.push({
         category: 'other' as GroupCategory,
-        groupName: 'Other',
+        groupName: '_ungrouped_',
         tabs: unpinnedInfos,
       })
     }
@@ -300,13 +300,13 @@ export function cacheAddTab(tab: chrome.tabs.Tab): void {
 
   const cacheIsAIGrouped = cacheIsAIGroupedMap.get(windowId) ?? false
   if (cacheIsAIGrouped) {
-    const ungrouped = previewCache.find((g) => g.category === 'other' && (g.groupName === 'Other' || !g.groupName) && !g.isPinnedGroup)
+    const ungrouped = previewCache.find((g) => g.category === 'other' && (g.groupName === '_ungrouped_' || !g.groupName) && !g.isPinnedGroup)
     if (ungrouped) {
       ungrouped.tabs.push(tabInfo)
     } else {
       previewCache.push({
         category: 'other' as GroupCategory,
-        groupName: 'Other',
+        groupName: '_ungrouped_',
         tabs: [tabInfo],
       })
     }
@@ -586,7 +586,7 @@ async function buildGroupsFromChrome(tabs: chrome.tabs.Tab[]): Promise<GroupedTa
     })
   }
 
-  // 3. Add unpinned ungrouped tabs as a separate 'Other' group
+  // 3. Add unpinned ungrouped tabs as a separate '_ungrouped_' group
   const unpinnedUngroupedTabs = tabs.filter(
     (t) => !t.pinned && (t.groupId === undefined || t.groupId === TAB_GROUP_ID_NONE),
   )
@@ -598,7 +598,7 @@ async function buildGroupsFromChrome(tabs: chrome.tabs.Tab[]): Promise<GroupedTa
     result.push({
       category: 'other' as GroupCategory,
       tabs: unpinnedUngroupedInfos,
-      groupName: 'Other',
+      groupName: '_ungrouped_',
     })
   }
 
@@ -656,7 +656,7 @@ function buildDefaultUngroupedResult(tabs: chrome.tabs.Tab[]): GroupedTabs[] {
     if (unpinnedInfos.length > 0) {
       result.push({
         category: 'other' as GroupCategory,
-        groupName: 'Other',
+        groupName: '_ungrouped_',
         tabs: unpinnedInfos,
       })
     }
@@ -1016,7 +1016,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
         if (!existingGroupUpdates.has(targetGroupId)) existingGroupUpdates.set(targetGroupId, [])
         existingGroupUpdates.get(targetGroupId)!.push(tab.id)
       } else {
-        const name = item.newGroupName || 'Other'
+        const name = item.newGroupName || '_ungrouped_'
         const color = (item.newGroupColor as ChromeTabGroupColor) || 'grey'
         
         if (groupNameToId.has(name)) {
@@ -1032,29 +1032,48 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
 
     if (controller.signal.aborted) return
 
+    // Filter out tabs that might have been closed during the AI operation
+    const currentTabsForFilter = await chrome.tabs.query({ windowId })
+    const currentTabIdsSet = new Set(currentTabsForFilter.map(t => t.id))
+
     // Apply updates for existing groups
     for (const [groupId, tabIds] of existingGroupUpdates) {
       if (controller.signal.aborted) return
-      await retryTabOperation(() => chrome.tabs.group({ tabIds: tabIds as [number, ...number[]], groupId }))
+      const validTabIds = tabIds.filter(id => currentTabIdsSet.has(id))
+      if (validTabIds.length === 0) continue
+      
+      // Move tabs adjacent to the existing group first to prevent Chrome layout freezing/crashing
+      // which can destroy existing groups.
+      const groupTabs = await chrome.tabs.query({ groupId })
+      if (groupTabs.length > 0) {
+        await retryTabOperation(() => chrome.tabs.move(validTabIds, { index: groupTabs[groupTabs.length - 1].index + 1 }))
+      }
+      
+      await retryTabOperation(() => chrome.tabs.group({ tabIds: validTabIds as [number, ...number[]], groupId }))
     }
 
     // For new groups, we can bulk move them first so they are adjacent
-    const orderedNewTabIds = Array.from(newGroupUpdates.values()).flatMap(g => g.tabIds)
+    const orderedNewTabIds = Array.from(newGroupUpdates.values())
+      .flatMap(g => g.tabIds)
+      .filter(id => currentTabIdsSet.has(id))
+      
     if (orderedNewTabIds.length > 0) {
-      const allTabs2 = await chrome.tabs.query({ windowId })
-      const pinnedCount = allTabs2.filter((t) => t.pinned).length
+      const pinnedCount = currentTabsForFilter.filter((t) => t.pinned).length
       await retryTabOperation(() => chrome.tabs.move(orderedNewTabIds, { index: pinnedCount }))
     }
 
     // Create new groups
     for (const [name, data] of newGroupUpdates) {
       if (controller.signal.aborted) return
+      const validTabIds = data.tabIds.filter(id => currentTabIdsSet.has(id))
+      if (validTabIds.length === 0) continue
       const groupId = await retryTabOperation(() =>
         chrome.tabs.group({
-          tabIds: data.tabIds as [number, ...number[]],
+          tabIds: validTabIds as [number, ...number[]],
           createProperties: { windowId },
         }),
       )
+      if (groupId === undefined) continue
       groupTitleMap.set(groupId, name)
       groupNameToId.set(name, groupId)
       updatingGroups.add(groupId)
