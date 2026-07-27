@@ -186,25 +186,6 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     if (tab.url && tab.title) {
       recordTabVisit(tab.url, tab.title, tab.favIconUrl)
     }
-    
-    // Broadcast active AI operation to the newly active tab
-    const ops = getActiveOperations()
-    const op = ops[activeInfo.windowId]
-    if (op && op.type) {
-      let commandAction = ''
-      if (op.type === 'group') commandAction = 'GROUP_TABS'
-      else if (op.type === 'classify') commandAction = 'CLASSIFY_NEW_TABS'
-      
-      if (commandAction && tab.id && tab.url) {
-        if (!isRestrictedUrl(tab.url)) {
-          await ensureContentScriptLoaded(tab.id)
-          await chrome.tabs.sendMessage(tab.id, {
-            action: 'START_AI_PROGRESS',
-            payload: { commandAction }
-          })
-        }
-      }
-    }
   } catch {
     // Tab may have been removed
   }
@@ -1029,11 +1010,15 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         ...saved?.ai,
       }
 
+      const activeOps = getActiveOperations()
+      const activeOperation = activeOps[windowId] || null
+
       return {
         unpinnedTabsCount,
         currentGroupTabsCount,
         newTabsCount,
         aiSettings,
+        activeOperation,
       }
     }
 

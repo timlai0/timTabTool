@@ -320,6 +320,28 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       })
       if (res && typeof res === 'object') {
         overlayMetrics = res
+
+        // Restore active AI operation progress state if running
+        if (res.activeOperation && res.activeOperation.type && !isAIOperating) {
+          isExternalAI = true
+          const titleMap: Record<string, string> = {
+            'group': 'Group Tabs',
+            'classify': 'Classify New Tabs'
+          }
+          const actionMap: Record<string, string> = {
+            'group': 'GROUP_TABS',
+            'classify': 'CLASSIFY_NEW_TABS'
+          }
+          const commandAction = actionMap[res.activeOperation.type] || 'GROUP_TABS'
+          
+          runAICommand({
+            tab: { title: titleMap[res.activeOperation.type] || 'AI Command', url: 'Executing from Background...' },
+            score: 0,
+            isOpen: false,
+            isCommand: true,
+            commandAction: commandAction
+          })
+        }
       }
     } catch (err) {
       console.error('[timTabTool] Failed to load overlay metrics:', err)
@@ -1831,7 +1853,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (message?.action === 'TOGGLE_SEARCH_OVERLAY') {
       toggle(message.payload?.initialQuery || '')
     } else if (message?.action === 'START_AI_PROGRESS') {
-      if (isAIOperating) return
+      if (isAIOperating || !visible) return
       const commandAction = message.payload?.commandAction
       if (commandAction) {
         const titleMap: Record<string, string> = {
@@ -1842,16 +1864,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         }
         const actionTitle = titleMap[commandAction] || 'AI Command'
 
-        init()
         if (hostEl && shadow) {
-          visible = true
-          hostEl.style.display = 'block'
-          syncThemeAttribute()
           switchToProgressOnlyMode()
 
           isExternalAI = true
           runAICommand({
-            tab: { title: actionTitle, url: 'Executing from GUI...' },
+            tab: { title: actionTitle, url: 'Executing from Background...' },
             score: 0,
             isOpen: false,
             isCommand: true,
