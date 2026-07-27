@@ -148,6 +148,7 @@ export type MessageAction =
   | 'CLOSE_DUPLICATES'
   | 'CLOSE_POSSIBLE_DUPLICATES'
   | 'ORGANIZE_POSSIBLE_DUPLICATES'
+  | 'GROUP_CLUSTER'
   | 'CLOSE_DOMAIN'
   | 'ISOLATE_DOMAIN'
   | 'SORT_TABS'
@@ -165,4 +166,16 @@ export type MessageAction =
 export interface ExtensionMessage {
   action: MessageAction
   payload?: unknown
+}
+
+export interface LastAIResult {
+  timestamp: number
+  actionType: 'group' | 'classify' | 'split' | 'merge'
+  actionTitle: string
+  windowId: number
+  tabsProcessed: number
+  groupsBefore?: number
+  groupsAfter?: number
+  createdGroupNames?: string[]
+  summary: string
 }

@@ -35,8 +35,8 @@ const emit = defineEmits<{
   </div>
   <div v-else class="py-1" :class="indicatorStyle === 'bar' ? 'space-y-0' : 'space-y-0'">
     <GroupItem
-      v-for="group in groups"
-      :key="group.groupName || group.category"
+      v-for="(group, index) in groups"
+      :key="group.groupId !== undefined ? `gid-${group.groupId}` : `${group.groupName || group.category}-${index}`"
       :group="group"
       :mode="indicatorStyle"
       :expand-trigger="expandTrigger"

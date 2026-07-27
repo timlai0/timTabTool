@@ -23,6 +23,7 @@ import {
   handleTabGroupRemoved,
   cancelActiveOperation,
   getActiveOperations,
+  setActiveOperation,
   clearOperationError,
   clearWindowCache,
   cleanupTabGroups,
@@ -276,7 +277,7 @@ async function broadcastAIStart(windowId: number, action: string) {
     }).catch(() => {})
 
     const tabs = await chrome.tabs.query({ active: true, windowId })
-    let targetTab = tabs[0]
+    let targetTab: chrome.tabs.Tab | undefined = tabs[0]
     if (!targetTab || !targetTab.url || isRestrictedUrl(targetTab.url)) {
       const winTabs = await chrome.tabs.query({ windowId })
       targetTab = winTabs.find(t => t.id && t.url && !isRestrictedUrl(t.url))
@@ -305,7 +306,7 @@ async function broadcastAIComplete(windowId: number, action: string) {
     }).catch(() => {})
 
     const tabs = await chrome.tabs.query({ active: true, windowId })
-    let targetTab = tabs[0]
+    let targetTab: chrome.tabs.Tab | undefined = tabs[0]
     if (!targetTab || !targetTab.url || isRestrictedUrl(targetTab.url)) {
       const winTabs = await chrome.tabs.query({ windowId })
       targetTab = winTabs.find(t => t.id && t.url && !isRestrictedUrl(t.url))
@@ -331,7 +332,7 @@ async function broadcastAIFailed(windowId: number, action: string, errorMsg: str
     }).catch(() => {})
 
     const tabs = await chrome.tabs.query({ active: true, windowId })
-    let targetTab = tabs[0]
+    let targetTab: chrome.tabs.Tab | undefined = tabs[0]
     if (!targetTab || !targetTab.url || isRestrictedUrl(targetTab.url)) {
       const winTabs = await chrome.tabs.query({ windowId })
       targetTab = winTabs.find(t => t.id && t.url && !isRestrictedUrl(t.url))
@@ -501,6 +502,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
   switch (message.action) {
     case 'GROUP_TABS': {
       const windowId = await resolveWindowId(message.payload)
+      setActiveOperation(windowId, 'group')
       await broadcastAIStart(windowId, 'GROUP_TABS')
       try {
         const overrides = getAIOverrides(message.payload)
@@ -614,6 +616,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
 
     case 'CLASSIFY_NEW_TABS': {
       const windowId = await resolveWindowId(message.payload)
+      setActiveOperation(windowId, 'classify')
       await broadcastAIStart(windowId, 'CLASSIFY_NEW_TABS')
       try {
         const overrides = getAIOverrides(message.payload)
@@ -920,10 +923,17 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'SWITCH_TAB': {
       const tabId = (message.payload as { tabId: number })?.tabId
       if (tabId) {
-        const tab = await chrome.tabs.get(tabId)
-        await chrome.tabs.update(tabId, { active: true })
-        if (tab.windowId) {
-          await chrome.windows.update(tab.windowId, { focused: true })
+        try {
+          const tab = await chrome.tabs.get(tabId)
+          await chrome.tabs.update(tabId, { active: true })
+          if (tab.windowId) {
+            await chrome.windows.update(tab.windowId, { focused: true })
+          }
+        } catch (err: any) {
+          const errMsg = err?.message || String(err)
+          if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
+            console.error('[timTabTool] Failed to switch tab:', err)
+          }
         }
       }
       return { ok: true }
@@ -932,7 +942,14 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'CLOSE_TAB': {
       const tabId = (message.payload as { tabId: number })?.tabId
       if (tabId) {
-        await chrome.tabs.remove(tabId)
+        try {
+          await chrome.tabs.remove(tabId)
+        } catch (err: any) {
+          const errMsg = err?.message || String(err)
+          if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
+            console.error('[timTabTool] Failed to close tab:', err)
+          }
+        }
       }
       return { ok: true }
     }

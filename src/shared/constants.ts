@@ -78,6 +78,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
 export const STORAGE_KEYS = {
   SETTINGS: 'settings',
   TAB_HISTORY: 'tabHistory',
+  LAST_AI_RESULT: 'lastAIResult',
 } as const
 
 export const MODEL_PRICING: Record<string, { input: number; output: number }> = {

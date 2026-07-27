@@ -965,22 +965,18 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
   function switchToProgressOnlyMode() {
     if (!shadow) return
-    if (hostEl) {
-      hostEl.style.pointerEvents = 'none'
-    }
-    const container = shadow.querySelector('.atm-container') as HTMLDivElement
-    if (container) {
-      container.style.opacity = '1'
-      container.style.pointerEvents = 'none'
-      container.style.background = 'transparent'
-      container.style.boxShadow = 'none'
-    }
-    const backdrop = shadow.querySelector('.atm-backdrop') as HTMLDivElement
-    if (backdrop) {
-      backdrop.style.background = 'transparent'
-      backdrop.style.pointerEvents = 'none'
-      backdrop.style.backdropFilter = 'none'
+    const isStandalone = window.location?.protocol?.includes('-extension:') && window.location?.pathname?.includes('search.html')
+    if (!isStandalone) {
+      if (hostEl) {
+        hostEl.style.pointerEvents = 'auto'
+      }
+      const backdrop = shadow.querySelector('.atm-backdrop') as HTMLDivElement
+      if (backdrop) {
+        backdrop.style.background = 'transparent'
+        backdrop.style.pointerEvents = 'none'
+        backdrop.style.backdropFilter = 'none'
         ; (backdrop.style as any).webkitBackdropFilter = 'none'
+      }
     }
     if (progressContainer) {
       progressContainer.style.pointerEvents = 'auto'
@@ -990,10 +986,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     const detailsPanel = shadow.querySelector('.atm-details-panel') as HTMLDivElement
     const footer = shadow.querySelector('.atm-footer') as HTMLDivElement
 
-    if (inputWrap) inputWrap.style.visibility = 'hidden'
-    if (resultsList) resultsList.style.visibility = 'hidden'
-    if (detailsPanel) detailsPanel.style.visibility = 'hidden'
-    if (footer) footer.style.visibility = 'hidden'
+    if (inputWrap) inputWrap.style.visibility = 'visible'
+    if (resultsList) resultsList.style.visibility = 'visible'
+    if (detailsPanel) detailsPanel.style.visibility = 'visible'
+    if (footer) footer.style.visibility = 'visible'
   }
 
   async function runAICommand(result: SearchResultItem) {
@@ -1001,10 +997,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     isAIOperating = true
 
-    // Disable search input, show progress
+    // Keep search input enabled so user can search while progress bar runs
     const input = shadow.querySelector('.atm-input') as HTMLInputElement
     if (input) {
-      input.disabled = true
+      input.disabled = false
     }
     if (progressContainer) progressContainer.style.display = 'flex'
     switchToProgressOnlyMode()
@@ -1167,6 +1163,17 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     if (isAIOperating) {
       switchToProgressOnlyMode()
+      return
+    }
+
+    const isStandalone = window.location?.protocol?.includes('-extension:') && window.location?.pathname?.includes('search.html')
+    if (isStandalone) {
+      resetAIProgressState()
+      const input = shadow?.querySelector('.atm-input') as HTMLInputElement
+      const resultsList = shadow?.querySelector('.atm-results') as HTMLDivElement
+      if (input && resultsList) {
+        doSearch(input.value, resultsList)
+      }
       return
     }
 
@@ -1351,6 +1358,24 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       const item = document.createElement('div')
       item.className = 'atm-result-item' + (index === selectedIndex ? ' atm-selected' : '')
       item.addEventListener('click', () => activateResult(result))
+      item.addEventListener('auxclick', (e: MouseEvent) => {
+        if (e.button === 1 && result.isOpen && !result.isCommand && result.tab.id !== undefined) {
+          e.stopPropagation()
+          e.preventDefault()
+          chrome.runtime.sendMessage({
+            action: 'CLOSE_TAB',
+            payload: { tabId: result.tab.id }
+          })
+          const idx = results.indexOf(result)
+          if (idx !== -1) {
+            results.splice(idx, 1)
+            if (selectedIndex >= results.length) {
+              selectedIndex = results.length - 1
+            }
+            renderResults(resultsList, query)
+          }
+        }
+      })
       item.addEventListener('mouseenter', () => {
         if (ignoreMouseHover) return
         selectedIndex = index
@@ -1419,22 +1444,31 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       if (result.isOpen && !result.isCommand && result.tab.id !== undefined) {
         const closeBtn = document.createElement('button')
         closeBtn.className = 'atm-close-btn'
-        closeBtn.title = 'Close tab'
+        closeBtn.title = 'Close tab (or Middle-click row)'
         setSvgContent(closeBtn, '<svg viewBox="0 0 20 20" fill="currentColor" style="width:10px;height:10px;"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>')
-        closeBtn.addEventListener('click', (e) => {
+        
+        const closeAction = (e: Event) => {
           e.stopPropagation()
-          chrome.runtime.sendMessage({
-            action: 'CLOSE_TAB',
-            payload: { tabId: result.tab.id }
-          })
-          const idx = results.indexOf(result)
-          if (idx !== -1) {
-            results.splice(idx, 1)
-            if (selectedIndex >= results.length) {
-              selectedIndex = results.length - 1
+          e.preventDefault()
+          if (result.tab.id !== undefined) {
+            chrome.runtime.sendMessage({
+              action: 'CLOSE_TAB',
+              payload: { tabId: result.tab.id }
+            })
+            const idx = results.indexOf(result)
+            if (idx !== -1) {
+              results.splice(idx, 1)
+              if (selectedIndex >= results.length) {
+                selectedIndex = results.length - 1
+              }
+              renderResults(resultsList, query)
             }
-            renderResults(resultsList, query)
           }
+        }
+
+        closeBtn.addEventListener('click', closeAction)
+        closeBtn.addEventListener('auxclick', (e: MouseEvent) => {
+          if (e.button === 1) closeAction(e)
         })
         item.appendChild(closeBtn)
       }
@@ -1486,10 +1520,6 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (e.key === 'Escape') {
       e.preventDefault()
       hide()
-      return
-    }
-
-    if (isAIOperating) {
       return
     }
 
@@ -1574,10 +1604,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     isAIOperating = true
 
-    // Disable search input, show progress
+    // Keep search input enabled, show progress
     const input = shadow.querySelector('.atm-input') as HTMLInputElement
     if (input) {
-      input.disabled = true
+      input.disabled = false
     }
     if (progressContainer) progressContainer.style.display = 'flex'
     switchToProgressOnlyMode()

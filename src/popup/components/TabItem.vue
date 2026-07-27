@@ -20,8 +20,11 @@ async function switchToTab(tabId: number) {
 async function closeTab(tabId: number) {
   try {
     await chrome.tabs.remove(tabId)
-  } catch (err) {
-    console.error('[timTabTool] Failed to close tab:', err)
+  } catch (err: any) {
+    const errMsg = err?.message || String(err)
+    if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
+      console.error('[timTabTool] Failed to close tab:', err)
+    }
   }
 }
 
@@ -39,7 +42,6 @@ function getFaviconUrl(tab: TabInfo): string {
     @mousedown.middle.prevent.stop=""
     @click.middle.prevent.stop="closeTab(tab.id)"
     @auxclick.prevent.stop="($event) => { if ($event.button === 1) closeTab(tab.id); }"
-    @contextmenu.prevent.stop="closeTab(tab.id)"
     :title="tab.url"
   >
     <div class="w-4 h-4 shrink-0 rounded-sm flex items-center justify-center overflow-hidden" style="background: var(--bg-secondary);">
@@ -51,8 +53,19 @@ function getFaviconUrl(tab: TabInfo): string {
         @error="($event.target as HTMLImageElement).style.display = 'none'"
       />
     </div>
-    <span class="text-xs truncate" :style="{ color: tab.active ? 'var(--accent)' : 'var(--text-primary)' }">
+    <span class="text-xs truncate flex-1 min-w-0" :style="{ color: tab.active ? 'var(--accent)' : 'var(--text-primary)' }">
       {{ tab.title || 'Untitled' }}
+    </span>
+    <span
+      @click.stop="closeTab(tab.id)"
+      @auxclick.prevent.stop="($event) => { if ($event.button === 1) closeTab(tab.id); }"
+      class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
+      style="color: var(--text-tertiary);"
+      title="Close tab (or Middle-click)"
+    >
+      <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+        <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+      </svg>
     </span>
   </button>
 </template>

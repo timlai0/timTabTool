@@ -4,7 +4,7 @@ import { getMessage } from '../shared/i18n'
 import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS } from '../shared/constants'
 import { SYSTEM_PROMPT, AIClient } from '../shared/ai-client'
 import { getAutoBatchSize, getOptimalFaviconUrl, detectDuplicateTabs, normalizeUrl } from '../shared/utils'
-import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInfo } from '../shared/types'
+import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInfo, LastAIResult } from '../shared/types'
 import { APP_VERSION, BUILD_NUMBER, BUILD_STRING } from '../shared/version'
 import GroupList from './components/GroupList.vue'
 import SettingsView from './components/SettingsView.vue'
@@ -39,6 +39,18 @@ const errorMessage = ref<string | null>(null)
 const customWindowNames = ref<Record<number, string>>({})
 const editingWindowId = ref<number | null>(null)
 const errorWindowId = ref<number | null>(null)
+const lastAIResult = ref<LastAIResult | null>(null)
+
+function formatTimeAgo(ts?: number): string {
+  if (!ts) return ''
+  const diff = Date.now() - ts
+  const min = Math.floor(diff / 60000)
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min}m ago`
+  const hrs = Math.floor(min / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
+}
 
 function showError(msg: string, windowId?: number | null) {
   errorMessage.value = msg
@@ -127,15 +139,18 @@ onMounted(async () => {
     if (saved) themeMode.value = saved
   }
   
-  const namesData = await chrome.storage.local.get('customWindowNames')
+  const namesData = await chrome.storage.local.get(['customWindowNames', STORAGE_KEYS.LAST_AI_RESULT])
   if (namesData.customWindowNames) {
     customWindowNames.value = namesData.customWindowNames as Record<number, string>
+  }
+  if (namesData[STORAGE_KEYS.LAST_AI_RESULT]) {
+    lastAIResult.value = namesData[STORAGE_KEYS.LAST_AI_RESULT] as LastAIResult
   }
 
   applyTheme(themeMode.value)
   mediaQuery.addEventListener('change', onSystemThemeChange)
 
-  // Listen to Chrome events to dynamically update the popup in real-time
+  chrome.runtime.onMessage.addListener(handleRuntimeMessage)
   chrome.tabs.onCreated.addListener(refreshPreviews)
   chrome.tabs.onRemoved.addListener(refreshPreviews)
   chrome.tabs.onUpdated.addListener(refreshPreviews)
@@ -175,6 +190,7 @@ onUnmounted(() => {
   }
   mediaQuery.removeEventListener('change', onSystemThemeChange)
   stopPollingStatus()
+  chrome.runtime.onMessage.removeListener(handleRuntimeMessage)
   chrome.tabs.onCreated.removeListener(refreshPreviews)
   chrome.tabs.onRemoved.removeListener(refreshPreviews)
   chrome.tabs.onUpdated.removeListener(refreshPreviews)
@@ -260,14 +276,28 @@ async function organizePossibleDuplicates() {
 }
 
 async function closeSingleTab(tabId: number) {
-  await chrome.tabs.remove(tabId)
+  try {
+    await chrome.tabs.remove(tabId)
+  } catch (err: any) {
+    const errMsg = err?.message || String(err)
+    if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
+      console.error('[timTabTool] Failed to close tab:', err)
+    }
+  }
   await loadAllPreviews()
 }
 
 async function closeClusterDuplicates(cluster: { cleanUrl: string; domain: string; tabs: Array<{ id?: number }> }) {
   const idsToClose = cluster.tabs.slice(1).map(t => t.id).filter((id): id is number => id !== undefined)
   if (idsToClose.length > 0) {
-    await chrome.tabs.remove(idsToClose)
+    try {
+      await chrome.tabs.remove(idsToClose)
+    } catch (err: any) {
+      const errMsg = err?.message || String(err)
+      if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
+        console.error('[timTabTool] Failed to close cluster duplicates:', err)
+      }
+    }
     await loadAllPreviews()
   }
 }
@@ -322,7 +352,7 @@ async function jumpToMostRecentTab(windowId?: number) {
   }
 
   // Ensure all groups are uncollapsed so tab DOM elements exist in DOM
-  expandTriggerCount.value++
+  expandTriggers.value[targetWindowId] = (expandTriggers.value[targetWindowId] || 0) + 1
   await nextTick()
 
   // Activate tab in Chrome
@@ -431,6 +461,33 @@ async function loadAllPreviews(showLoading = false) {
     console.error('Failed to load preview:', err)
   } finally {
     loading.value = false
+  }
+}
+
+function handleRuntimeMessage(msg: any) {
+  if (msg?.action === 'LAST_AI_RESULT_UPDATED' && msg.payload) {
+    lastAIResult.value = msg.payload
+  } else if (msg?.action === 'ACTIVE_OPERATIONS_UPDATED' && msg.payload) {
+    allActiveOperations.value = msg.payload
+    for (const [widStr, status] of Object.entries(msg.payload)) {
+      const wid = Number(widStr)
+      const opStatus = status as { type: 'group' | 'classify' | null; error: string | null }
+      if (opStatus.type === 'group') groupingWindowId.value = wid
+      if (opStatus.type === 'classify') classifyingWindowId.value = wid
+    }
+  } else if (msg?.action === 'START_AI_PROGRESS') {
+    chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' }).then((ops) => {
+      if (ops && typeof ops === 'object') {
+        allActiveOperations.value = ops
+      }
+    })
+  } else if (msg?.action === 'AI_OPERATION_COMPLETE' || msg?.action === 'AI_OPERATION_FAILED') {
+    chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' }).then((ops) => {
+      if (ops && typeof ops === 'object') {
+        allActiveOperations.value = ops
+      }
+    })
+    loadAllPreviews()
   }
 }
 
@@ -591,6 +648,10 @@ async function handleCancelClassify(windowId: number) {
 
 async function handleClassifyNew(windowId: number) {
   classifyingWindowId.value = windowId
+  allActiveOperations.value = {
+    ...allActiveOperations.value,
+    [windowId]: { type: 'classify', error: null }
+  }
   startPollingStatus()
   try {
     const res = await chrome.runtime.sendMessage({ action: 'CLASSIFY_NEW_TABS', payload: { windowId } })
@@ -609,6 +670,7 @@ const activePromptWindowId = ref<number | null>(null)
 const activeSortMenuWindowId = ref<number | null>(null)
 const activeMoreMenuWindowId = ref<number | null>(null)
 const oneShotPromptText = ref<string>('sort all google tabs into 1 group')
+const windowGroupSort = ref<Record<number, 'name' | 'size' | 'default'>>({})
 
 function toggleOneShotPromptPopover(windowId: number) {
   activeSortMenuWindowId.value = null
@@ -643,16 +705,38 @@ function toggleMoreMenuPopover(windowId: number) {
   }
 }
 
-async function handleSortGroupsByName(windowId: number) {
+function setWindowSort(windowId: number, mode: 'name' | 'size') {
   activeSortMenuWindowId.value = null
-  await chrome.runtime.sendMessage({ action: 'SORT_GROUPS_BY_NAME', payload: { windowId } })
-  await loadAllPreviews()
+  if (windowGroupSort.value[windowId] === mode) {
+    windowGroupSort.value[windowId] = 'default'
+  } else {
+    windowGroupSort.value[windowId] = mode
+  }
 }
 
-async function handleSortGroupsBySize(windowId: number) {
-  activeSortMenuWindowId.value = null
-  await chrome.runtime.sendMessage({ action: 'SORT_GROUPS_BY_SIZE', payload: { windowId } })
-  await loadAllPreviews()
+function getSortedGroups(w: WindowGroupsInfo) {
+  const mode = windowGroupSort.value[w.windowId] || 'default'
+  if (mode === 'default' || !w.groups) return w.groups
+
+  const pinnedGroup = w.groups.find((g) => g.isPinnedGroup)
+  const regularGroups = w.groups.filter((g) => !g.isPinnedGroup)
+
+  const sorted = [...regularGroups].sort((a, b) => {
+    if (mode === 'name') {
+      const nameA = (a.groupName || a.category || '').trim()
+      const nameB = (b.groupName || b.category || '').trim()
+      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base', numeric: true })
+    } else {
+      const countA = a.tabs?.length ?? 0
+      const countB = b.tabs?.length ?? 0
+      if (countB !== countA) return countB - countA
+      const nameA = (a.groupName || a.category || '').trim()
+      const nameB = (b.groupName || b.category || '').trim()
+      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base', numeric: true })
+    }
+  })
+
+  return pinnedGroup ? [pinnedGroup, ...sorted] : sorted
 }
 
 async function runOneShotPrompt(windowId: number, customPrompt?: string) {
@@ -670,6 +754,10 @@ async function runOneShotPrompt(windowId: number, customPrompt?: string) {
 
 async function handleGroup(windowId: number, customPrompt?: string, bypassSafeguards = false) {
   groupingWindowId.value = windowId
+  allActiveOperations.value = {
+    ...allActiveOperations.value,
+    [windowId]: { type: 'group', error: null }
+  }
   startPollingStatus()
   try {
     const payload: { windowId: number; groupingPrompt?: string; bypassSafeguards?: boolean } = { windowId }
@@ -889,6 +977,61 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           {{ totalTabs }} tabs · {{ totalGroups }} groups · {{ totalWindows }} windows
         </span>
 
+        <!-- Last AI Operation Result Indicator -->
+        <span v-if="lastAIResult && activeAIOperationsCount === 0" class="relative group shrink-0">
+          <span 
+            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs transition-all hover:opacity-90"
+            style="color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border);"
+          >
+            <svg class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3.25 3.25a.75.75 0 001.06-1.06L10.75 10.44V5z" clip-rule="evenodd" />
+            </svg>
+            <span>AI: {{ lastAIResult.summary }}</span>
+            <svg class="w-2.5 h-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+            </svg>
+          </span>
+
+          <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[280px] max-w-[calc(100vw-24px)] z-50">
+            <div class="p-3 rounded-md shadow-card text-left leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+              <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" style="color: var(--accent);">
+                <span class="flex items-center gap-1.5 min-w-0">
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3.25 3.25a.75.75 0 001.06-1.06L10.75 10.44V5z" clip-rule="evenodd" />
+                  </svg>
+                  <span class="truncate">{{ lastAIResult.actionTitle || 'Last AI Operation' }}</span>
+                </span>
+                <span class="text-[9px] opacity-60 font-normal shrink-0" style="color: var(--text-tertiary);">{{ formatTimeAgo(lastAIResult.timestamp) }}</span>
+              </div>
+
+              <div class="flex flex-col gap-1.5 text-[10px]">
+                <div class="flex items-center justify-between" style="color: var(--text-secondary);">
+                  <span>Tabs Processed:</span>
+                  <span class="font-semibold tabular-nums" style="color: var(--text-primary);">{{ lastAIResult.tabsProcessed }} tabs</span>
+                </div>
+                <div v-if="lastAIResult.groupsBefore !== undefined && lastAIResult.groupsAfter !== undefined" class="flex items-center justify-between" style="color: var(--text-secondary);">
+                  <span>Group Count:</span>
+                  <span class="font-semibold tabular-nums" style="color: var(--text-primary);">{{ lastAIResult.groupsBefore }} → {{ lastAIResult.groupsAfter }} groups</span>
+                </div>
+
+                <div v-if="lastAIResult.createdGroupNames && lastAIResult.createdGroupNames.length > 0" class="mt-1 pt-1.5 border-t" style="border-color: var(--border);">
+                  <div class="text-[9px] uppercase font-bold tracking-wider mb-1" style="color: var(--text-tertiary);">Groups Created / Categorized</div>
+                  <div class="flex flex-wrap gap-1">
+                    <span 
+                      v-for="gName in lastAIResult.createdGroupNames" 
+                      :key="gName"
+                      class="px-1.5 py-0.5 rounded text-[9.5px] font-medium"
+                      style="background: var(--hover); color: var(--text-primary); border: 0.5px solid var(--border);"
+                    >
+                      {{ gName }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </span>
+
         <!-- Running AI Operations Indicator -->
         <span v-if="activeAIOperationsCount > 0" class="relative group shrink-0">
           <span 
@@ -966,9 +1109,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   <div 
                     v-for="tab in exactDuplicateTabs" 
                     :key="tab.id" 
-                    class="flex items-center gap-2 text-[10px] p-1.5 rounded-md cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors border-b border-dashed last:border-b-0"
+                    class="flex items-center gap-2 text-[10px] p-1.5 rounded-md cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors border-b border-dashed last:border-b-0 group/tabrow"
                     style="border-color: var(--border);"
                     @click="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
+                    @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
                   >
                     <img v-if="getOptimalFaviconUrl(tab.url, tab.favIconUrl)" :src="getOptimalFaviconUrl(tab.url, tab.favIconUrl)" alt="" class="w-3.5 h-3.5 rounded-xs shrink-0" />
                     <div v-else class="w-3.5 h-3.5 rounded-xs bg-gray-500/20 shrink-0" />
@@ -976,6 +1120,18 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                       <div class="font-medium truncate text-[9.5px]" style="color: var(--text-primary);">{{ tab.title }}</div>
                       <div class="text-[8.5px] truncate" style="color: var(--text-secondary);">{{ tab.url }}</div>
                     </div>
+                    <button 
+                      v-if="tab.id !== undefined"
+                      @click.stop="closeSingleTab(tab.id)"
+                      @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
+                      class="w-4 h-4 rounded flex items-center justify-center opacity-0 group-hover/tabrow:opacity-100 hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
+                      style="color: var(--text-tertiary);"
+                      title="Close this tab (or Middle-click row)"
+                    >
+                      <svg class="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1014,6 +1170,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                       :key="tab.id"
                       class="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-black/10 dark:hover:bg-white/10 transition-colors group/tabrow"
                       @click="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
+                      @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
                     >
                       <img v-if="getOptimalFaviconUrl(tab.url || '', tab.favIconUrl)" :src="getOptimalFaviconUrl(tab.url || '', tab.favIconUrl)" alt="" class="w-3 h-3 rounded-xs shrink-0" />
                       <div v-else class="w-3 h-3 rounded-xs bg-gray-500/20 shrink-0" />
@@ -1024,9 +1181,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                       <button 
                         v-if="tab.id !== undefined"
                         @click.stop="closeSingleTab(tab.id)"
+                        @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
                         class="w-4 h-4 rounded flex items-center justify-center opacity-0 group-hover/tabrow:opacity-100 hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
                         style="color: var(--text-tertiary);"
-                        title="Close this tab"
+                        title="Close this tab (or Middle-click row)"
                       >
                         <svg class="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
                           <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
@@ -1292,7 +1450,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 <div class="relative inline-block shrink-0">
                   <button
                     class="p-[5px] rounded-btn flex items-center justify-center transition-all shrink-0"
-                    :style="activeSortMenuWindowId === w.windowId
+                    :style="(activeSortMenuWindowId === w.windowId || (windowGroupSort[w.windowId] && windowGroupSort[w.windowId] !== 'default'))
                       ? { background: 'var(--accent)', color: '#fff' }
                       : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
                     @click="toggleSortMenuPopover(w.windowId)"
@@ -1303,26 +1461,32 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                     </svg>
                   </button>
 
-                  <div v-if="activeSortMenuWindowId === w.windowId" class="absolute left-0 top-full mt-1 w-44 p-1 rounded-md shadow-card z-50 flex flex-col gap-0.5 text-left" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+                  <div v-if="activeSortMenuWindowId === w.windowId" class="absolute right-0 top-full mt-1 w-44 p-1 rounded-md shadow-card z-50 flex flex-col gap-0.5 text-left" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
                     <button
-                      @click="handleSortGroupsByName(w.windowId)"
+                      @click="setWindowSort(w.windowId, 'name')"
                       class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
-                      style="color: var(--text-primary);"
+                      :style="windowGroupSort[w.windowId] === 'name' ? { background: 'var(--hover)', color: 'var(--accent)' } : { color: 'var(--text-primary)' }"
                     >
-                      <svg class="w-3.5 h-3.5 shrink-0" style="color: var(--accent);" viewBox="0 0 20 20" fill="currentColor">
+                      <svg class="w-3.5 h-3.5 shrink-0" :style="{ color: windowGroupSort[w.windowId] === 'name' ? 'var(--accent)' : 'var(--text-secondary)' }" viewBox="0 0 20 20" fill="currentColor">
                         <path fill-rule="evenodd" d="M3 3.5A.75.75 0 013.75 3h12.5a.75.75 0 010 1.5H3.75A.75.75 0 013 3.5zm0 4.5A.75.75 0 013.75 7h9.5a.75.75 0 010 1.5H3.75A.75.75 0 013 8zm0 4.5a.75.75 0 01.75-.75h6.5a.75.75 0 010 1.5h-6.5a.75.75 0 01-.75-.75z" clip-rule="evenodd" />
                       </svg>
-                      <span>{{ getMessage('sortGroupsByName') }}</span>
+                      <span class="flex-1">{{ getMessage('sortGroupsByName') }}</span>
+                      <svg v-if="windowGroupSort[w.windowId] === 'name'" class="w-3 h-3 shrink-0" style="color: var(--accent);" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.815a.75.75 0 011.05-.145z" clip-rule="evenodd" />
+                      </svg>
                     </button>
                     <button
-                      @click="handleSortGroupsBySize(w.windowId)"
+                      @click="setWindowSort(w.windowId, 'size')"
                       class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
-                      style="color: var(--text-primary);"
+                      :style="windowGroupSort[w.windowId] === 'size' ? { background: 'var(--hover)', color: 'var(--accent)' } : { color: 'var(--text-primary)' }"
                     >
-                      <svg class="w-3.5 h-3.5 shrink-0" style="color: var(--text-secondary);" viewBox="0 0 20 20" fill="currentColor">
-                        <path fill-rule="evenodd" d="M2 3.75A.75.75 0 012.75 3h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 3.75zm0 4.5A.75.75 0 012.75 7h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 8.25zm0 4.5a.75.75 0 01.75-.75h6.5a.75.75 0 010 1.5h-6.5a.75.75 0 01-.75-.75z" clip-rule="evenodd" />
+                      <svg class="w-3.5 h-3.5 shrink-0" :style="{ color: windowGroupSort[w.windowId] === 'size' ? 'var(--accent)' : 'var(--text-secondary)' }" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M2 3.75A.75.75 0 012.75 3h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 8.25zm0 4.5a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 8.25zm0 4.5a.75.75 0 01.75-.75h6.5a.75.75 0 010 1.5h-6.5a.75.75 0 01-.75-.75z" clip-rule="evenodd" />
                       </svg>
-                      <span>{{ getMessage('sortGroupsBySize') }}</span>
+                      <span class="flex-1">{{ getMessage('sortGroupsBySize') }}</span>
+                      <svg v-if="windowGroupSort[w.windowId] === 'size'" class="w-3 h-3 shrink-0" style="color: var(--accent);" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.815a.75.75 0 011.05-.145z" clip-rule="evenodd" />
+                      </svg>
                     </button>
                   </div>
                 </div>
@@ -1552,7 +1716,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
         <!-- Groups for this window -->
         <div v-if="!isWindowSectionCollapsed(w.windowId)" style="background: var(--bg-primary); border-top: 0.5px solid var(--border);">
           <GroupList
-            :groups="w.groups"
+            :groups="getSortedGroups(w)"
             :indicator-style="indicatorStyle"
             :expand-trigger="expandTriggers[w.windowId] || 0"
             :collapse-trigger="collapseTriggers[w.windowId] || 0"

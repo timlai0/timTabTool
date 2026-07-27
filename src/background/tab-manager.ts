@@ -4,7 +4,7 @@ import { GROUP_DEFINITIONS, STORAGE_KEYS, DEFAULT_SETTINGS } from '../shared/con
 import { extractDomain, normalizeUrl, detectDuplicateTabs } from '../shared/utils'
 import { getMessage } from '../shared/i18n'
 import { AIClient } from '../shared/ai-client'
-import type { GroupCategory, GroupedTabs, TabInfo, ExtensionSettings, ChromeTabGroupColor } from '../shared/types'
+import type { GroupCategory, GroupedTabs, TabInfo, ExtensionSettings, ChromeTabGroupColor, LastAIResult } from '../shared/types'
 
 function isTabGroupsSupported(): boolean {
   return typeof chrome !== 'undefined' && typeof chrome.tabGroups !== 'undefined'
@@ -29,6 +29,18 @@ interface OperationStatus {
 }
 
 const activeOperationsMap = new Map<number, OperationStatus>()
+
+export function setActiveOperation(windowId: number, type: 'group' | 'classify' | null, error: string | null = null): void {
+  if (type === null && error === null) {
+    activeOperationsMap.delete(windowId)
+  } else {
+    activeOperationsMap.set(windowId, { type, error })
+  }
+  chrome.runtime.sendMessage({
+    action: 'ACTIVE_OPERATIONS_UPDATED',
+    payload: getActiveOperations()
+  }).catch(() => {})
+}
 
 export function getActiveOperations(): Record<number, OperationStatus> {
   const result: Record<number, OperationStatus> = {}
@@ -72,7 +84,13 @@ async function retryTabOperation<T>(fn: () => Promise<T>): Promise<T> {
   for (let attempt = 0; attempt < TAB_RETRY_ATTEMPTS; attempt++) {
     try {
       return await fn()
-    } catch (err) {
+    } catch (err: any) {
+      const errMsg = err?.message || String(err)
+      const isMissingTab = errMsg.includes('No tab with id') || errMsg.includes('Invalid tab id') || errMsg.includes('No group with id') || errMsg.includes('Invalid group id')
+      if (isMissingTab) {
+        console.warn('[timTabTool] Tab or group no longer exists during operation (ignored):', errMsg)
+        return undefined as unknown as T
+      }
       const isRetryable =
         err instanceof Error && err.message.includes('Tabs cannot be edited right now')
       if (!isRetryable || attempt === TAB_RETRY_ATTEMPTS - 1) throw err
@@ -749,6 +767,9 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
     const hideTitles = titlesHiddenMap.get(windowId) ?? false
     let aiError: Error | null = null
 
+    const initialGroups = isTabGroupsSupported() ? await chrome.tabGroups.query({ windowId }) : []
+    const groupsBefore = initialGroups.length
+
     if (settings.ai.enabled && settings.ai.apiKey) {
       try {
         await setAIBadge()
@@ -791,6 +812,22 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
         cacheIsAIGroupedMap.set(windowId, true)
         await updateNewTabsBadge(windowId)
         activeOperationsMap.delete(windowId)
+
+        const finalGroups = isTabGroupsSupported() ? await chrome.tabGroups.query({ windowId }) : []
+        const groupsAfter = finalGroups.length
+        const lastResult: LastAIResult = {
+          timestamp: Date.now(),
+          actionType: 'group',
+          actionTitle: 'AI Tab Grouping',
+          windowId,
+          tabsProcessed: unpinnedTabs.length,
+          groupsBefore,
+          groupsAfter,
+          createdGroupNames: freeGroups.map((g) => g.name),
+          summary: `${unpinnedTabs.length} tabs → ${freeGroups.length} groups (${groupsBefore} → ${groupsAfter})`,
+        }
+        await chrome.storage.local.set({ [STORAGE_KEYS.LAST_AI_RESULT]: lastResult })
+        chrome.runtime.sendMessage({ action: 'LAST_AI_RESULT_UPDATED', payload: lastResult }).catch(() => {})
         return
       } catch (err) {
         if (controller.signal.aborted) {
@@ -1038,6 +1075,40 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     await getGroupsPreview(windowId)
     await updateNewTabsBadge(windowId)
     activeOperationsMap.delete(windowId)
+
+    const finalGroups = isTabGroupsSupported() ? await chrome.tabGroups.query({ windowId }) : []
+    const groupsAfter = finalGroups.length
+
+    const targetGroupTitles: string[] = []
+    if (isTabGroupsSupported()) {
+      for (const groupId of existingGroupUpdates.keys()) {
+        try {
+          const g = await chrome.tabGroups.get(groupId)
+          const title = g.title || groupTitleMap.get(groupId) || 'Group'
+          targetGroupTitles.push(title)
+        } catch {
+          const title = groupTitleMap.get(groupId) || 'Group'
+          targetGroupTitles.push(title)
+        }
+      }
+    }
+    const categorizedNames = Array.from(new Set([
+      ...targetGroupTitles,
+      ...Array.from(newGroupUpdates.keys())
+    ]))
+    const lastResult: LastAIResult = {
+      timestamp: Date.now(),
+      actionType: 'classify',
+      actionTitle: 'AI Tab Classification',
+      windowId,
+      tabsProcessed: newTabs.length,
+      groupsBefore: allGroups.length,
+      groupsAfter,
+      createdGroupNames: categorizedNames,
+      summary: `${newTabs.length} new tabs classified`,
+    }
+    await chrome.storage.local.set({ [STORAGE_KEYS.LAST_AI_RESULT]: lastResult })
+    chrome.runtime.sendMessage({ action: 'LAST_AI_RESULT_UPDATED', payload: lastResult }).catch(() => {})
   } catch (err) {
     if (controller.signal.aborted) {
       console.log('[timTabTool] Classification aborted by user')
@@ -1062,7 +1133,14 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
  */
 export async function closeGroupTabs(tabIds: number[]): Promise<void> {
   if (tabIds.length === 0) return
-  await chrome.tabs.remove(tabIds)
+  try {
+    await chrome.tabs.remove(tabIds)
+  } catch (err: any) {
+    const errMsg = err?.message || String(err)
+    if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
+      console.error('[timTabTool] Failed to close group tabs:', err)
+    }
+  }
   for (const id of tabIds) {
     cacheRemoveTab(id)
   }
