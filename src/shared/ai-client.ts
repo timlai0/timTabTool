@@ -381,6 +381,45 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
   ): Promise<{ index: number; group: string; newGroupName?: string; newGroupColor?: string }[]> {
     if (tabs.length === 0) return []
 
+    const batchSize = this.config.batchSize || getAutoBatchSize(this.config.maxTokens)
+    const requiredBatches = Math.ceil(tabs.length / batchSize)
+
+    if (!this.config.bypassSafeguards && this.instanceRequestCount + requiredBatches > AIClient.MAX_REQUESTS_PER_RUN) {
+      throw new Error(`[timTabTool] AI safety safeguard: Single operation exceeded the safety limit of ${AIClient.MAX_REQUESTS_PER_RUN} requests to prevent run-away token billing. Please close some tabs or group in smaller batches.`)
+    }
+
+    if (tabs.length <= batchSize) {
+      return this.classifyNewTabsBatch(tabs, 0, existingGroupNames, stripTitles)
+    }
+
+    const allResults: { index: number; group: string; newGroupName?: string; newGroupColor?: string }[] = []
+    const combinedExistingNames = [...existingGroupNames]
+
+    for (let i = 0; i < tabs.length; i += batchSize) {
+      const batch = tabs.slice(i, i + batchSize)
+      const batchResults = await this.classifyNewTabsBatch(batch, i, combinedExistingNames, stripTitles)
+      
+      for (const item of batchResults) {
+        allResults.push(item)
+        if (item.group === 'NEW' && item.newGroupName) {
+          // If a new group was created, add it to existing names for subsequent batches
+          const newNameStr = item.newGroupName
+          if (!combinedExistingNames.some(n => n.toLowerCase() === newNameStr.toLowerCase())) {
+            combinedExistingNames.push(item.newGroupName)
+          }
+        }
+      }
+    }
+
+    return allResults
+  }
+
+  private async classifyNewTabsBatch(
+    tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
+    offset: number,
+    existingGroupNames: string[],
+    stripTitles = false,
+  ): Promise<{ index: number; group: string; newGroupName?: string; newGroupColor?: string }[]> {
     const tabDescriptions = tabs
       .map((t, i) => this.formatTabForPrompt(t, i + 1, stripTitles))
       .join('\n')
@@ -404,7 +443,7 @@ Only output the JSON array.`
       const response = await this.chat(prompt, true)
 
       const extracted = extractJsonSubstring(response, 'array')
-      if (!extracted.startsWith('[')) return this.fallbackAllToNew(tabs)
+      if (!extracted.startsWith('[')) return this.fallbackAllToNew(tabs, offset)
 
       let jsonStr = extracted.replace(/,\s*([}\]])/g, '$1')
       let parsed: {
@@ -419,26 +458,32 @@ Only output the JSON array.`
         try {
           parsed = JSON.parse(repairTruncatedJson(jsonStr))
         } catch {
-          return this.fallbackAllToNew(tabs)
+          return this.fallbackAllToNew(tabs, offset)
         }
       }
 
-      const validGroupNames = new Set(existingGroupNames)
+      const validGroupNames = new Set(existingGroupNames.map(n => n.toLowerCase()))
       return parsed
         .filter((item) => item.index >= 1 && item.index <= tabs.length)
-        .map((item) => ({
-          index: item.index - 1,
-          group: item.group === 'NEW' ? 'NEW' : (validGroupNames.has(item.group) ? item.group : 'NEW'),
-          newGroupName: item.newGroupName?.slice(0, MAX_GROUP_NAME_LENGTH),
-          newGroupColor: VALID_COLORS.includes(item.newGroupColor as ChromeTabGroupColor)
-            ? item.newGroupColor
-            : undefined,
-        }))
+        .map((item) => {
+          let finalGroup = 'NEW'
+          if (item.group !== 'NEW' && validGroupNames.has(item.group.toLowerCase())) {
+            finalGroup = existingGroupNames.find(n => n.toLowerCase() === item.group.toLowerCase()) || item.group
+          }
+          return {
+            index: item.index - 1 + offset,
+            group: finalGroup,
+            newGroupName: item.newGroupName?.slice(0, MAX_GROUP_NAME_LENGTH),
+            newGroupColor: VALID_COLORS.includes(item.newGroupColor as ChromeTabGroupColor)
+              ? item.newGroupColor
+              : undefined,
+          }
+        })
     } catch (err) {
       const msg = (err as Error).message
       if (!stripTitles && (msg.includes('PROHIBITED_CONTENT') || msg.includes('Prohibited Use policy') || msg.includes('promptFeedback'))) {
         console.warn('[timTabTool] Prompt blocked due to sensitive content in classification, retrying with URLs only...')
-        return this.classifyNewTabsIntoGroups(tabs, existingGroupNames, true)
+        return this.classifyNewTabsBatch(tabs, offset, existingGroupNames, true)
       }
       console.error('[timTabTool] Classification failed:', err)
       throw err
@@ -456,7 +501,10 @@ Only output the JSON array.`
   ): Promise<string> {
     if (tabs.length === 0 || existingGroupNames.length === 0) return 'KEEP'
 
-    const tabDescriptions = tabs
+    const batchSize = this.config.batchSize || getAutoBatchSize(this.config.maxTokens)
+    const sampleTabs = tabs.slice(0, batchSize)
+
+    const tabDescriptions = sampleTabs
       .map((t, i) => this.formatTabForPrompt(t, i + 1, stripTitles))
       .join('\n')
 
@@ -466,7 +514,7 @@ Only output the JSON array.`
 
 Existing tab groups in this window: ${existingGroupNames.map((n) => `"${n}"`).join(', ')}.
 
-Tabs in the group to merge:
+Tabs in the group to merge (showing ${sampleTabs.length} of ${tabs.length}):
 ${tabDescriptions}
 
 JSON format: {"mergeTarget":"existing group name or KEEP"}
@@ -496,8 +544,8 @@ Only output the JSON object.`
     }
   }
 
-  private fallbackAllToNew(tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[]): { index: number; group: string }[] {
-    return tabs.map((_, i) => ({ index: i, group: 'NEW', newGroupName: 'Uncategorized', newGroupColor: 'grey' }))
+  private fallbackAllToNew(tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[], offset = 0): { index: number; group: string }[] {
+    return tabs.map((_, i) => ({ index: i + offset, group: 'NEW', newGroupName: 'Uncategorized', newGroupColor: 'grey' }))
   }
 
   private async executeWithRetry<T>(fn: () => Promise<T>): Promise<T> {
