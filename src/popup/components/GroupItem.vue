@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { GROUP_DEFINITIONS, STORAGE_KEYS, DEFAULT_SETTINGS, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS } from '../../shared/constants'
 import { getMessage } from '../../shared/i18n'
 import type { GroupedTabs, GroupIndicatorStyle, ExtensionSettings } from '../../shared/types'
@@ -44,12 +44,26 @@ const groupColorVar = computed(() => `var(--group-${displayColor.value})`)
 // Load AI Settings for estimating tokens/cost and rendering the preview
 const aiSettings = ref(DEFAULT_SETTINGS.ai)
 
+function handleStorageChange(changes: { [key: string]: chrome.storage.StorageChange }, namespace: string) {
+  if (namespace === 'local' && changes[STORAGE_KEYS.SETTINGS]) {
+    const newSettings = changes[STORAGE_KEYS.SETTINGS].newValue
+    if (newSettings?.ai) {
+      aiSettings.value = { ...DEFAULT_SETTINGS.ai, ...newSettings.ai }
+    }
+  }
+}
+
 onMounted(async () => {
+  chrome.storage.onChanged.addListener(handleStorageChange)
   const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
   const stored = data[STORAGE_KEYS.SETTINGS] as Partial<ExtensionSettings> | undefined
   if (stored?.ai) {
     aiSettings.value = { ...DEFAULT_SETTINGS.ai, ...stored.ai }
   }
+})
+
+onUnmounted(() => {
+  chrome.storage.onChanged.removeListener(handleStorageChange)
 })
 
 const activeModel = computed(() => {
@@ -185,7 +199,10 @@ async function handleMergeGroup() {
         >
           {{ group.tabs.length }}
         </span>
-        <span class="text-xs font-medium flex-1 truncate" style="color: var(--text-primary);">{{ displayLabel }}</span>
+        <span class="text-xs font-medium flex-1 truncate" style="color: var(--text-primary);">
+          <span v-if="displayLabel === '_ungrouped_'" class="italic font-normal">ungrouped</span>
+          <template v-else>{{ displayLabel }}</template>
+        </span>
         <!-- Split Group with AI -->
         <button
           v-if="group.groupId"
@@ -331,7 +348,8 @@ async function handleMergeGroup() {
       >
         <span class="w-[3px] h-4 rounded-sm shrink-0" :style="{ background: groupColorVar }" />
         <span class="text-xs font-medium flex-1 truncate" style="color: var(--text-primary);">
-          {{ displayLabel }}
+          <span v-if="displayLabel === '_ungrouped_'" class="italic font-normal">ungrouped</span>
+          <template v-else>{{ displayLabel }}</template>
         </span>
         <span class="text-[10px] tabular-nums" style="color: var(--text-tertiary);">{{ group.tabs.length }}</span>
         <!-- Split Group with AI -->
@@ -482,7 +500,7 @@ async function handleMergeGroup() {
       <div class="relative group/bar" :class="{ 'active-group-bar-highlight': isActiveGroup }" :data-active-group-header="isActiveGroup ? 'true' : 'false'">
         <div
           class="absolute left-0 top-0 bottom-0 w-4 cursor-pointer z-10 flex items-start"
-          :title="displayLabel + ' (' + group.tabs.length + ')'"
+          :title="(displayLabel === '_ungrouped_' ? 'ungrouped' : displayLabel) + ' (' + group.tabs.length + ')'"
           @click="collapsed = true"
         >
           <div

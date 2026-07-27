@@ -357,13 +357,13 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
       })
     }
 
-    // Collect unassigned tabs into an "Other" group
+    // Collect unassigned tabs into an "_ungrouped_" group
     const unassigned: number[] = []
     for (let i = minIndex; i <= maxIndex; i++) {
       if (!assignedIndices.has(i)) unassigned.push(i)
     }
     if (unassigned.length > 0) {
-      results.push({ name: 'Other', tabIndices: unassigned, color: 'grey' })
+      results.push({ name: '_ungrouped_', tabIndices: unassigned, color: 'grey' })
     }
 
     return results

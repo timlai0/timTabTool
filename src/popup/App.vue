@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch, onUnmounted, nextTick } from 'vue'
+import { ref, shallowRef, onMounted, computed, watch, onUnmounted, nextTick } from 'vue'
 import { getMessage } from '../shared/i18n'
 import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS } from '../shared/constants'
 import { SYSTEM_PROMPT, AIClient } from '../shared/ai-client'
@@ -25,7 +25,7 @@ watch(currentView, (newView) => {
     }
   }
 })
-const allWindows = ref<WindowGroupsInfo[]>([])
+const allWindows = shallowRef<WindowGroupsInfo[]>([])
 const loading = ref(true)
 const tabGroupsSupported = typeof chrome !== 'undefined' && typeof chrome.tabGroups !== 'undefined'
 const groupingWindowId = ref<number | null>(null)
@@ -117,7 +117,22 @@ const refreshPreviews = () => {
   }, 300)
 }
 
+function handleStorageChange(changes: { [key: string]: chrome.storage.StorageChange }, namespace: string) {
+  if (namespace === 'local') {
+    if (changes[STORAGE_KEYS.SETTINGS]) {
+      const newSettings = changes[STORAGE_KEYS.SETTINGS].newValue
+      if (newSettings?.ai) {
+        aiSettings.value = { ...DEFAULT_SETTINGS.ai, ...newSettings.ai }
+      }
+    }
+    if (changes[STORAGE_KEYS.LAST_AI_RESULT]) {
+      lastAIResult.value = changes[STORAGE_KEYS.LAST_AI_RESULT].newValue as LastAIResult
+    }
+  }
+}
+
 onMounted(async () => {
+  chrome.storage.onChanged.addListener(handleStorageChange)
   const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
   const stored = data[STORAGE_KEYS.SETTINGS] as Partial<ExtensionSettings> | undefined
   if (stored?.groupIndicatorStyle) {
@@ -184,6 +199,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  chrome.storage.onChanged.removeListener(handleStorageChange)
   // Programming logic: clear any pending refresh timeouts
   if (refreshTimeout) {
     clearTimeout(refreshTimeout)
@@ -241,11 +257,46 @@ const duplicateAnalysis = computed(() => {
   return detectDuplicateTabs(allTabs)
 })
 
+const duplicateGroupAnalysis = computed(() => {
+  const groupsByNormalizedName = new Map<string, Array<{ id: number; name: string; windowId: number }>>()
+  let duplicateCount = 0
+  const duplicateGroups: Array<{ normalized: string; originalNames: string[]; count: number; groups: Array<{ id: number; name: string; windowId: number }> }> = []
+
+  for (const win of allWindows.value) {
+    for (const group of win.groups) {
+      if (!group.groupName) continue
+      const normalized = group.groupName.toLowerCase().replace(/[^a-z0-9]/g, '')
+      if (!normalized) continue
+
+      const existing = groupsByNormalizedName.get(normalized) || []
+      existing.push({ id: group.groupId || 0, name: group.groupName, windowId: win.windowId })
+      groupsByNormalizedName.set(normalized, existing)
+    }
+  }
+
+  for (const [normalized, groups] of groupsByNormalizedName.entries()) {
+    if (groups.length > 1) {
+      duplicateCount++
+      duplicateGroups.push({
+        normalized,
+        originalNames: Array.from(new Set(groups.map(g => g.name))),
+        count: groups.length,
+        groups
+      })
+    }
+  }
+
+  return { duplicateCount, duplicateGroups }
+})
+
 const exactDuplicatesCount = computed(() => duplicateAnalysis.value.exactDuplicateCount)
 const exactDuplicateTabs = computed(() => duplicateAnalysis.value.exactDuplicates as Array<{ id: number; title: string; url: string; favIconUrl?: string; windowId: number }>)
 
 const possibleDuplicatesCount = computed(() => duplicateAnalysis.value.possibleDuplicateCount)
 const possibleDuplicateClusters = computed(() => duplicateAnalysis.value.possibleDuplicates)
+
+const duplicateGroupsCount = computed(() => duplicateGroupAnalysis.value.duplicateCount)
+const duplicateGroupClusters = computed(() => duplicateGroupAnalysis.value.duplicateGroups)
 
 async function closeExactDuplicates() {
   const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent()).id!
@@ -256,6 +307,37 @@ async function closeExactDuplicates() {
 async function closePossibleDuplicates() {
   const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent()).id!
   await chrome.runtime.sendMessage({ action: 'CLOSE_POSSIBLE_DUPLICATES', payload: currentWinId })
+  await loadAllPreviews()
+}
+
+async function _mergeCluster(cluster: any) {
+  if (!cluster || !cluster.groups || cluster.groups.length < 2) return
+  const targetGroup = cluster.groups[0]
+  let tabIdsToMove: number[] = []
+  
+  for (let i = 1; i < cluster.groups.length; i++) {
+    const sourceGroup = cluster.groups[i]
+    const tabs = await chrome.tabs.query({ groupId: sourceGroup.id })
+    const ids = tabs.map(t => t.id!).filter(id => id !== undefined)
+    tabIdsToMove.push(...ids)
+  }
+  
+  if (tabIdsToMove.length > 0) {
+    // move all to target window's end first to ensure they are physically adjacent and in the right window
+    await chrome.tabs.move(tabIdsToMove, { windowId: targetGroup.windowId, index: -1 })
+    await chrome.tabs.group({ groupId: targetGroup.id, tabIds: tabIdsToMove as [number, ...number[]] })
+  }
+}
+
+async function mergeDuplicateGroup(cluster: any) {
+  await _mergeCluster(cluster)
+  await loadAllPreviews()
+}
+
+async function mergeAllDuplicateGroups() {
+  for (const cluster of duplicateGroupClusters.value) {
+    await _mergeCluster(cluster)
+  }
   await loadAllPreviews()
 }
 
@@ -408,7 +490,11 @@ async function loadAllPreviews(showLoading = false) {
     loading.value = true
   }
   try {
-    const result = await chrome.runtime.sendMessage({ action: 'GET_ALL_WINDOWS_PREVIEW' })
+    const [result, activeOps] = await Promise.all([
+      chrome.runtime.sendMessage({ action: 'GET_ALL_WINDOWS_PREVIEW' }),
+      chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' })
+    ])
+    
     if (Array.isArray(result)) {
       const sorted = (result as WindowGroupsInfo[]).sort((a, b) => {
         if (a.windowId === currentWindowId.value) return -1
@@ -423,8 +509,7 @@ async function loadAllPreviews(showLoading = false) {
       windowTitlesHidden.value = titlesState
     }
 
-    // Query active operations and errors from the background
-    const activeOps = await chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' })
+    // Process active operations and errors from the background
     if (activeOps && typeof activeOps === 'object') {
       allActiveOperations.value = activeOps as Record<number, { type: 'group' | 'classify' | null; error: string | null }>
       let isAnyGrouping = false
@@ -705,12 +790,18 @@ function toggleMoreMenuPopover(windowId: number) {
   }
 }
 
-function setWindowSort(windowId: number, mode: 'name' | 'size') {
+async function setWindowSort(windowId: number, mode: 'name' | 'size') {
   activeSortMenuWindowId.value = null
   if (windowGroupSort.value[windowId] === mode) {
     windowGroupSort.value[windowId] = 'default'
   } else {
     windowGroupSort.value[windowId] = mode
+    if (mode === 'name') {
+      await chrome.runtime.sendMessage({ action: 'SORT_GROUPS_BY_NAME', payload: { windowId } })
+    } else if (mode === 'size') {
+      await chrome.runtime.sendMessage({ action: 'SORT_GROUPS_BY_SIZE', payload: { windowId } })
+    }
+    await loadAllPreviews()
   }
 }
 
@@ -973,20 +1064,19 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           <h1 class="text-[15px] font-semibold tracking-tight" style="color: var(--text-primary);">timTabTool</h1>
           <span class="text-[9px] font-medium opacity-60 tabular-nums px-1 py-0.2 rounded-xs" style="color: var(--text-secondary); background: var(--hover);">{{ APP_VERSION }}b{{ BUILD_NUMBER }}</span>
         </div>
-        <span class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: var(--hover); border: 1px solid var(--border);">
-          {{ totalTabs }} tabs · {{ totalGroups }} groups · {{ totalWindows }} windows
-        </span>
-
         <!-- Last AI Operation Result Indicator -->
         <span v-if="lastAIResult && activeAIOperationsCount === 0" class="relative group shrink-0">
           <span 
             class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs transition-all hover:opacity-90"
-            style="color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border);"
+            :style="lastAIResult.error ? 'color: #FF3B30; background: rgba(255,59,48,0.1); border: 1px solid rgba(255,59,48,0.2);' : 'color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border);'"
           >
-            <svg class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+            <svg v-if="!lastAIResult.error" class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3.25 3.25a.75.75 0 001.06-1.06L10.75 10.44V5z" clip-rule="evenodd" />
             </svg>
-            <span>AI: {{ lastAIResult.summary }}</span>
+            <svg v-else class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
+            </svg>
+            <span>{{ lastAIResult.error ? 'AI Failed' : 'AI: ' + lastAIResult.summary }}</span>
             <svg class="w-2.5 h-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
             </svg>
@@ -994,10 +1084,13 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
           <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[280px] max-w-[calc(100vw-24px)] z-50">
             <div class="p-3 rounded-md shadow-card text-left leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
-              <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" style="color: var(--accent);">
+              <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" :style="lastAIResult.error ? 'color: #FF3B30;' : 'color: var(--accent);'">
                 <span class="flex items-center gap-1.5 min-w-0">
-                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                  <svg v-if="!lastAIResult.error" class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3.25 3.25a.75.75 0 001.06-1.06L10.75 10.44V5z" clip-rule="evenodd" />
+                  </svg>
+                  <svg v-else class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
                   </svg>
                   <span class="truncate">{{ lastAIResult.actionTitle || 'Last AI Operation' }}</span>
                 </span>
@@ -1005,28 +1098,33 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
               </div>
 
               <div class="flex flex-col gap-1.5 text-[10px]">
-                <div class="flex items-center justify-between" style="color: var(--text-secondary);">
-                  <span>Tabs Processed:</span>
-                  <span class="font-semibold tabular-nums" style="color: var(--text-primary);">{{ lastAIResult.tabsProcessed }} tabs</span>
+                <div v-if="lastAIResult.error" class="text-[10.5px] font-medium whitespace-pre-wrap mt-0.5" style="color: #FF3B30;">
+                  {{ lastAIResult.error }}
                 </div>
-                <div v-if="lastAIResult.groupsBefore !== undefined && lastAIResult.groupsAfter !== undefined" class="flex items-center justify-between" style="color: var(--text-secondary);">
-                  <span>Group Count:</span>
-                  <span class="font-semibold tabular-nums" style="color: var(--text-primary);">{{ lastAIResult.groupsBefore }} → {{ lastAIResult.groupsAfter }} groups</span>
-                </div>
-
-                <div v-if="lastAIResult.createdGroupNames && lastAIResult.createdGroupNames.length > 0" class="mt-1 pt-1.5 border-t" style="border-color: var(--border);">
-                  <div class="text-[9px] uppercase font-bold tracking-wider mb-1" style="color: var(--text-tertiary);">Groups Created / Categorized</div>
-                  <div class="flex flex-wrap gap-1">
-                    <span 
-                      v-for="gName in lastAIResult.createdGroupNames" 
-                      :key="gName"
-                      class="px-1.5 py-0.5 rounded text-[9.5px] font-medium"
-                      style="background: var(--hover); color: var(--text-primary); border: 0.5px solid var(--border);"
-                    >
-                      {{ gName }}
-                    </span>
+                <template v-else>
+                  <div class="flex items-center justify-between" style="color: var(--text-secondary);">
+                    <span>Tabs Processed:</span>
+                    <span class="font-semibold tabular-nums" style="color: var(--text-primary);">{{ lastAIResult.tabsProcessed }} tabs</span>
                   </div>
-                </div>
+                  <div v-if="lastAIResult.groupsBefore !== undefined && lastAIResult.groupsAfter !== undefined" class="flex items-center justify-between" style="color: var(--text-secondary);">
+                    <span>Group Count:</span>
+                    <span class="font-semibold tabular-nums" style="color: var(--text-primary);">{{ lastAIResult.groupsBefore }} → {{ lastAIResult.groupsAfter }} groups</span>
+                  </div>
+
+                  <div v-if="lastAIResult.createdGroupNames && lastAIResult.createdGroupNames.length > 0" class="mt-1 pt-1.5 border-t" style="border-color: var(--border);">
+                    <div class="text-[9px] uppercase font-bold tracking-wider mb-1" style="color: var(--text-tertiary);">Groups Created / Categorized</div>
+                    <div class="flex flex-wrap gap-1">
+                      <span 
+                        v-for="gName in lastAIResult.createdGroupNames" 
+                        :key="gName"
+                        class="px-1.5 py-0.5 rounded text-[9.5px] font-medium"
+                        style="background: var(--hover); color: var(--text-primary); border: 0.5px solid var(--border);"
+                      >
+                        {{ gName }}
+                      </span>
+                    </div>
+                  </div>
+                </template>
               </div>
             </div>
           </div>
@@ -1081,7 +1179,11 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           </div>
         </span>
 
-        <div v-if="exactDuplicatesCount > 0 || possibleDuplicatesCount > 0" class="relative group flex items-center gap-1 text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3);">
+        <span class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: var(--hover); border: 1px solid var(--border);">
+          {{ totalTabs }} tabs · {{ totalGroups }} groups · {{ totalWindows }} windows
+        </span>
+
+        <div v-if="exactDuplicatesCount > 0 || possibleDuplicatesCount > 0 || duplicateGroupsCount > 0" class="relative group flex items-center gap-1 text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3);">
           <svg class="w-3 h-3" style="color: #ef4444;" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
           </svg>
@@ -1092,6 +1194,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           <button v-if="possibleDuplicatesCount > 0" class="hover:underline focus:outline-none cursor-pointer" @click="organizePossibleDuplicates" title="Group and view possible duplicates">
             {{ possibleDuplicatesCount }} possible dupes
           </button>
+          <span v-if="(exactDuplicatesCount > 0 || possibleDuplicatesCount > 0) && duplicateGroupsCount > 0">·</span>
+          <span v-if="duplicateGroupsCount > 0" class="cursor-default" title="Duplicate group names detected">
+            {{ duplicateGroupsCount }} dup groups
+          </span>
 
           <!-- Single Unified Duplicates Popover Card anchored at left-0 of the red pill badge -->
           <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[320px] max-w-[calc(100vw-32px)] z-50">
@@ -1194,6 +1300,32 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   </div>
                 </div>
               </div>
+
+              <!-- Divider if needed -->
+              <div v-if="(exactDuplicatesCount > 0 || possibleDuplicatesCount > 0) && duplicateGroupsCount > 0" class="border-t my-0.5" style="border-color: var(--border);" />
+
+              <!-- Duplicate Groups Section -->
+              <div v-if="duplicateGroupsCount > 0">
+                <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" style="color: var(--accent);">
+                  <span>Duplicate Groups ({{ duplicateGroupsCount }})</span>
+                  <button @click.stop="mergeAllDuplicateGroups" class="text-[9px] px-1.5 py-0.5 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);">
+                    Merge All
+                  </button>
+                </div>
+                <div class="flex flex-col gap-2">
+                  <div v-for="cluster in duplicateGroupClusters" :key="cluster.normalized" class="p-2 rounded-md bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
+                    <div class="font-medium text-[9.5px] flex items-center justify-between gap-1" style="color: var(--accent);">
+                      <span class="truncate min-w-0">{{ cluster.originalNames[0] }} <span class="opacity-60 text-[9px]" style="color: var(--text-secondary);">({{ cluster.count }} duplicate groups)</span></span>
+                      <div class="flex items-center gap-1 shrink-0">
+                        <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1 py-0.2 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Merge these duplicate groups into one">
+                          Merge
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
 
             </div>
           </div>
