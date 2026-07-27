@@ -1,7 +1,7 @@
 {
   "name": "timtabtool",
   "private": true,
-  "version": "1.1.26",
+  "version": "1.1.31.105",
   "description": "Smart tab organization, MCP bridge, AI grouping — the ultimate browser tool.",
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "build": "vite build",
     "build:firefox": "vite build --config vite.config.firefox.ts && vite build --config vite.config.firefox.content.ts && npm run sign:firefox",
     "watch:firefox": "vite build --config vite.config.firefox.ts --watch",
+    "prebuild:all": "node scripts/bump-version.js",
     "build:all": "npm run build && npm run build:firefox",
     "sign:firefox": "dotenv -- web-ext sign --source-dir dist-firefox --channel unlisted --artifacts-dir web-ext-artifacts",
     "preview": "vite preview",
