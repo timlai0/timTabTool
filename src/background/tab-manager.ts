@@ -1251,29 +1251,22 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
 
     if (controller.signal.aborted) return
 
-    // Bulk move tabs into sorted order before sub-grouping
-    const orderedTabIds = subGroups.flatMap((g) => {
-      return g.tabIndices
-        .map((idx) => tabs[idx - 1]?.id)
-        .filter((id): id is number => id !== undefined)
-    })
-    
-    const groupStartIndex = tabs[0]?.index ?? 0
-    if (orderedTabIds.length > 0) {
-      await retryTabOperation(() => chrome.tabs.move(orderedTabIds, { index: groupStartIndex }))
-    }
-
     // Apply the sub-groups to Chrome
     for (const subGroup of subGroups) {
       if (controller.signal.aborted) return
       if (subGroup.tabIndices.length === 0) continue
-      if (subGroup.name === '_ungrouped_') continue // Leave them ungrouped
 
       const realTabIds = subGroup.tabIndices
         .map((idx) => tabs[idx - 1]?.id) // AI Client uses 1-based index
         .filter((id): id is number => id !== undefined)
 
       if (realTabIds.length === 0) continue
+
+      if (subGroup.name === '_ungrouped_') {
+        // Explicitly ungroup these tabs so they don't get stuck in the original group
+        await retryTabOperation(() => chrome.tabs.ungroup(realTabIds))
+        continue 
+      }
 
       const newGroupId = await retryTabOperation(() =>
         chrome.tabs.group({
