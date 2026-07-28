@@ -393,10 +393,6 @@ export function isRestrictedUrl(url: string | undefined): boolean {
   return RESTRICTED_URL_PREFIXES.some((p) => url.startsWith(p))
 }
 
-/**
- * When a tab finishes loading in an AI-grouped window and is not yet in any
- * Chrome group, automatically sort the ungrouped tabs.
- */
 export async function autoGroupNewTab(tab: chrome.tabs.Tab): Promise<void> {
   // Logic: Abort if tab groups are not supported in the browser (e.g. Firefox)
   // Programming logic: Return early if tab groups are not supported in this browser (e.g. Firefox)
@@ -406,17 +402,17 @@ export async function autoGroupNewTab(tab: chrome.tabs.Tab): Promise<void> {
   if (!(cacheIsAIGroupedMap.get(windowId) ?? false)) return
   if (tab.groupId !== undefined && tab.groupId !== TAB_GROUP_ID_NONE) return
 
+  const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
+  const settings = (data[STORAGE_KEYS.SETTINGS] || DEFAULT_SETTINGS) as ExtensionSettings
+  if (settings.sortNewTabs === false) {
+    debouncedUpdateNewTabsBadge(windowId)
+    return
+  }
+
   const allTabs = await chrome.tabs.query({ windowId })
   const ungroupedTabs = allTabs.filter(
     (t) => !t.pinned && (t.groupId === undefined || t.groupId === TAB_GROUP_ID_NONE)
   )
-
-  const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
-  const settings = (data[STORAGE_KEYS.SETTINGS] || DEFAULT_SETTINGS) as ExtensionSettings
-  if (settings.sortNewTabs === false) {
-    await updateNewTabsBadge(windowId)
-    return
-  }
 
   if (ungroupedTabs.length > 1) {
     const sorted = sortTabsByDomainAndTitleHelper(ungroupedTabs)
@@ -425,7 +421,7 @@ export async function autoGroupNewTab(tab: chrome.tabs.Tab): Promise<void> {
     await retryTabOperation(() => chrome.tabs.move(tabIds, { index: -1 }))
   }
 
-  await updateNewTabsBadge(windowId)
+  debouncedUpdateNewTabsBadge(windowId)
 }
 
 /**
@@ -450,6 +446,19 @@ async function updateNewTabsBadge(windowId: number): Promise<void> {
 
   await chrome.action.setBadgeText({ text: duplicateCount > 0 ? String(duplicateCount) : '' })
   await chrome.action.setBadgeBackgroundColor({ color: duplicateCount > 0 ? 'red' : '#6B7280' })
+}
+
+const badgeTimeoutsByWindow = new Map<number, ReturnType<typeof setTimeout>>()
+export function debouncedUpdateNewTabsBadge(windowId: number): void {
+  const existing = badgeTimeoutsByWindow.get(windowId)
+  if (existing) clearTimeout(existing)
+  badgeTimeoutsByWindow.set(
+    windowId,
+    setTimeout(() => {
+      badgeTimeoutsByWindow.delete(windowId)
+      updateNewTabsBadge(windowId).catch(console.error)
+    }, CACHE_DEBOUNCE_MS)
+  )
 }
 
 async function setAIBadge(): Promise<void> {
@@ -706,7 +715,7 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
       }
       cacheIsAIGroupedMap.set(windowId, false)
     } finally {
-      await updateNewTabsBadge(windowId)
+      debouncedUpdateNewTabsBadge(windowId)
     }
   } else {
     const fromChrome = await buildGroupsFromChrome(tabs)
@@ -814,7 +823,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
         }
         previewCacheMap.set(windowId, sortGroups(freeGroupsToGroupedTabs(freeGroups, tabs)))
         cacheIsAIGroupedMap.set(windowId, true)
-        await updateNewTabsBadge(windowId)
+        debouncedUpdateNewTabsBadge(windowId)
         activeOperationsMap.delete(windowId)
 
         const finalGroups = isTabGroupsSupported() ? await chrome.tabGroups.query({ windowId }) : []
@@ -859,7 +868,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
             },
           ])
           cacheIsAIGroupedMap.set(windowId, false)
-          await updateNewTabsBadge(windowId)
+          debouncedUpdateNewTabsBadge(windowId)
           const finalErr = new Error(`AI Grouping failed: ${aiError.message}. Fell back to sorting tabs.`)
           activeOperationsMap.set(windowId, { type: null, error: finalErr.message })
           throw finalErr
@@ -916,7 +925,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
     }
     previewCacheMap.set(windowId, sortGroups(ruleGroupsToGroupedTabs(groups, tabs)))
     cacheIsAIGroupedMap.set(windowId, false)
-    await updateNewTabsBadge(windowId)
+    debouncedUpdateNewTabsBadge(windowId)
     activeOperationsMap.delete(windowId)
   } catch (err) {
     if (controller.signal.aborted) return
@@ -924,7 +933,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
     throw err
   } finally {
     clearTimeout(timeoutId)
-    await updateNewTabsBadge(windowId)
+    debouncedUpdateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
@@ -1098,7 +1107,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     // Rebuild preview cache and clear badge
     invalidatePreviewCache(windowId)
     await getGroupsPreview(windowId)
-    await updateNewTabsBadge(windowId)
+    debouncedUpdateNewTabsBadge(windowId)
     activeOperationsMap.delete(windowId)
 
     const finalGroups = isTabGroupsSupported() ? await chrome.tabGroups.query({ windowId }) : []
@@ -1143,7 +1152,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     throw err
   } finally {
     clearTimeout(timeoutId)
-    await updateNewTabsBadge(windowId)
+    debouncedUpdateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
@@ -1292,7 +1301,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
     throw err
   } finally {
     clearTimeout(timeoutId)
-    await updateNewTabsBadge(windowId)
+    debouncedUpdateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
@@ -1402,7 +1411,7 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
     throw err
   } finally {
     clearTimeout(timeoutId)
-    await updateNewTabsBadge(windowId)
+    debouncedUpdateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }

@@ -1,10 +1,7 @@
 export function extractDomain(url: string | undefined): string {
   if (!url) return ''
-  try {
-    return new URL(url).hostname.replace(/^www\./, '')
-  } catch {
-    return ''
-  }
+  const match = url.match(/^https?:\/\/(?:www\.)?([^\/]+)/i)
+  return match ? match[1] : ''
 }
 
 export function getAutoBatchSize(maxTokens: number | undefined): number {
