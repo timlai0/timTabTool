@@ -1264,7 +1264,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
 
       if (subGroup.name === '_ungrouped_') {
         // Explicitly ungroup these tabs so they don't get stuck in the original group
-        await retryTabOperation(() => chrome.tabs.ungroup(realTabIds))
+        await retryTabOperation(() => chrome.tabs.ungroup(realTabIds as [number, ...number[]]))
         continue 
       }
 
