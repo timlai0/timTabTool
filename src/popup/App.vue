@@ -260,11 +260,15 @@ const duplicateAnalysis = computed(() => {
 const duplicateGroupAnalysis = computed(() => {
   const groupsByNormalizedName = new Map<string, Array<{ id: number; name: string; windowId: number }>>()
   let duplicateCount = 0
+  let crossWindowDuplicateCount = 0
   const duplicateGroups: Array<{ normalized: string; originalNames: string[]; count: number; groups: Array<{ id: number; name: string; windowId: number }> }> = []
+  const crossWindowDuplicateGroups: Array<{ normalized: string; originalNames: string[]; count: number; groups: Array<{ id: number; name: string; windowId: number }> }> = []
 
   for (const win of allWindows.value) {
     for (const group of win.groups) {
       if (!group.groupName) continue
+      if (group.groupName === 'Pinned' || group.groupName === '_ungrouped_') continue
+      
       const normalized = group.groupName.toLowerCase().replace(/[^a-z0-9]/g, '')
       if (!normalized) continue
 
@@ -276,17 +280,27 @@ const duplicateGroupAnalysis = computed(() => {
 
   for (const [normalized, groups] of groupsByNormalizedName.entries()) {
     if (groups.length > 1) {
-      duplicateCount++
-      duplicateGroups.push({
+      const windowIds = new Set(groups.map(g => g.windowId))
+      const isCrossWindow = windowIds.size > 1
+      
+      const cluster = {
         normalized,
         originalNames: Array.from(new Set(groups.map(g => g.name))),
         count: groups.length,
         groups
-      })
+      }
+      
+      if (isCrossWindow) {
+        crossWindowDuplicateCount++
+        crossWindowDuplicateGroups.push(cluster)
+      } else {
+        duplicateCount++
+        duplicateGroups.push(cluster)
+      }
     }
   }
 
-  return { duplicateCount, duplicateGroups }
+  return { duplicateCount, duplicateGroups, crossWindowDuplicateCount, crossWindowDuplicateGroups }
 })
 
 const exactDuplicatesCount = computed(() => duplicateAnalysis.value.exactDuplicateCount)
@@ -297,6 +311,9 @@ const possibleDuplicateClusters = computed(() => duplicateAnalysis.value.possibl
 
 const duplicateGroupsCount = computed(() => duplicateGroupAnalysis.value.duplicateCount)
 const duplicateGroupClusters = computed(() => duplicateGroupAnalysis.value.duplicateGroups)
+
+const crossWindowDuplicateGroupsCount = computed(() => duplicateGroupAnalysis.value.crossWindowDuplicateCount)
+const crossWindowDuplicateGroupClusters = computed(() => duplicateGroupAnalysis.value.crossWindowDuplicateGroups)
 
 async function closeExactDuplicates() {
   const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent()).id!
@@ -1184,7 +1201,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           {{ totalTabs }} tabs · {{ totalGroups }} groups · {{ totalWindows }} windows
         </span>
 
-        <div v-if="exactDuplicatesCount > 0 || possibleDuplicatesCount > 0 || duplicateGroupsCount > 0" class="relative group flex items-center gap-1 text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3);">
+        <div v-if="exactDuplicatesCount > 0 || possibleDuplicatesCount > 0 || duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0" class="relative group flex items-center gap-1 text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3);">
           <svg class="w-3 h-3" style="color: #ef4444;" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
           </svg>
@@ -1195,9 +1212,9 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           <button v-if="possibleDuplicatesCount > 0" class="hover:underline focus:outline-none cursor-pointer" @click="organizePossibleDuplicates" title="Group and view possible duplicates">
             {{ possibleDuplicatesCount }} possible dupes
           </button>
-          <span v-if="(exactDuplicatesCount > 0 || possibleDuplicatesCount > 0) && duplicateGroupsCount > 0">·</span>
-          <span v-if="duplicateGroupsCount > 0" class="cursor-default" title="Duplicate group names detected">
-            {{ duplicateGroupsCount }} dup groups
+          <span v-if="(exactDuplicatesCount > 0 || possibleDuplicatesCount > 0) && (duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0)">·</span>
+          <span v-if="duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0" class="cursor-default" title="Duplicate group names detected">
+            {{ duplicateGroupsCount + crossWindowDuplicateGroupsCount }} dup groups
           </span>
 
           <!-- Single Unified Duplicates Popover Card anchored at left-0 of the red pill badge -->
@@ -1303,7 +1320,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
               </div>
 
               <!-- Divider if needed -->
-              <div v-if="(exactDuplicatesCount > 0 || possibleDuplicatesCount > 0) && duplicateGroupsCount > 0" class="border-t my-0.5" style="border-color: var(--border);" />
+              <div v-if="(exactDuplicatesCount > 0 || possibleDuplicatesCount > 0) && (duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0)" class="border-t my-0.5" style="border-color: var(--border);" />
 
               <!-- Duplicate Groups Section -->
               <div v-if="duplicateGroupsCount > 0">
@@ -1319,6 +1336,25 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                       <span class="truncate min-w-0">{{ cluster.originalNames[0] }} <span class="opacity-60 text-[9px]" style="color: var(--text-secondary);">({{ cluster.count }} duplicate groups)</span></span>
                       <div class="flex items-center gap-1 shrink-0">
                         <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1 py-0.2 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Merge these duplicate groups into one">
+                          Merge
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Cross-Window Duplicate Groups Section -->
+              <div v-if="crossWindowDuplicateGroupsCount > 0">
+                <div class="font-semibold mb-1.5 mt-2 text-xs flex items-center justify-between" style="color: var(--accent);">
+                  <span title="These duplicate groups span across multiple windows">Duplicate Groups (Cross-Window) ({{ crossWindowDuplicateGroupsCount }})</span>
+                </div>
+                <div class="flex flex-col gap-2">
+                  <div v-for="cluster in crossWindowDuplicateGroupClusters" :key="'cross_'+cluster.normalized" class="p-2 rounded-md bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
+                    <div class="font-medium text-[9.5px] flex items-center justify-between gap-1" style="color: var(--accent);">
+                      <span class="truncate min-w-0">{{ cluster.originalNames[0] }} <span class="opacity-60 text-[9px]" style="color: var(--text-secondary);">({{ cluster.count }} duplicate groups across windows)</span></span>
+                      <div class="flex items-center gap-1 shrink-0">
+                        <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1 py-0.2 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Merge these cross-window duplicate groups into one window">
                           Merge
                         </button>
                       </div>
