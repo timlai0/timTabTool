@@ -794,12 +794,16 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
         for (const group of freeGroups) {
           if (controller.signal.aborted) return
           if (group.tabIds.length === 0) continue
+          if (group.name === '_ungrouped_') continue // Leave tabs ungrouped instead of creating a literal "_ungrouped_" group
+
           const groupId = await retryTabOperation(() =>
             chrome.tabs.group({
               tabIds: group.tabIds as [number, ...number[]],
               createProperties: { windowId },
             }),
           )
+          if (groupId === undefined) continue
+          
           groupTitleMap.set(groupId, group.name)
           await retryTabOperation(() =>
             chrome.tabGroups.update(groupId, {
@@ -1018,6 +1022,8 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
       } else {
         const name = item.newGroupName || '_ungrouped_'
         const color = (item.newGroupColor as ChromeTabGroupColor) || 'grey'
+        
+        if (name === '_ungrouped_') continue // They are already ungrouped, just skip
         
         if (groupNameToId.has(name)) {
           const targetGroupId = groupNameToId.get(name)!
@@ -1252,6 +1258,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
     for (const subGroup of subGroups) {
       if (controller.signal.aborted) return
       if (subGroup.tabIndices.length === 0) continue
+      if (subGroup.name === '_ungrouped_') continue // Leave them ungrouped
 
       const realTabIds = subGroup.tabIndices
         .map((idx) => tabs[idx - 1]?.id) // AI Client uses 1-based index
