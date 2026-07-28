@@ -140,7 +140,7 @@ export interface MinimalTab {
   windowId?: number
 }
 
-export interface PossibleDuplicateCluster {
+interface PossibleDuplicateCluster {
   cleanUrl: string
   domain: string
   tabs: MinimalTab[]

@@ -40,7 +40,7 @@ Guidelines:
 3. If no existing group is a strong semantic fit, respond with "KEEP".
 4. Be conservative: only merge when topics clearly overlap.`
 
-export const DEFAULT_COHERENCE_PROMPT = `Prioritize placing tabs into the existing group names created in previous batches if there is a strong semantic fit. Only create a new group name if the tab represents a genuinely new topic that cannot belong in any existing group.`
+const DEFAULT_COHERENCE_PROMPT = `Prioritize placing tabs into the existing group names created in previous batches if there is a strong semantic fit. Only create a new group name if the tab represents a genuinely new topic that cannot belong in any existing group.`
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   ai: {

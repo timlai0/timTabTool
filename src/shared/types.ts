@@ -113,7 +113,7 @@ export interface WindowGroupsInfo {
   titlesHidden: boolean
 }
 
-export type MessageAction =
+type MessageAction =
   | 'GROUP_TABS'
   | 'UNGROUP_ALL'
   | 'UNGROUP_GROUP'

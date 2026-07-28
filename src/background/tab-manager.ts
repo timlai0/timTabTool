@@ -449,7 +449,7 @@ async function updateNewTabsBadge(windowId: number): Promise<void> {
 }
 
 const badgeTimeoutsByWindow = new Map<number, ReturnType<typeof setTimeout>>()
-export function debouncedUpdateNewTabsBadge(windowId: number): void {
+function debouncedUpdateNewTabsBadge(windowId: number): void {
   const existing = badgeTimeoutsByWindow.get(windowId)
   if (existing) clearTimeout(existing)
   badgeTimeoutsByWindow.set(
