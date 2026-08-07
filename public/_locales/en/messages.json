@@ -211,6 +211,14 @@
     "message": "Ungroup Group",
     "description": "Button to ungroup tabs in a group without closing them"
   },
+  "confirmUngroupAll": {
+    "message": "Are you sure you want to ungroup all tabs in this window?",
+    "description": "Confirmation prompt before ungrouping all tabs"
+  },
+  "confirmUngroupGroup": {
+    "message": "Are you sure you want to ungroup these tabs?",
+    "description": "Confirmation prompt before ungrouping a specific group"
+  },
   "expandAll": {
     "message": "Expand All",
     "description": "Button to expand all groups in a window"

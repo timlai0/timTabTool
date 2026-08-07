@@ -211,6 +211,14 @@
     "message": "解散分组",
     "description": "Button to ungroup tabs in a group without closing them"
   },
+  "confirmUngroupAll": {
+    "message": "您确定要取消该窗口中所有标签页的分组吗？",
+    "description": "Confirmation prompt before ungrouping all tabs"
+  },
+  "confirmUngroupGroup": {
+    "message": "您确定要取消这些标签页的分组吗？",
+    "description": "Confirmation prompt before ungrouping a specific group"
+  },
   "expandAll": {
     "message": "展开全部",
     "description": "Button to expand all groups in a window"
