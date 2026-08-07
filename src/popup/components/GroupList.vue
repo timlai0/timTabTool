@@ -2,6 +2,14 @@
 import type { GroupedTabs, GroupIndicatorStyle } from '../../shared/types'
 import GroupItem from './GroupItem.vue'
 
+/**
+ * Props for GroupList component.
+ * @property {GroupedTabs[]} groups - Array of grouped tabs.
+ * @property {GroupIndicatorStyle} indicatorStyle - Visual style for groups.
+ * @property {number} expandTrigger - Reactive trigger to expand groups.
+ * @property {number} collapseTrigger - Reactive trigger to collapse groups.
+ * @property {boolean} [isCurrentWindow=false] - True if this list belongs to the active window.
+ */
 withDefaults(defineProps<{
   groups: GroupedTabs[]
   indicatorStyle: GroupIndicatorStyle
@@ -15,9 +23,15 @@ withDefaults(defineProps<{
   isCurrentWindow: false,
 })
 
+/**
+ * Emitted events for the GroupList component.
+ */
 const emit = defineEmits<{
+  /** Triggered when a group is closed. */
   'close-group': []
+  /** Triggered when a group is split. */
   'split-group': []
+  /** Triggered when an error occurs. */
   'error': [msg: string]
 }>()
 </script>

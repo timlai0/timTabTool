@@ -9,10 +9,15 @@ import { APP_VERSION, BUILD_NUMBER, BUILD_STRING } from '../shared/version'
 import GroupList from './components/GroupList.vue'
 import SettingsView from './components/SettingsView.vue'
 
+/** Current active view */
 const currentView = ref<'main' | 'settings'>('main')
+
+/**
+ * Checks if the application is running in the standalone search window.
+ * @returns {boolean} True if running standalone.
+ */
 const isStandaloneSearch = computed(() => {
   // Logic: Check if the application is loaded as a sidebar in the standalone search window
-  // Programming logic: Check if the application is loaded as a sidebar in the standalone search window
   return window.location.href.includes('search.html')
 })
 
@@ -41,6 +46,11 @@ const editingWindowId = ref<number | null>(null)
 const errorWindowId = ref<number | null>(null)
 const lastAIResult = ref<LastAIResult | null>(null)
 
+/**
+ * Formats a timestamp into a human-readable "time ago" string.
+ * @param {number} [ts] - Timestamp in milliseconds.
+ * @returns {string} Formatted string.
+ */
 function formatTimeAgo(ts?: number): string {
   if (!ts) return ''
   const diff = Date.now() - ts
@@ -52,7 +62,12 @@ function formatTimeAgo(ts?: number): string {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
-function showError(msg: string, windowId?: number | null) {
+/**
+ * Shows an error message in the UI for a specific duration.
+ * @param {string} msg - The error message.
+ * @param {number} [windowId] - Optional window ID to associate the error with.
+ */
+function showError(msg: string, windowId?: number | null): void {
   errorMessage.value = msg
   if (windowId !== undefined) {
     errorWindowId.value = windowId
@@ -106,8 +121,11 @@ watch(themeMode, (mode) => applyTheme(mode))
 
 let refreshTimeout: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * Debounces the preview refresh to prevent rapid consecutive calls.
+ */
 const refreshPreviews = () => {
-  // Programming logic: debounce preview refresh to prevent multiple concurrent loads during tab events
+  // Logic: debounce preview refresh to prevent multiple concurrent loads during tab events
   if (refreshTimeout) {
     clearTimeout(refreshTimeout)
   }
@@ -120,7 +138,7 @@ const refreshPreviews = () => {
 function handleStorageChange(changes: { [key: string]: chrome.storage.StorageChange }, namespace: string) {
   if (namespace === 'local') {
     if (changes[STORAGE_KEYS.SETTINGS]) {
-      const newSettings = changes[STORAGE_KEYS.SETTINGS].newValue
+      const newSettings = changes[STORAGE_KEYS.SETTINGS].newValue as Partial<ExtensionSettings> | undefined
       if (newSettings?.ai) {
         aiSettings.value = { ...DEFAULT_SETTINGS.ai, ...newSettings.ai }
       }
@@ -749,7 +767,7 @@ async function handleCancelClassify(windowId: number) {
   }
 }
 
-async function handleClassifyNew(windowId: number) {
+async function handleClassifyNew(windowId: number, shiftKey = false) {
   classifyingWindowId.value = windowId
   allActiveOperations.value = {
     ...allActiveOperations.value,
@@ -757,7 +775,7 @@ async function handleClassifyNew(windowId: number) {
   }
   startPollingStatus()
   try {
-    const res = await chrome.runtime.sendMessage({ action: 'CLASSIFY_NEW_TABS', payload: { windowId } })
+    const res = await chrome.runtime.sendMessage({ action: 'CLASSIFY_NEW_TABS', payload: { windowId, shiftKey } })
     if (res && typeof res === 'object' && 'error' in res) {
       showError(String(res.error))
     }
@@ -848,7 +866,7 @@ function getSortedGroups(w: WindowGroupsInfo) {
   return pinnedGroup ? [pinnedGroup, ...sorted] : sorted
 }
 
-async function runOneShotPrompt(windowId: number, customPrompt?: string) {
+async function runOneShotPrompt(windowId: number, customPrompt?: string, shiftKey = false) {
   const promptToUse = (customPrompt !== undefined ? customPrompt : oneShotPromptText.value).trim()
   if (!promptToUse) return
 
@@ -858,10 +876,11 @@ async function runOneShotPrompt(windowId: number, customPrompt?: string) {
   }
 
   activePromptWindowId.value = null
-  await handleGroup(windowId, promptToUse)
+  await handleGroup(windowId, promptToUse, false, shiftKey)
 }
 
-async function handleGroup(windowId: number, customPrompt?: string, bypassSafeguards = false) {
+async function handleGroup(windowId: number, customPrompt?: string, bypassSafeguards = false, shiftKey = false) {
+  startPopupTimeoutTimer(windowId)
   groupingWindowId.value = windowId
   allActiveOperations.value = {
     ...allActiveOperations.value,
@@ -869,7 +888,7 @@ async function handleGroup(windowId: number, customPrompt?: string, bypassSafegu
   }
   startPollingStatus()
   try {
-    const payload: { windowId: number; groupingPrompt?: string; bypassSafeguards?: boolean } = { windowId }
+    const payload: { windowId: number; groupingPrompt?: string; bypassSafeguards?: boolean; shiftKey?: boolean } = { windowId, shiftKey }
     if (customPrompt) {
       payload.groupingPrompt = customPrompt
     }
@@ -888,10 +907,61 @@ async function handleGroup(windowId: number, customPrompt?: string, bypassSafegu
   }
 }
 
+const extendedSuccessMap = ref<Record<number, boolean>>({})
+const operationTimeoutMap = ref<Record<number, number>>({})
+let popupTimeoutInterval: ReturnType<typeof setInterval> | null = null
+
+function formatTimeoutTimer(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+}
+
+function startPopupTimeoutTimer(windowId: number) {
+  operationTimeoutMap.value = { ...operationTimeoutMap.value, [windowId]: 270 }
+  if (!popupTimeoutInterval) {
+    popupTimeoutInterval = setInterval(() => {
+      const updated: Record<number, number> = { ...operationTimeoutMap.value }
+      let activeCount = 0
+      for (const wId of Object.keys(updated).map(Number)) {
+        if (updated[wId] > 0) {
+          updated[wId]--
+          activeCount++
+        }
+      }
+      operationTimeoutMap.value = updated
+      if (activeCount === 0 && popupTimeoutInterval) {
+        clearInterval(popupTimeoutInterval)
+        popupTimeoutInterval = null
+      }
+    }, 1000)
+  }
+}
+
+async function handleExtendOperation(windowId: number) {
+  try {
+    const res = await chrome.runtime.sendMessage({
+      action: 'EXTEND_OPERATION',
+      payload: { windowId }
+    })
+    if (res && res.ok) {
+      operationTimeoutMap.value = { ...operationTimeoutMap.value, [windowId]: 270 }
+      extendedSuccessMap.value = { ...extendedSuccessMap.value, [windowId]: true }
+      setTimeout(() => {
+        extendedSuccessMap.value = { ...extendedSuccessMap.value, [windowId]: false }
+      }, 1500)
+    }
+  } catch (err) {
+    console.error('Failed to extend operation:', err)
+  }
+}
+
 async function handleUngroup(windowId: number) {
   activeMoreMenuWindowId.value = null
-  await chrome.runtime.sendMessage({ action: 'UNGROUP_ALL', payload: { windowId } })
-  await loadAllPreviews()
+  if (confirm(getMessage('confirmUngroupAll') || 'Are you sure you want to ungroup all tabs in this window?')) {
+    await chrome.runtime.sendMessage({ action: 'UNGROUP_ALL', payload: { windowId } })
+    await loadAllPreviews()
+  }
 }
 
 async function handleCleanupGroups(windowId: number) {
@@ -1561,9 +1631,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   :style="groupingWindowId === w.windowId
                     ? { background: 'var(--group-red)', color: '#fff' }
                     : { background: 'var(--accent)', color: '#fff' }"
-                  @click="groupingWindowId === w.windowId ? handleCancelGroup(w.windowId) : handleGroup(w.windowId)"
+                  @click="groupingWindowId === w.windowId ? handleCancelGroup(w.windowId) : handleGroup(w.windowId, undefined, false, $event.shiftKey)"
                   @mouseenter="activeHoverAction = 'group'; hoveredActionWindowId = w.windowId"
                   @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
+                  title="Group Tabs (AI). Hold Shift + click to save a detailed verbose log in Settings."
                 >
                   <span v-if="groupingWindowId === w.windowId" class="inline-flex items-center gap-1">
                     <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
@@ -1584,10 +1655,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   :style="classifyingWindowId === w.windowId
                     ? { background: 'var(--group-red)', color: '#fff' }
                     : { background: 'var(--accent-soft)', color: 'var(--accent)' }"
-                  @click="classifyingWindowId === w.windowId ? handleCancelClassify(w.windowId) : handleClassifyNew(w.windowId)"
+                  @click="classifyingWindowId === w.windowId ? handleCancelClassify(w.windowId) : handleClassifyNew(w.windowId, $event.shiftKey)"
                   @mouseenter="activeHoverAction = 'classify'; hoveredActionWindowId = w.windowId"
                   @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
-                  :title="getMessage('classifyNewTabs')"
+                  title="Classify New Tabs. Hold Shift + click to save a detailed verbose log in Settings."
                 >
                   <span v-if="classifyingWindowId === w.windowId" class="inline-flex items-center gap-1">
                     <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
@@ -1600,6 +1671,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                     <span>Classify ({{ newTabsCount(w) }})</span>
                   </span>
                 </button>
+
 
                 <!-- Custom Prompt Icon Button -->
                 <button

@@ -6,6 +6,14 @@ import type { GroupedTabs, GroupIndicatorStyle, ExtensionSettings } from '../../
 import TabItem from './TabItem.vue'
 import { SYSTEM_PROMPT } from '../../shared/ai-client'
 
+/**
+ * Props for GroupItem component.
+ * @property {GroupedTabs} group - The group data to display.
+ * @property {GroupIndicatorStyle} mode - The visual mode for the group indicator.
+ * @property {number} expandTrigger - Reactive trigger to expand group.
+ * @property {number} collapseTrigger - Reactive trigger to collapse group.
+ * @property {boolean} [isActiveGroup=false] - Whether this is the currently active group.
+ */
 const props = withDefaults(defineProps<{
   group: GroupedTabs
   mode: GroupIndicatorStyle
@@ -19,9 +27,15 @@ const props = withDefaults(defineProps<{
   isActiveGroup: false,
 })
 
+/**
+ * Emitted events for GroupItem.
+ */
 const emit = defineEmits<{
+  /** Emitted when the group is requested to be closed/ungrouped. */
   'close-group': []
+  /** Emitted when the group is successfully split or merged. */
   'split-group': []
+  /** Emitted when an error occurs during an operation. */
   'error': [msg: string]
 }>()
 
@@ -41,12 +55,22 @@ const displayLabel = computed(() => props.group.groupName || getMessage(def.labe
 
 const groupColorVar = computed(() => `var(--group-${displayColor.value})`)
 
-// Load AI Settings for estimating tokens/cost and rendering the preview
+/**
+ * Load AI Settings for estimating tokens/cost and rendering the preview
+ * @type {import('vue').Ref<ExtensionSettings['ai']>}
+ */
 const aiSettings = ref(DEFAULT_SETTINGS.ai)
 
-function handleStorageChange(changes: { [key: string]: chrome.storage.StorageChange }, namespace: string) {
+/**
+ * Handles changes in storage to update AI settings dynamically.
+ * @param {{ [key: string]: chrome.storage.StorageChange }} changes - The changed storage items.
+ * @param {string} namespace - The storage namespace.
+ * @returns {void}
+ */
+function handleStorageChange(changes: { [key: string]: chrome.storage.StorageChange }, namespace: string): void {
+  // Logic: Update local reactive state when extension settings change in storage
   if (namespace === 'local' && changes[STORAGE_KEYS.SETTINGS]) {
-    const newSettings = changes[STORAGE_KEYS.SETTINGS].newValue
+    const newSettings = changes[STORAGE_KEYS.SETTINGS].newValue as Partial<ExtensionSettings> | undefined
     if (newSettings?.ai) {
       aiSettings.value = { ...DEFAULT_SETTINGS.ai, ...newSettings.ai }
     }
@@ -66,19 +90,33 @@ onUnmounted(() => {
   chrome.storage.onChanged.removeListener(handleStorageChange)
 })
 
+/**
+ * Computes the active AI model to use.
+ * @returns {string} The active model identifier.
+ */
 const activeModel = computed(() => {
   if (aiSettings.value.model) return aiSettings.value.model
   return DEFAULT_MODELS[aiSettings.value.provider] || 'gpt-4o-mini'
 })
 
-function getSystemPrompt() {
+/**
+ * Gets the constructed system prompt including user instructions.
+ * @returns {string} The full system prompt.
+ */
+function getSystemPrompt(): string {
+  // Logic: Append custom instructions if present
   if (aiSettings.value.customPrompt?.trim()) {
     return `${SYSTEM_PROMPT}\n\nUser Instructions:\n${aiSettings.value.customPrompt.trim()}`
   }
   return SYSTEM_PROMPT
 }
 
-function estimateSplitCost() {
+/**
+ * Estimates the cost and token usage for splitting a group.
+ * @returns {{ tokens: number, costStr: string }} The estimation details.
+ */
+function estimateSplitCost(): { tokens: number; costStr: string } {
+  // Logic: Calculate prompt length and tab info to estimate token count
   const tabs = props.group.tabs.length
   if (tabs === 0) {
     return { tokens: 0, costStr: 'Free' }
@@ -106,7 +144,12 @@ function estimateSplitCost() {
   return { tokens: totalTokens, costStr }
 }
 
-function estimateMergeCost() {
+/**
+ * Estimates the cost and token usage for merging a group.
+ * @returns {{ tokens: number, costStr: string }} The estimation details.
+ */
+function estimateMergeCost(): { tokens: number; costStr: string } {
+  // Logic: Calculate token cost based on merged tab properties
   const tabs = props.group.tabs.length
   if (tabs === 0) {
     return { tokens: 0, costStr: 'Free' }
@@ -134,21 +177,32 @@ function estimateMergeCost() {
   return { tokens: totalTokens, costStr }
 }
 
-async function handleCloseGroup() {
+/**
+ * Handles ungrouping all tabs in this group.
+ * @returns {Promise<void>}
+ */
+async function handleCloseGroup(): Promise<void> {
   const tabIds = props.group.tabs.map((t) => t.id).filter((id): id is number => id !== undefined)
   if (tabIds.length > 0) {
-    await chrome.runtime.sendMessage({ action: 'UNGROUP_GROUP', payload: { tabIds } })
+    if (confirm(getMessage('confirmUngroupGroup') || 'Are you sure you want to ungroup these tabs?')) {
+      await chrome.runtime.sendMessage({ action: 'UNGROUP_GROUP', payload: { tabIds } })
+    }
   }
   emit('close-group')
 }
 
-async function handleSplitGroup() {
+/**
+ * Triggers AI to split the current group into smaller sub-groups.
+ * @param {MouseEvent} [event] - Optional mouse event to check for modifiers.
+ * @returns {Promise<void>}
+ */
+async function handleSplitGroup(event?: MouseEvent): Promise<void> {
   if (!props.group.groupId) return
   splitting.value = true
   try {
     const res = await chrome.runtime.sendMessage({
       action: 'SPLIT_GROUP',
-      payload: { groupId: props.group.groupId }
+      payload: { groupId: props.group.groupId, shiftKey: event?.shiftKey }
     })
     if (res && typeof res === 'object' && 'error' in res) {
       emit('error', String(res.error))
@@ -162,13 +216,18 @@ async function handleSplitGroup() {
   }
 }
 
-async function handleMergeGroup() {
+/**
+ * Triggers AI to merge the current group into existing ones.
+ * @param {MouseEvent} [event] - Optional mouse event to check for modifiers.
+ * @returns {Promise<void>}
+ */
+async function handleMergeGroup(event?: MouseEvent): Promise<void> {
   if (!props.group.groupId) return
   merging.value = true
   try {
     const res = await chrome.runtime.sendMessage({
       action: 'MERGE_GROUP',
-      payload: { groupId: props.group.groupId }
+      payload: { groupId: props.group.groupId, shiftKey: event?.shiftKey }
     })
     if (res && typeof res === 'object' && 'error' in res) {
       emit('error', String(res.error))
@@ -194,7 +253,7 @@ async function handleMergeGroup() {
         @click="collapsed = false"
       >
         <span
-          class="min-w-[22px] h-[22px] rounded-sm flex items-center justify-center text-white text-[10px] font-bold px-1 tabular-nums"
+          class="min-w-[22px] h-[22px] rounded-full flex items-center justify-center text-white text-[10px] font-bold px-1.5 tabular-nums"
           :style="{ background: groupColorVar }"
         >
           {{ group.tabs.length }}
@@ -206,7 +265,7 @@ async function handleMergeGroup() {
         <!-- Split Group with AI -->
         <button
           v-if="group.groupId"
-          class="w-[22px] h-[22px] border rounded-[4px] opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0"
+          class="w-[22px] h-[22px] border rounded-sm opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0"
           style="border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);"
           title="Split this group with AI (Sends existing tab groups as context)"
           @click.stop="handleSplitGroup"
@@ -225,7 +284,7 @@ async function handleMergeGroup() {
         <!-- Merge Group with AI -->
         <button
           v-if="group.groupId"
-          class="w-[22px] h-[22px] border rounded-[4px] opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0 ml-1"
+          class="w-[22px] h-[22px] border rounded-sm opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0 ml-1"
           style="border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);"
           title="Merge this group with AI"
           @click.stop="handleMergeGroup"
@@ -241,7 +300,7 @@ async function handleMergeGroup() {
           </svg>
         </button>
         <button
-          class="w-[22px] h-[22px] border rounded-[4px] opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0 ml-1 group/ungroup"
+          class="w-[22px] h-[22px] border rounded-sm opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0 ml-1 group/ungroup"
           style="border: 1px solid var(--border); background: var(--hover); color: var(--text-tertiary);"
           :title="getMessage('ungroupGroup')"
           @click.stop="handleCloseGroup"
@@ -262,7 +321,7 @@ async function handleMergeGroup() {
         >
           <div class="font-semibold mb-1 flex items-center justify-between" style="color: var(--accent);">
             <span>AI Split Group Preview</span>
-            <span class="text-[9px] font-normal px-1.5 py-0.5 rounded bg-accent/10" style="color: var(--accent);">Sub-Grouping</span>
+            <span class="text-[9px] font-normal px-1.5 py-0.5 rounded-full bg-accent/10" style="color: var(--accent);">Sub-Grouping</span>
           </div>
           <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
             <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
@@ -305,7 +364,7 @@ async function handleMergeGroup() {
         >
           <div class="font-semibold mb-1 flex items-center justify-between" style="color: var(--accent);">
             <span>AI Merge Group Preview</span>
-            <span class="text-[9px] font-normal px-1.5 py-0.5 rounded bg-accent/10" style="color: var(--accent);">Target Merge</span>
+            <span class="text-[9px] font-normal px-1.5 py-0.5 rounded-full bg-accent/10" style="color: var(--accent);">Target Merge</span>
           </div>
           <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
             <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
@@ -355,7 +414,7 @@ async function handleMergeGroup() {
         <!-- Split Group with AI -->
         <button
           v-if="group.groupId"
-          class="w-[22px] h-[22px] border rounded-[4px] opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0"
+          class="w-[22px] h-[22px] border rounded-sm opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0"
           style="border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);"
           title="Split this group with AI (Sends existing tab groups as context)"
           @click.stop="handleSplitGroup"
@@ -374,7 +433,7 @@ async function handleMergeGroup() {
         <!-- Merge Group with AI -->
         <button
           v-if="group.groupId"
-          class="w-[22px] h-[22px] border rounded-[4px] opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0 ml-1"
+          class="w-[22px] h-[22px] border rounded-sm opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0 ml-1"
           style="border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);"
           title="Merge this group with AI"
           @click.stop="handleMergeGroup"
@@ -390,7 +449,7 @@ async function handleMergeGroup() {
           </svg>
         </button>
         <button
-          class="w-[22px] h-[22px] border rounded-[4px] opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0 ml-1 group/ungroup"
+          class="w-[22px] h-[22px] border rounded-sm opacity-0 group-hover/row:opacity-100 focus:outline-none flex items-center justify-center transition-all duration-150 shrink-0 ml-1 group/ungroup"
           style="border: 1px solid var(--border); background: var(--hover); color: var(--text-tertiary);"
           :title="getMessage('ungroupGroup')"
           @click.stop="handleCloseGroup"
@@ -416,7 +475,7 @@ async function handleMergeGroup() {
         >
           <div class="font-semibold mb-1 flex items-center justify-between" style="color: var(--accent);">
             <span>AI Split Group Preview</span>
-            <span class="text-[9px] font-normal px-1.5 py-0.5 rounded bg-accent/10" style="color: var(--accent);">Sub-Grouping</span>
+            <span class="text-[9px] font-normal px-1.5 py-0.5 rounded-full bg-accent/10" style="color: var(--accent);">Sub-Grouping</span>
           </div>
           <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
             <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
@@ -459,7 +518,7 @@ async function handleMergeGroup() {
         >
           <div class="font-semibold mb-1 flex items-center justify-between" style="color: var(--accent);">
             <span>AI Merge Group Preview</span>
-            <span class="text-[9px] font-normal px-1.5 py-0.5 rounded bg-accent/10" style="color: var(--accent);">Target Merge</span>
+            <span class="text-[9px] font-normal px-1.5 py-0.5 rounded-full bg-accent/10" style="color: var(--accent);">Target Merge</span>
           </div>
           <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
             <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
