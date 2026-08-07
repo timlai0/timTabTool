@@ -10,11 +10,15 @@ let lastMcpError: string | null = null
 let autoRetrySecondsLeft = 0
 let countdownTimer: any = null
 
+/**
+ * Start the countdown for automatic retry.
+ */
 function startCountdown() {
   if (countdownTimer) {
     clearInterval(countdownTimer)
   }
   autoRetrySecondsLeft = 5
+  // Logic: decrement countdown every second and clear when 0
   countdownTimer = setInterval(() => {
     autoRetrySecondsLeft--
     if (autoRetrySecondsLeft <= 0) {
@@ -24,6 +28,10 @@ function startCountdown() {
   }, 1000)
 }
 
+/**
+ * Get the current MCP bridge status.
+ * @returns {object} Status object containing state, port, error, and retry info.
+ */
 export function getMCPStatus() {
   return {
     state: isEnabled ? mcpState : 'disabled',
@@ -33,18 +41,25 @@ export function getMCPStatus() {
   }
 }
 
+/**
+ * Manually trigger a reconnection of the MCP bridge.
+ */
 export function reconnectMCP() {
   console.log('[timTabTool MCP] Manual reconnect requested')
   lastMcpError = null
   connect()
 }
 
+/**
+ * Initialize the MCP bridge by loading settings and connecting if enabled.
+ */
 export function initMCPBridge() {
   chrome.storage.local.get(STORAGE_KEYS.SETTINGS, (data) => {
     const settings = (data[STORAGE_KEYS.SETTINGS] ?? {}) as Partial<ExtensionSettings>
     isEnabled = Boolean(settings.mcpEnabled ?? DEFAULT_SETTINGS.mcpEnabled ?? false)
     currentPort = Number(settings.mcpPort ?? DEFAULT_SETTINGS.mcpPort ?? 8585)
 
+    // Logic: connect if MCP is enabled in settings
     if (isEnabled) {
       connect()
     } else {
@@ -54,6 +69,7 @@ export function initMCPBridge() {
 
   // Listen for settings changes to dynamically start/stop/reconnect
   chrome.storage.onChanged.addListener((changes, areaName) => {
+    // Logic: check for settings change and reconnect if necessary
     if (areaName === 'local' && changes[STORAGE_KEYS.SETTINGS]) {
       const newSettings = changes[STORAGE_KEYS.SETTINGS].newValue as ExtensionSettings | undefined
       if (newSettings) {
@@ -78,6 +94,9 @@ export function initMCPBridge() {
   })
 }
 
+/**
+ * Disconnect the active WebSocket connection.
+ */
 function disconnect() {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
@@ -88,6 +107,7 @@ function disconnect() {
     countdownTimer = null
   }
   autoRetrySecondsLeft = 0
+  // Logic: unbind socket events and forcefully close
   if (socket) {
     socket.onclose = null
     socket.onerror = null
@@ -103,6 +123,9 @@ function disconnect() {
   mcpState = 'disconnected'
 }
 
+/**
+ * Establish connection with the MCP bridge.
+ */
 function connect() {
   disconnect()
   if (!isEnabled) return
@@ -146,6 +169,7 @@ function connect() {
     }
 
     socket.onmessage = async (event) => {
+      // Logic: parse incoming messages and handle commands
       try {
         const message = JSON.parse(event.data)
         if (message.type === 'ping') {
@@ -174,6 +198,9 @@ function connect() {
   }
 }
 
+/**
+ * Schedule a reconnection attempt in 5 seconds.
+ */
 function scheduleReconnect() {
   if (!isEnabled) return
   if (reconnectTimer) return
@@ -185,6 +212,10 @@ function scheduleReconnect() {
   }, 5000)
 }
 
+/**
+ * Send JSON data to the WebSocket.
+ * @param {any} data - The data payload to stringify and send.
+ */
 function sendToSocket(data: any) {
   if (socket && socket.readyState === WebSocket.OPEN) {
     try {
@@ -195,7 +226,14 @@ function sendToSocket(data: any) {
   }
 }
 
+/**
+ * Handle execution of an incoming command.
+ * @param {string} command - The command string.
+ * @param {any} [args={}] - Command arguments.
+ * @returns {Promise<any>} The result of the command.
+ */
 async function handleCommand(command: string, args: any = {}): Promise<any> {
+  // Logic: switch over command strings and execute corresponding actions
   switch (command) {
     case 'list_tabs':
       return new Promise((resolve) => {

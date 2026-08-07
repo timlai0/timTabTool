@@ -9,6 +9,11 @@ interface SearchTerm {
  * Search open tabs and history by keyword matching on title and URL.
  * Uses a simple scoring system: title match scores higher than URL match,
  * exact match scores higher than partial.
+ * @param {string} query - The search query.
+ * @param {TabInfo[]} openTabs - The array of currently open tabs.
+ * @param {TabHistoryEntry[]} historyEntries - The array of tab history entries.
+ * @param {number} [currentWindowId] - Optional ID of the current window to boost scores for tabs in the same window.
+ * @returns {SearchResult[]} An array of search results sorted by score and recency.
  */
 export function searchTabs(
   query: string,
@@ -16,6 +21,7 @@ export function searchTabs(
   historyEntries: TabHistoryEntry[],
   currentWindowId?: number,
 ): SearchResult[] {
+  // Logic: if query is empty, simply return open tabs sorted by recency
   if (!query.trim()) {
     // Sort open tabs by lastAccessed descending
     const sorted = [...openTabs].sort((a, b) => {
@@ -46,6 +52,7 @@ export function searchTabs(
   const results: SearchResult[] = []
 
   // Score open tabs
+  // Logic: iterate open tabs and compute relevance score
   for (const tab of openTabs) {
     const { score: matchScore, details: matchDetails } = computeScore(terms, tab.title, tab.url, tab.groupTitle)
     if (matchScore > 0) {
@@ -87,11 +94,16 @@ export function searchTabs(
     return timeB - timeA
   })
 
-  return results.slice(0, 50)
+  return results
 }
 
 /**
  * Compute a relevance score for a tab against search terms.
+ * @param {SearchTerm[]} terms - The parsed search terms to score against.
+ * @param {string} title - The title of the tab.
+ * @param {string} url - The URL of the tab.
+ * @param {string} [groupTitle] - The optional group title of the tab.
+ * @returns {{ score: number; details: string }} An object with the total score and score details string.
  */
 function computeScore(terms: SearchTerm[], title: string, url: string, groupTitle?: string): { score: number; details: string } {
   const titleLower = (title || '').toLowerCase()
@@ -161,6 +173,11 @@ function computeScore(terms: SearchTerm[], title: string, url: string, groupTitl
   return { score: totalScore, details: detailsParts.join(' | ') }
 }
 
+/**
+ * Escapes special regex characters in a string.
+ * @param {string} str - The string to escape.
+ * @returns {string} The escaped string.
+ */
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

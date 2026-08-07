@@ -4,6 +4,9 @@ import type { GroupCategory } from './types'
  * Domain → Category mapping.
  * Exact hostname match (after removing www. prefix).
  */
+/**
+ * @constant {Record<string, GroupCategory>} DOMAIN_RULES - Mapping of domains to categories.
+ */
 export const DOMAIN_RULES: Record<string, GroupCategory> = {
   // --- Development ---
   'github.com': 'dev',
@@ -159,11 +162,20 @@ export const DOMAIN_RULES: Record<string, GroupCategory> = {
  * Matched against tab title (case-insensitive).
  * Order matters: first match wins.
  */
+/**
+ * @interface KeywordRule
+ * Represents a regex rule for grouping by keyword.
+ */
 interface KeywordRule {
+  /** @property {RegExp} pattern - Regex to match against title */
   pattern: RegExp
+  /** @property {GroupCategory} category - Assigned category on match */
   category: GroupCategory
 }
 
+/**
+ * @constant {KeywordRule[]} KEYWORD_RULES - Array of regex rules for keyword matching.
+ */
 export const KEYWORD_RULES: KeywordRule[] = [
   // Development keywords
   { pattern: /\b(pull request|merge request|commit|branch|deploy|CI\/CD|pipeline|build)\b/i, category: 'dev' },

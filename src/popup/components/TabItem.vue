@@ -2,11 +2,21 @@
 import type { TabInfo } from '../../shared/types'
 import { getOptimalFaviconUrl } from '../../shared/utils'
 
+/**
+ * Props for the TabItem component.
+ * @property {TabInfo} tab - The tab information to display.
+ */
 const props = defineProps<{
   tab: TabInfo
 }>()
 
-async function switchToTab(tabId: number) {
+/**
+ * Switches the active state to the selected tab and brings its window to focus.
+ * @param {number} tabId - The ID of the tab to switch to.
+ * @returns {Promise<void>}
+ */
+async function switchToTab(tabId: number): Promise<void> {
+  // Logic: Focus target tab and containing window
   try {
     await chrome.tabs.update(tabId, { active: true })
     if (props.tab && props.tab.windowId !== undefined) {
@@ -17,7 +27,13 @@ async function switchToTab(tabId: number) {
   }
 }
 
-async function closeTab(tabId: number) {
+/**
+ * Closes a specified tab by its ID.
+ * @param {number} tabId - The ID of the tab to close.
+ * @returns {Promise<void>}
+ */
+async function closeTab(tabId: number): Promise<void> {
+  // Logic: Remove tab via Chrome API
   try {
     await chrome.tabs.remove(tabId)
   } catch (err: any) {
@@ -28,6 +44,11 @@ async function closeTab(tabId: number) {
   }
 }
 
+/**
+ * Gets the best favicon URL for a tab.
+ * @param {TabInfo} tab - The tab to get the favicon for.
+ * @returns {string} The optimized favicon URL.
+ */
 function getFaviconUrl(tab: TabInfo): string {
   return getOptimalFaviconUrl(tab.url, tab.favIconUrl)
 }
@@ -61,7 +82,7 @@ function getFaviconUrl(tab: TabInfo): string {
     <span
       @click.stop="closeTab(tab.id)"
       @auxclick.prevent.stop="($event) => { if ($event.button === 1) closeTab(tab.id); }"
-      class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
+      class="opacity-0 group-hover:opacity-100 p-0.5 rounded-sm hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
       style="color: var(--text-tertiary);"
       title="Close tab (or Middle-click)"
     >

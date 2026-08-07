@@ -13,6 +13,9 @@ export const GROUP_DEFINITIONS: Record<GroupCategory, GroupDefinition> = {
 
 
 
+/**
+ * @constant DEFAULT_GROUPING_PROMPT
+ */
 export const DEFAULT_GROUPING_PROMPT = `Organize these browser tabs into logical, well-defined groups.
 Guidelines:
 1. Create 2-6 groups based on clear semantic topics. Avoid creating unnecessary single-tab groups.
@@ -20,12 +23,18 @@ Guidelines:
 3. Preserve the primary language of the tab titles.
 4. Group related items logically rather than over-fragmenting them.`
 
+/**
+ * @constant DEFAULT_SPLIT_PROMPT
+ */
 export const DEFAULT_SPLIT_PROMPT = `You are splitting an existing group into tighter, more granular sub-groups.
 Guidelines:
 1. Identify specific sub-topics, projects, channels, or content types within this group.
 2. Create concise, descriptive sub-group titles reflecting exact themes (e.g., "API Docs", "React Components").
 3. Group closely related items together and avoid single-tab groups unless necessary.`
 
+/**
+ * @constant DEFAULT_CLASSIFY_PROMPT
+ */
 export const DEFAULT_CLASSIFY_PROMPT = `You are organizing new incoming browser tabs.
 Guidelines:
 1. Check if each new tab logically belongs inside one of the existing window tab groups.
@@ -33,6 +42,9 @@ Guidelines:
 3. If a tab represents a distinct new topic, create a new concise, descriptive group title.
 4. Be conservative about creating new single-tab groups.`
 
+/**
+ * @constant DEFAULT_MERGE_PROMPT
+ */
 export const DEFAULT_MERGE_PROMPT = `Analyze the browser tabs in this target group against the list of other existing tab groups in this window.
 Guidelines:
 1. Decide if this target group's tabs semantically belong inside one of the existing tab groups.
@@ -40,6 +52,9 @@ Guidelines:
 3. If no existing group is a strong semantic fit, respond with "KEEP".
 4. Be conservative: only merge when topics clearly overlap.`
 
+/**
+ * @constant DEFAULT_COHERENCE_PROMPT
+ */
 const DEFAULT_COHERENCE_PROMPT = `Prioritize placing tabs into the existing group names created in previous batches if there is a strong semantic fit. Only create a new group name if the tab represents a genuinely new topic that cannot belong in any existing group.`
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
@@ -59,6 +74,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     classifyPrompt: DEFAULT_CLASSIFY_PROMPT,
     mergePrompt: DEFAULT_MERGE_PROMPT,
     maxRetries: 2,
+    alwaysLogAIOperations: true,
   },
   language: 'auto',
   groupOnStartup: false,
@@ -75,10 +91,14 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   mcpPort: 8585,
 }
 
+/**
+ * @constant STORAGE_KEYS
+ */
 export const STORAGE_KEYS = {
   SETTINGS: 'settings',
   TAB_HISTORY: 'tabHistory',
   LAST_AI_RESULT: 'lastAIResult',
+  AI_OPERATION_LOGS: 'aiOperationLogs',
 } as const
 
 export const MODEL_PRICING: Record<string, { input: number; output: number }> = {

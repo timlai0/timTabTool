@@ -1,15 +1,33 @@
+/**
+ * Extracts the domain from a URL.
+ * @param {string | undefined} url
+ * @returns {string}
+ */
 export function extractDomain(url: string | undefined): string {
+  // Logic: Extract hostname using regex
   if (!url) return ''
   const match = url.match(/^https?:\/\/(?:www\.)?([^\/]+)/i)
   return match ? match[1] : ''
 }
 
+/**
+ * Calculates automatic batch size based on max tokens.
+ * @param {number | undefined} maxTokens
+ * @returns {number}
+ */
 export function getAutoBatchSize(maxTokens: number | undefined): number {
+  // Logic: Scale batch size down for lower token limits, capped at 100
   const tokens = maxTokens || 16384
   return Math.min(100, Math.max(10, Math.floor(tokens / 500)))
 }
 
+/**
+ * Parses max token string (like 16K) to a number.
+ * @param {string | number | undefined} maxTokensStr
+ * @returns {number}
+ */
 export function parseMaxTokensToNumber(maxTokensStr: string | number | undefined): number {
+  // Logic: Convert strings with K suffix to raw numbers
   if (typeof maxTokensStr === 'number') return maxTokensStr
   if (!maxTokensStr) return 16384
   const str = String(maxTokensStr).trim().toUpperCase()
@@ -21,7 +39,14 @@ export function parseMaxTokensToNumber(maxTokensStr: string | number | undefined
   return isNaN(num) ? 16384 : num
 }
 
+/**
+ * Gets the optimal favicon URL, preferring Google favicon service.
+ * @param {string} urlStr
+ * @param {string} [fallbackFavIconUrl]
+ * @returns {string}
+ */
 export function getOptimalFaviconUrl(urlStr: string, fallbackFavIconUrl?: string): string {
+  // Logic: Try browser native favicon, fallback to Google S2
   if (!urlStr) return fallbackFavIconUrl || ''
   try {
     const urlObj = new URL(urlStr)
@@ -61,7 +86,14 @@ export function getOptimalFaviconUrl(urlStr: string, fallbackFavIconUrl?: string
   }
 }
 
+/**
+ * Formats a timestamp into a relative time string.
+ * @param {number} timestamp
+ * @param {number} [now]
+ * @returns {string}
+ */
 export function formatTimeAgo(timestamp: number, now = Date.now()): string {
+  // Logic: Calculate diff and format as just now, mins, hours, or days
   const diffMs = Math.max(0, now - timestamp)
   const diffSecs = Math.floor(diffMs / 1000)
   if (diffSecs < 60) {
@@ -93,7 +125,14 @@ export interface NormalizeUrlOptions {
   removeHash?: boolean
 }
 
+/**
+ * Normalizes a URL by stripping tracking parameters.
+ * @param {string} urlString
+ * @param {NormalizeUrlOptions} [options]
+ * @returns {string}
+ */
 export function normalizeUrl(urlString: string, options: NormalizeUrlOptions = {}): string {
+  // Logic: Remove utm_ and other tracking params, sort search params for deduplication
   if (!urlString) return ''
   try {
     const url = new URL(urlString)
@@ -153,7 +192,13 @@ export interface DuplicateDetectionResult {
   possibleDuplicates: PossibleDuplicateCluster[]
 }
 
+/**
+ * Detects exact and possible duplicate tabs.
+ * @param {MinimalTab[]} tabs
+ * @returns {DuplicateDetectionResult}
+ */
 export function detectDuplicateTabs(tabs: MinimalTab[]): DuplicateDetectionResult {
+  // Logic: Find exact matches by url, and possible matches by normalized url
   const urlSeen = new Map<string, MinimalTab[]>()
   const cleanUrlMap = new Map<string, MinimalTab[]>()
 
@@ -214,7 +259,14 @@ export function detectDuplicateTabs(tabs: MinimalTab[]): DuplicateDetectionResul
  * Extract clean JSON substring (array or object) from a raw string, handling markdown code blocks,
  * matching open/close bracket depth, and ignoring trailing non-JSON text.
  */
+/**
+ * Extracts a JSON substring from a larger raw text block.
+ * @param {string} raw
+ * @param {'array' | 'object' | 'auto'} [type]
+ * @returns {string}
+ */
 export function extractJsonSubstring(raw: string, type: 'array' | 'object' | 'auto' = 'auto'): string {
+  // Logic: Find brackets and extract inner content taking string escaping into account
   let cleaned = raw.trim()
 
   // 1. Extract content inside markdown code block if present

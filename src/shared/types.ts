@@ -1,3 +1,6 @@
+/**
+ * @interface TabInfo
+ */
 export interface TabInfo {
   id: number
   url: string
@@ -14,21 +17,36 @@ export interface TabInfo {
   groupColor?: string
 }
 
+/**
+ * @interface ClassifyResult
+ */
 export interface ClassifyResult {
   category: GroupCategory
   confidence: number
   method: 'domain' | 'keyword' | 'ai' | 'default'
 }
 
+/**
+ * @type {GroupCategory}
+ */
 export type GroupCategory = 'work' | 'dev' | 'learn' | 'social' | 'media' | 'shop' | 'docs' | 'other'
 
+/**
+ * @type {ChromeTabGroupColor}
+ */
 export type ChromeTabGroupColor = 'grey' | 'blue' | 'red' | 'yellow' | 'green' | 'pink' | 'purple' | 'cyan' | 'orange'
 
+/**
+ * @interface GroupDefinition
+ */
 export interface GroupDefinition {
   color: ChromeTabGroupColor
   labelKey: string
 }
 
+/**
+ * @interface GroupedTabs
+ */
 export interface GroupedTabs {
   category: GroupCategory
   tabs: TabInfo[]
@@ -38,12 +56,18 @@ export interface GroupedTabs {
   isPinnedGroup?: boolean
 }
 
+/**
+ * @interface AIGroupResult
+ */
 export interface AIGroupResult {
   name: string
   tabIndices: number[]
   color?: ChromeTabGroupColor
 }
 
+/**
+ * @interface TabHistoryEntry
+ */
 export interface TabHistoryEntry {
   url: string
   title: string
@@ -53,6 +77,9 @@ export interface TabHistoryEntry {
   closed: boolean
 }
 
+/**
+ * @interface SearchResult
+ */
 export interface SearchResult {
   tab: TabInfo | TabHistoryEntry
   score: number
@@ -60,6 +87,9 @@ export interface SearchResult {
   scoreDetails?: string
 }
 
+/**
+ * @interface AIConfig
+ */
 export interface AIConfig {
   enabled: boolean
   provider: 'openai' | 'claude' | 'gemini' | 'custom'
@@ -79,13 +109,23 @@ export interface AIConfig {
   mergePrompt?: string
   maxRetries?: number
   bypassSafeguards?: boolean
+  alwaysLogAIOperations?: boolean
   customModels?: Record<string, { id: string; name: string; complexity: string; costFactor: string; maxTokens: string }[]>
 }
 
+/**
+ * @type {GroupIndicatorStyle}
+ */
 export type GroupIndicatorStyle = 'header' | 'bar'
 
+/**
+ * @type {ThemeMode}
+ */
 export type ThemeMode = 'light' | 'dark' | 'system'
 
+/**
+ * @interface ExtensionSettings
+ */
 export interface ExtensionSettings {
   ai: AIConfig
   language: 'auto' | 'en' | 'zh_CN'
@@ -103,6 +143,9 @@ export interface ExtensionSettings {
   mcpPort?: number
 }
 
+/**
+ * @interface WindowGroupsInfo
+ */
 export interface WindowGroupsInfo {
   windowId: number
   tabCount: number
@@ -113,6 +156,9 @@ export interface WindowGroupsInfo {
   titlesHidden: boolean
 }
 
+/**
+ * @type {MessageAction}
+ */
 type MessageAction =
   | 'GROUP_TABS'
   | 'UNGROUP_ALL'
@@ -162,15 +208,26 @@ type MessageAction =
   | 'UNMUTE_ALL'
   | 'CLOSE_LEFT'
   | 'CLOSE_RIGHT'
+  | 'BACKUP_GROUPS'
   | 'GET_MCP_STATUS'
   | 'RECONNECT_MCP'
   | 'CLEANUP_GROUPS'
+  | 'GET_AI_LOGS'
+  | 'CLEAR_AI_LOGS'
+  | 'DELETE_AI_LOG'
+  | 'EXTEND_OPERATION'
 
+/**
+ * @interface ExtensionMessage
+ */
 export interface ExtensionMessage {
   action: MessageAction
   payload?: unknown
 }
 
+/**
+ * @interface LastAIResult
+ */
 export interface LastAIResult {
   timestamp: number
   actionType: 'group' | 'classify' | 'split' | 'merge'
@@ -183,3 +240,117 @@ export interface LastAIResult {
   summary: string
   error?: string
 }
+
+/**
+ * @interface AILogStep
+ */
+export interface AILogStep {
+  timestamp: number
+  step: string
+  detail: string
+  metadata?: Record<string, unknown>
+}
+
+/**
+ * @interface AILogRawRequest
+ */
+export interface AILogRawRequest {
+  batchIndex: number
+  endpoint: string
+  payloadSummary: string
+  systemMessage?: string
+  userMessage?: string
+  requestTimestamp: number
+}
+
+/**
+ * @interface AILogRawResponse
+ */
+export interface AILogRawResponse {
+  batchIndex: number
+  statusCode?: number
+  responseTimeMs?: number
+  responseBody?: string
+  parsedJson?: unknown
+  error?: string
+  responseTimestamp: number
+}
+
+/**
+ * @interface AIOperationLogEntry
+ */
+export interface AIOperationLogEntry {
+  id: string
+  timestamp: number
+  endTime?: number
+  durationMs?: number
+  actionType: string
+  triggeredWithShift: boolean
+  status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CRASHED'
+  windowId?: number
+  tabsCount: number
+  configSnapshot: {
+    provider: string
+    model?: string
+    endpoint?: string
+    sendFullUrl?: boolean
+    batchSize?: number
+    maxTokens?: number
+    maxRetries?: number
+    bypassSafeguards?: boolean
+  }
+  tabsInput: Array<{
+    index: number
+    title: string
+    url?: string
+    groupId?: number
+    groupTitle?: string
+  }>
+  prompts: {
+    systemPrompt?: string
+    userPrompt?: string
+    customPrompt?: string
+    coherencePrompt?: string
+  }
+  steps: AILogStep[]
+  rawRequests: AILogRawRequest[]
+  rawResponses: AILogRawResponse[]
+  results?: {
+    createdGroupsCount?: number
+    createdGroupNames?: string[]
+    groupsBefore?: number
+    groupsAfter?: number
+    summary?: string
+  }
+  tokenUsage?: {
+    estimatedInputTokens?: number
+    estimatedOutputTokens?: number
+    estimatedCostStr?: string
+    actualInputTokens?: number
+    actualOutputTokens?: number
+    actualCostStr?: string
+  }
+  error?: {
+    message: string
+    name?: string
+    stack?: string
+    failedBatchIndex?: number
+  }
+}
+/**
+ * @interface OperationStatusInfo
+ */
+export interface OperationStatusInfo {
+  type: 'group' | 'classify' | 'split' | 'merge' | null
+  error: string | null
+  batchCurrent?: number
+  batchTotal?: number
+  processedTabs?: number
+  totalTabs?: number
+  statusText?: string
+  timeoutRemainingSec?: number
+  timeoutEndTimestamp?: number
+  lastAutoExtendTimestamp?: number
+  autoExtendCount?: number
+}
+
