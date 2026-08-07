@@ -3,7 +3,8 @@ import type { FreeGroupResult } from './classifier'
 import { GROUP_DEFINITIONS, STORAGE_KEYS, DEFAULT_SETTINGS } from '../shared/constants'
 import { extractDomain, normalizeUrl, detectDuplicateTabs } from '../shared/utils'
 import { getMessage } from '../shared/i18n'
-import { AIClient } from '../shared/ai-client'
+import { AIClient, SYSTEM_PROMPT } from '../shared/ai-client'
+import { AILogger, setActivityCallback } from '../shared/ai-logger'
 import type { GroupCategory, GroupedTabs, TabInfo, ExtensionSettings, ChromeTabGroupColor, LastAIResult } from '../shared/types'
 
 function isTabGroupsSupported(): boolean {
@@ -22,19 +23,222 @@ const cacheIsAIGroupedMap = new Map<number, boolean>()
 
 /** Tracks active AbortControllers for cancellation. Key: windowId */
 const activeAbortControllers = new Map<number, AbortController>()
+const activeTimeoutIds = new Map<number, ReturnType<typeof setTimeout>>()
+const activeTimeoutLoggers = new Map<number, AILogger | undefined>()
 
-interface OperationStatus {
-  type: 'group' | 'classify' | null
+const OPERATION_TIMEOUT_MS = 270_000 // 4.5 minutes
+
+const timeoutEndTimestamps = new Map<number, number>()
+const autoExtendCounts = new Map<number, number>()
+
+/**
+ * Set up a timeout for a background operation to prevent it from running indefinitely.
+ * @param {number} windowId - The ID of the window where the operation is running.
+ * @param {AbortController} controller - The abort controller for the operation.
+ * @param {AILogger} [logger] - Optional AI logger instance.
+ */
+export function setupOperationTimeout(windowId: number, controller: AbortController, logger?: AILogger): void {
+  clearOperationTimeout(windowId)
+  if (logger) {
+    activeTimeoutLoggers.set(windowId, logger)
+  }
+
+  const endTs = Date.now() + OPERATION_TIMEOUT_MS
+  timeoutEndTimestamps.set(windowId, endTs)
+
+  const timeoutId = setTimeout(() => {
+    const activeLogger = activeTimeoutLoggers.get(windowId)
+    if (activeLogger) {
+      activeLogger.logStep('TIMEOUT_ABORT', 'Operation timed out after 4.5 minutes without user extension.')
+    }
+    controller.abort(new Error('Operation timed out (Chrome 5-minute limit approaching). Please process fewer tabs at once or click "Extend (+5m)".'))
+  }, OPERATION_TIMEOUT_MS)
+
+  activeTimeoutIds.set(windowId, timeoutId)
+}
+
+export function registerTimeoutLogger(windowId: number, logger?: AILogger): void {
+  if (logger) {
+    activeTimeoutLoggers.set(windowId, logger)
+  }
+}
+
+export function clearOperationTimeout(windowId: number): void {
+  const existing = activeTimeoutIds.get(windowId)
+  if (existing) {
+    clearTimeout(existing)
+    activeTimeoutIds.delete(windowId)
+  }
+  activeTimeoutLoggers.delete(windowId)
+  timeoutEndTimestamps.delete(windowId)
+  autoExtendCounts.delete(windowId)
+}
+
+export function extendOperationTimeout(windowId: number): boolean {
+  const controller = activeAbortControllers.get(windowId)
+  if (!controller || controller.signal.aborted) return false
+
+  const count = (autoExtendCounts.get(windowId) ?? 0) + 1
+  autoExtendCounts.set(windowId, count)
+
+  const logger = activeTimeoutLoggers.get(windowId)
+  setupOperationTimeout(windowId, controller, logger)
+
+  if (logger) {
+    logger.logStep('EXTEND_TIMEOUT', 'User extended operation timeout by an additional 4.5 minutes.')
+  }
+
+  const endTs = timeoutEndTimestamps.get(windowId) ?? (Date.now() + OPERATION_TIMEOUT_MS)
+  chrome.runtime.sendMessage({
+    action: 'AI_OPERATION_EXTENDED',
+    payload: {
+      windowId,
+      remainingSeconds: Math.round(OPERATION_TIMEOUT_MS / 1000),
+      endTimestamp: endTs,
+      autoExtendCount: count,
+    }
+  }).catch(() => {})
+
+  if (typeof chrome !== 'undefined' && chrome.runtime?.getPlatformInfo) {
+    chrome.runtime.getPlatformInfo().catch(() => {})
+  }
+
+  return true
+}
+
+const lastAutoExtendMap = new Map<number, number>()
+let isAutoExtending = false
+
+export function autoExtendOperationTimeout(windowId: number): boolean {
+  if (isAutoExtending) return false
+
+  const now = Date.now()
+  const lastTime = lastAutoExtendMap.get(windowId) ?? 0
+  // Throttle auto-extension to at most once every 30 seconds per window
+  if (now - lastTime < 30_000) {
+    return false
+  }
+
+  isAutoExtending = true
+  try {
+    const controller = activeAbortControllers.get(windowId)
+    if (!controller || controller.signal.aborted) return false
+
+    lastAutoExtendMap.set(windowId, now)
+    const count = (autoExtendCounts.get(windowId) ?? 0) + 1
+    autoExtendCounts.set(windowId, count)
+
+    const logger = activeTimeoutLoggers.get(windowId)
+    setupOperationTimeout(windowId, controller, logger)
+
+    if (logger) {
+      logger.logStepDirect('AUTO_EXTEND_TIMEOUT', `Auto-extended operation timeout by 4.5 minutes due to active AI progress (Extension #${count}).`)
+    }
+
+    const endTs = timeoutEndTimestamps.get(windowId) ?? (Date.now() + OPERATION_TIMEOUT_MS)
+    chrome.runtime.sendMessage({
+      action: 'AI_OPERATION_EXTENDED',
+      payload: {
+        windowId,
+        remainingSeconds: Math.round(OPERATION_TIMEOUT_MS / 1000),
+        endTimestamp: endTs,
+        autoExtendCount: count,
+      }
+    }).catch(() => {})
+
+    if (typeof chrome !== 'undefined' && chrome.runtime?.getPlatformInfo) {
+      chrome.runtime.getPlatformInfo().catch(() => {})
+    }
+
+    return true
+  } finally {
+    isAutoExtending = false
+  }
+}
+
+// Automatically reset operation timeout whenever AI progress activity occurs
+setActivityCallback((windowId: number) => {
+  autoExtendOperationTimeout(windowId)
+})
+
+export interface OperationStatus {
+  type: 'group' | 'classify' | 'split' | 'merge' | null
   error: string | null
+  batchCurrent?: number
+  batchTotal?: number
+  processedTabs?: number
+  totalTabs?: number
+  statusText?: string
+  timeoutRemainingSec?: number
+  timeoutEndTimestamp?: number
+  lastAutoExtendTimestamp?: number
+  autoExtendCount?: number
 }
 
 const activeOperationsMap = new Map<number, OperationStatus>()
 
-export function setActiveOperation(windowId: number, type: 'group' | 'classify' | null, error: string | null = null): void {
+/**
+ * Update the progress of an active operation and broadcast to listeners.
+ * @param {number} windowId - The window ID.
+ * @param {object} details - Progress details including batch info and status.
+ */
+export function updateOperationProgress(
+  windowId: number,
+  details: {
+    batchCurrent?: number
+    batchTotal?: number
+    processedTabs?: number
+    totalTabs?: number
+    statusText?: string
+  }
+): void {
+  // Logic: apply details to existing operation status and broadcast update
+  const current = activeOperationsMap.get(windowId)
+  if (!current) return
+
+  const endTs = timeoutEndTimestamps.get(windowId) ?? (Date.now() + OPERATION_TIMEOUT_MS)
+  const remainingSec = Math.max(0, Math.round((endTs - Date.now()) / 1000))
+  const extendCount = autoExtendCounts.get(windowId) ?? 0
+
+  const updated: OperationStatus = {
+    ...current,
+    ...details,
+    timeoutRemainingSec: remainingSec,
+    timeoutEndTimestamp: endTs,
+    autoExtendCount: extendCount,
+  }
+
+  activeOperationsMap.set(windowId, updated)
+
+  chrome.runtime.sendMessage({
+    action: 'AI_OPERATION_PROGRESS',
+    payload: {
+      windowId,
+      status: updated,
+    }
+  }).catch(() => {})
+
+  chrome.runtime.sendMessage({
+    action: 'ACTIVE_OPERATIONS_UPDATED',
+    payload: getActiveOperations()
+  }).catch(() => {})
+}
+
+export function setActiveOperation(windowId: number, type: 'group' | 'classify' | 'split' | 'merge' | null, error: string | null = null): void {
   if (type === null && error === null) {
     activeOperationsMap.delete(windowId)
   } else {
-    activeOperationsMap.set(windowId, { type, error })
+    const endTs = timeoutEndTimestamps.get(windowId) ?? (Date.now() + OPERATION_TIMEOUT_MS)
+    const remainingSec = Math.max(0, Math.round((endTs - Date.now()) / 1000))
+    const existing = activeOperationsMap.get(windowId)
+    activeOperationsMap.set(windowId, {
+      ...existing,
+      type,
+      error,
+      timeoutRemainingSec: remainingSec,
+      timeoutEndTimestamp: endTs,
+      autoExtendCount: autoExtendCounts.get(windowId) ?? 0,
+    })
   }
   chrome.runtime.sendMessage({
     action: 'ACTIVE_OPERATIONS_UPDATED',
@@ -466,10 +670,15 @@ async function setAIBadge(): Promise<void> {
   await chrome.action.setBadgeBackgroundColor({ color: '#8B5CF6' })
 }
 
+/**
+ * Rebuild the cache of grouped tabs for a given window.
+ * @param {number} windowId - The window ID.
+ */
 async function rebuildCache(windowId: number): Promise<void> {
   const tabs = await chrome.tabs.query({ windowId })
 
   // Try to restore from Chrome tab groups (handles manual groupings and service worker restarts)
+  // Logic: restore cache from chrome API if supported, otherwise fallback to settings/rules
   const fromChrome = await buildGroupsFromChrome(tabs)
   if (fromChrome) {
     previewCacheMap.set(windowId, sortGroups(fromChrome))
@@ -739,6 +948,9 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
 
 /**
  * Group all tabs in the given window using Chrome Tab Groups API.
+ * @param {number} windowId - The target window ID.
+ * @param {Partial<ExtensionSettings['ai']>} [aiOverrides] - Optional AI configuration overrides.
+ * @returns {Promise<void>}
  */
 export async function groupAllTabs(windowId: number, aiOverrides?: Partial<ExtensionSettings['ai']>): Promise<void> {
   // Logic: Throw an error if tab groups are not supported in the browser
@@ -752,9 +964,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
   }
 
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => {
-    controller.abort(new Error('Operation timed out (Chrome 5-minute limit approaching). Please process fewer tabs at once.'))
-  }, 270_000)
+  setupOperationTimeout(windowId, controller)
   activeAbortControllers.set(windowId, controller)
   activeOperationsMap.set(windowId, { type: 'group', error: null })
 
@@ -780,6 +990,29 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
     const groupsBefore = initialGroups.length
 
     if (settings.ai.enabled && settings.ai.apiKey) {
+      let logger: AILogger | undefined
+      const alwaysLog = settings.ai.alwaysLogAIOperations ?? true
+      const isShift = Boolean(aiOverrides && ((aiOverrides as any).shiftKey || (aiOverrides as any).verboseLog))
+      const shouldLog = alwaysLog || isShift
+      if (shouldLog) {
+        logger = await AILogger.create({
+          actionType: 'GROUP_TABS',
+          triggeredWithShift: isShift,
+          config: settings.ai,
+          tabsInput: unpinnedTabs.map((t, idx) => ({ index: idx + 1, title: t.title || '', url: t.url, groupId: t.groupId })),
+          prompts: {
+            systemPrompt: SYSTEM_PROMPT,
+            userPrompt: settings.ai.groupingPrompt,
+            customPrompt: settings.ai.customPrompt,
+            coherencePrompt: settings.ai.coherencePrompt,
+          },
+          windowId,
+        })
+        const est = AIClient.estimateCostAndTokens(settings.ai, unpinnedTabs.length, 'group')
+        logger.recordTokenEstimate(est.tokens, 0, est.costStr)
+        registerTimeoutLogger(windowId, logger)
+      }
+
       try {
         await setAIBadge()
         // Make the AI call first while tabs are untouched
@@ -787,8 +1020,17 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
           ...t,
           createdAt: t.id !== undefined ? tabCreatedTimesMap.get(t.id) ?? t.lastAccessed : t.lastAccessed,
         }))
-        const freeGroups = await groupTabsFreelyWithAI(unpinnedTabsWithTime, settings.ai, controller.signal)
-        if (controller.signal.aborted) return
+        const freeGroups = await groupTabsFreelyWithAI(unpinnedTabsWithTime, settings.ai, controller.signal, logger, (current, total) => {
+          updateOperationProgress(windowId, {
+            batchCurrent: current,
+            batchTotal: total,
+            statusText: 'Processing...'
+          })
+        })
+        if (controller.signal.aborted) {
+          if (logger) await logger.markFailed(new Error('Operation aborted by user'))
+          return
+        }
 
         // AI succeeded! We can now ungroup all tabs and apply AI groups safely
         await ungroupAllTabs(windowId)
@@ -828,6 +1070,15 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
 
         const finalGroups = isTabGroupsSupported() ? await chrome.tabGroups.query({ windowId }) : []
         const groupsAfter = finalGroups.length
+        if (logger) {
+          await logger.markCompleted({
+            createdGroupsCount: freeGroups.length,
+            createdGroupNames: freeGroups.map((g) => g.name),
+            groupsBefore,
+            groupsAfter,
+            summary: `${unpinnedTabs.length} tabs → ${freeGroups.length} groups (${groupsBefore} → ${groupsAfter})`,
+          })
+        }
         const lastResult: LastAIResult = {
           timestamp: Date.now(),
           actionType: 'group',
@@ -843,6 +1094,9 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
         chrome.runtime.sendMessage({ action: 'LAST_AI_RESULT_UPDATED', payload: lastResult }).catch(() => {})
         return
       } catch (err) {
+        if (logger) {
+          await logger.markFailed(err)
+        }
         if (controller.signal.aborted) {
           console.log('[timTabTool] Grouping aborted by user')
           return
@@ -932,7 +1186,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
-    clearTimeout(timeoutId)
+    clearOperationTimeout(windowId)
     debouncedUpdateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
@@ -946,6 +1200,9 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
 /**
  * Classify new tabs (ungrouped tabs) into existing AI groups.
  * Uses AI to decide which group each tab belongs to, then moves them.
+ * @param {number} windowId - The target window ID.
+ * @param {Partial<ExtensionSettings['ai']>} [aiOverrides] - Optional AI config overrides.
+ * @returns {Promise<void>}
  */
 export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<ExtensionSettings['ai']>): Promise<void> {
   // Logic: Throw an error if tab groups are not supported in the browser
@@ -959,9 +1216,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
   }
 
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => {
-    controller.abort(new Error('Operation timed out (Chrome 5-minute limit approaching). Please process fewer tabs at once.'))
-  }, 270_000)
+  setupOperationTimeout(windowId, controller)
   activeAbortControllers.set(windowId, controller)
   activeOperationsMap.set(windowId, { type: 'classify', error: null })
 
@@ -1000,19 +1255,64 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
 
     const existingGroupNames = [...groupNameToId.keys()]
 
-    await setAIBadge()
-    const client = new AIClient(settings.ai, controller.signal)
-    const classifications = await client.classifyNewTabsIntoGroups(
-      newTabs.map((t) => ({
-        url: t.url || '',
-        title: t.title || '',
-        lastAccessed: t.lastAccessed,
-        createdAt: t.id !== undefined ? tabCreatedTimesMap.get(t.id) ?? t.lastAccessed : t.lastAccessed,
-      })),
-      existingGroupNames,
-    )
+    let logger: AILogger | undefined
+    const alwaysLog = settings.ai.alwaysLogAIOperations ?? true
+    const isShift = Boolean(aiOverrides && ((aiOverrides as any).shiftKey || (aiOverrides as any).verboseLog))
+    const shouldLog = alwaysLog || isShift
+    if (shouldLog) {
+      logger = await AILogger.create({
+        actionType: 'CLASSIFY_NEW_TABS',
+        triggeredWithShift: isShift,
+        config: settings.ai,
+        tabsInput: newTabs.map((t, idx) => ({ index: idx + 1, title: t.title || '', url: t.url, groupId: t.groupId })),
+        prompts: {
+          systemPrompt: SYSTEM_PROMPT,
+          userPrompt: settings.ai.classifyPrompt,
+          customPrompt: settings.ai.customPrompt,
+        },
+        windowId,
+      })
+      const est = AIClient.estimateCostAndTokens(settings.ai, newTabs.length, 'classify', undefined, undefined, existingGroupNames)
+      logger.recordTokenEstimate(est.tokens, 0, est.costStr)
+      registerTimeoutLogger(windowId, logger)
+    }
 
-    if (controller.signal.aborted) return
+    await setAIBadge()
+    const client = new AIClient(settings.ai, controller.signal, logger)
+    let classifications
+    try {
+      classifications = await client.classifyNewTabsIntoGroups(
+        newTabs.map((t) => ({
+          url: t.url || '',
+          title: t.title || '',
+          lastAccessed: t.lastAccessed,
+          createdAt: t.id !== undefined ? tabCreatedTimesMap.get(t.id) ?? t.lastAccessed : t.lastAccessed,
+        })),
+        existingGroupNames,
+        false,
+        (current, total) => {
+          updateOperationProgress(windowId, {
+            batchCurrent: current,
+            batchTotal: total,
+            statusText: 'Processing...'
+          })
+        }
+      )
+    } catch (classifyErr) {
+      if (logger) await logger.markFailed(classifyErr)
+      throw classifyErr
+    }
+
+    if (controller.signal.aborted) {
+      if (logger) await logger.markFailed(new Error('Operation aborted'))
+      return
+    }
+
+    if (logger) {
+      await logger.markCompleted({
+        summary: `Classified ${newTabs.length} tabs into existing/new groups`,
+      })
+    }
 
     const hideTitles = titlesHiddenMap.get(windowId) ?? false
 
@@ -1151,7 +1451,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
-    clearTimeout(timeoutId)
+    clearOperationTimeout(windowId)
     debouncedUpdateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
@@ -1182,6 +1482,9 @@ export async function closeGroupTabs(tabIds: number[]): Promise<void> {
 
 /**
  * Split a single tab group into more specific sub-groups using AI.
+ * @param {number} groupId - The ID of the group to split.
+ * @param {Partial<ExtensionSettings['ai']>} [aiOverrides] - Optional AI config overrides.
+ * @returns {Promise<void>}
  */
 export async function splitGroup(groupId: number, aiOverrides?: Partial<ExtensionSettings['ai']>): Promise<void> {
   // Logic: Throw an error if tab groups are not supported in the browser
@@ -1199,9 +1502,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
   }
 
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => {
-    controller.abort(new Error('Operation timed out (Chrome 5-minute limit approaching).'))
-  }, 270_000)
+  setupOperationTimeout(windowId, controller)
   activeAbortControllers.set(windowId, controller)
   activeOperationsMap.set(windowId, { type: 'group', error: null })
 
@@ -1241,15 +1542,39 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
       splitPrompt += `\n\nOther existing tab groups in this window for context: ${otherGroupNames.map(name => `"${name}"`).join(', ')}. Create distinct, specific sub-group names that complement these existing groups.`
     }
     
+    let logger: AILogger | undefined
+    const alwaysLog = settings.ai.alwaysLogAIOperations ?? true
+    const isShift = Boolean(aiOverrides && ((aiOverrides as any).shiftKey || (aiOverrides as any).verboseLog))
+    const shouldLog = alwaysLog || isShift
+    if (shouldLog) {
+      logger = await AILogger.create({
+        actionType: 'SPLIT_GROUP',
+        triggeredWithShift: isShift,
+        config: settings.ai,
+        tabsInput: tabs.map((t, idx) => ({ index: idx + 1, title: t.title || '', url: t.url, groupId: t.groupId })),
+        prompts: {
+          systemPrompt: SYSTEM_PROMPT,
+          userPrompt: splitPrompt,
+        },
+        windowId,
+      })
+      const est = AIClient.estimateCostAndTokens(settings.ai, tabs.length, 'split')
+      logger.recordTokenEstimate(est.tokens, 0, est.costStr)
+      registerTimeoutLogger(windowId, logger)
+    }
+
     const client = new AIClient({
       ...settings.ai,
       ...aiOverrides,
       groupingPrompt: splitPrompt
-    }, controller.signal)
+    }, controller.signal, logger)
 
     const subGroups = await client.groupTabsFreely(tabInputs, otherGroupNames)
 
-    if (controller.signal.aborted) return
+    if (controller.signal.aborted) {
+      if (logger) await logger.markFailed(new Error('Operation aborted'))
+      return
+    }
 
     // Apply the sub-groups to Chrome
     for (const subGroup of subGroups) {
@@ -1284,6 +1609,14 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
       )
     }
 
+    if (logger) {
+      await logger.markCompleted({
+        createdGroupsCount: subGroups.length,
+        createdGroupNames: subGroups.map(g => g.name),
+        summary: `Split group into ${subGroups.length} sub-groups`,
+      })
+    }
+
     // Rebuild cache
     invalidatePreviewCache(windowId)
     await getGroupsPreview(windowId)
@@ -1293,7 +1626,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
-    clearTimeout(timeoutId)
+    clearOperationTimeout(windowId)
     debouncedUpdateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
@@ -1323,9 +1656,7 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
   }
 
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => {
-    controller.abort(new Error('Operation timed out (Chrome 5-minute limit approaching).'))
-  }, 270_000)
+  setupOperationTimeout(windowId, controller)
   activeAbortControllers.set(windowId, controller)
   activeOperationsMap.set(windowId, { type: 'group', error: null })
 
@@ -1368,15 +1699,51 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
       lastAccessed: t.lastAccessed,
       createdAt: t.id !== undefined ? tabCreatedTimesMap.get(t.id) ?? t.lastAccessed : t.lastAccessed,
     }))
+    let logger: AILogger | undefined
+    const alwaysLog = settings.ai.alwaysLogAIOperations ?? true
+    const isShift = Boolean(aiOverrides && ((aiOverrides as any).shiftKey || (aiOverrides as any).verboseLog))
+    const shouldLog = alwaysLog || isShift
+    if (shouldLog) {
+      logger = await AILogger.create({
+        actionType: 'MERGE_GROUP',
+        triggeredWithShift: isShift,
+        config: settings.ai,
+        tabsInput: tabs.map((t, idx) => ({ index: idx + 1, title: t.title || '', url: t.url, groupId: t.groupId })),
+        prompts: {
+          systemPrompt: SYSTEM_PROMPT,
+          userPrompt: settings.ai.mergePrompt,
+        },
+        windowId,
+      })
+      const est = AIClient.estimateCostAndTokens(settings.ai, tabs.length, 'merge', undefined, undefined, otherGroupNames)
+      logger.recordTokenEstimate(est.tokens, 0, est.costStr)
+      registerTimeoutLogger(windowId, logger)
+    }
+
     const client = new AIClient({
       ...settings.ai,
       ...aiOverrides
-    }, controller.signal)
+    }, controller.signal, logger)
     
     await setAIBadge()
-    const mergeTarget = await client.decideMergeGroup(tabInputs, otherGroupNames)
+    let mergeTarget
+    try {
+      mergeTarget = await client.decideMergeGroup(tabInputs, otherGroupNames)
+    } catch (mergeErr) {
+      if (logger) await logger.markFailed(mergeErr)
+      throw mergeErr
+    }
 
-    if (controller.signal.aborted) return
+    if (controller.signal.aborted) {
+      if (logger) await logger.markFailed(new Error('Operation aborted'))
+      return
+    }
+
+    if (logger) {
+      await logger.markCompleted({
+        summary: mergeTarget === 'KEEP' ? 'AI decided to KEEP group separate' : `Merged group into "${mergeTarget}"`,
+      })
+    }
 
     if (mergeTarget !== 'KEEP' && groupNameToId.has(mergeTarget)) {
       const targetGroupId = groupNameToId.get(mergeTarget)!
@@ -1403,7 +1770,7 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
-    clearTimeout(timeoutId)
+    clearOperationTimeout(windowId)
     debouncedUpdateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)

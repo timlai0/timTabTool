@@ -2,11 +2,15 @@
 
 import '../shared/polyfill'
 
+import type { TabInfo } from '../shared/types'
 import cssText from './search-overlay.css?inline'
 import { AIClient } from '../shared/ai-client'
 import { MODEL_PRICING, PROVIDER_DEFAULTS, MODEL_NAMES, DEFAULT_MODELS } from '../shared/constants'
 import { getOptimalFaviconUrl } from '../shared/utils'
 
+/**
+ * Represents a command item in the search overlay.
+ */
 interface CommandItem {
   key: string
   title: string
@@ -15,6 +19,9 @@ interface CommandItem {
   sendFullUrl?: boolean
 }
 
+/**
+ * Represents a single search result.
+ */
 interface SearchResultItem {
   tab: {
     id?: number
@@ -23,6 +30,7 @@ interface SearchResultItem {
     favIconUrl?: string
     lastAccessed?: number
     active?: boolean
+    groupId?: number
   }
   score: number
   isOpen: boolean
@@ -49,6 +57,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   // Logik: Bestimmt, ob geschlossene Tabs in den Suchergebnissen angezeigt werden
   // Programming logic: Determines whether closed tabs are displayed in the search results
   let showClosedTabs = false
+  let showUngroupedOnly = false
+  let sortMode: 'off' | 'title' | 'url' = 'off'
 
   let mouseX = 0
   let mouseY = 0
@@ -62,6 +72,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     aiSettings: any
   } | null = null
 
+  let domainChipsContainer: HTMLDivElement | null = null
   let progressContainer: HTMLDivElement | null = null
   let progressStatus: HTMLSpanElement | null = null
   let progressPercent: HTMLSpanElement | null = null
@@ -73,6 +84,44 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let isExternalAI = false
   let aiProgressInterval: ReturnType<typeof setInterval> | null = null
   let aiProgressTimeout: ReturnType<typeof setTimeout> | null = null
+
+  let overlayTimeoutSeconds = 270
+  let overlayTimeoutInterval: ReturnType<typeof setInterval> | null = null
+
+  /**
+   * Formats a timeout value in seconds to MM:SS string.
+   * @param {number} seconds - The timeout in seconds.
+   * @returns {string} The formatted timeout.
+   */
+  function formatTimeout(seconds: number): string {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+  }
+
+  /**
+   * Extracts the domain from a given URL.
+   * @param {string} url - The URL string.
+   * @returns {string | null} The extracted domain or null.
+   */
+  function getDomain(url: string): string | null {
+    // Logic: Parse URL and extract hostname without www prefix
+    try {
+      const obj = new URL(url)
+      if (obj.protocol === 'http:' || obj.protocol === 'https:') {
+        return obj.hostname.replace(/^www\./, '')
+      }
+    } catch (e) {
+      // ignore
+    }
+    return null
+  }
+
+
+
+
+
+
 
 
 
@@ -196,6 +245,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       title: 'Set Default Model',
       description: 'Set the default AI model for timTabTool groupings',
       action: 'CHANGE_MODEL'
+    },
+    {
+      key: '/backup-groups',
+      title: 'Backup Tab Groups',
+      description: 'Save a backup of all current tab groups to a JSON file',
+      action: 'BACKUP_GROUPS'
     }
   ]
 
@@ -281,11 +336,25 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
   }, { passive: true })
 
+  /**
+   * Returns the active model for AI processing.
+   * @param {any} aiSettings - AI settings configuration.
+   * @returns {string} The active model identifier.
+   */
   function getActiveModel(aiSettings: any) {
     if (aiSettings.model) return aiSettings.model
     return DEFAULT_MODELS[aiSettings.provider] || 'gpt-4o-mini'
   }
 
+  /**
+   * Estimates AI cost for a given operation.
+   * @param {any} aiSettings - AI settings configuration.
+   * @param {number} tabs - Number of tabs involved.
+   * @param {'group' | 'split' | 'merge' | 'classify'} type - Type of operation.
+   * @param {string} [modelOverride] - Optional model identifier override.
+   * @param {string} [providerOverride] - Optional provider override.
+   * @returns {{ tokens: number, costStr: string, requests: number }} The estimation data.
+   */
   function estimateAICost(
     aiSettings: any,
     tabs: number,
@@ -359,7 +428,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
 
     const action = result.commandAction
-    const isLocal = ['UNGROUP_ALL', 'EXPAND_ALL_GROUPS', 'COLLAPSE_ALL_GROUPS', 'TOGGLE_GROUP_TITLES', 'CLEANUP_GROUPS'].includes(action)
+    const isLocal = ['UNGROUP_ALL', 'EXPAND_ALL_GROUPS', 'COLLAPSE_ALL_GROUPS', 'TOGGLE_GROUP_TITLES', 'CLEANUP_GROUPS', 'BACKUP_GROUPS'].includes(action)
 
     if (isLocal) {
       let desc = ''
@@ -367,6 +436,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       else if (action === 'EXPAND_ALL_GROUPS') desc = 'Expand all collapsed Chrome tab groups in this window.'
       else if (action === 'COLLAPSE_ALL_GROUPS') desc = 'Collapse all active Chrome tab groups in this window to clear up space.'
       else if (action === 'TOGGLE_GROUP_TITLES') desc = 'Toggle group title visibility. When hidden, groups collapse to tiny color-coded dots, saving maximum tab bar horizontal space.'
+      else if (action === 'BACKUP_GROUPS') desc = 'Download a JSON backup containing all of your current tab groups and their tabs.'
       else if (action === 'CLEANUP_GROUPS') {
         const threshold = result.minTabs ?? 3
         desc = `Ungroup any tab group containing less than ${threshold} tabs, leaving larger groups intact.`
@@ -496,14 +566,14 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       <div class="atm-details-title">${escapeHtml(titleStr)}</div>
       <div class="atm-details-meta">
         <span>Model: <span class="atm-details-model-name">${escapeHtml(MODEL_NAMES[model] || model)}</span></span>
-        <span style="opacity:0.4;">•</span>
-        <span>Privacy: <span style="font-weight:600;color:var(--text-secondary,#86868B);">AI Analysis</span></span>
+        <span style="opacity:0.4;">·</span>
+        <span>Privacy: AI Analysis</span>
       </div>
       
-      <div class="atm-details-section-title">System Prompt</div>
+      <div class="atm-details-section-title">SYSTEM PROMPT</div>
       <div class="atm-details-section-body">${escapeHtml(systemPrompt)}</div>
       
-      <div class="atm-details-section-title">User Prompt</div>
+      <div class="atm-details-section-title">USER PROMPT</div>
       <div class="atm-details-section-body">${escapeHtml(userPrompt)}</div>
       
       <div class="atm-details-est">
@@ -519,8 +589,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           <span class="atm-details-est-label">Total Tokens:</span>
           <span style="font-weight:600;">~${est.tokens} tokens</span>
         </div>
-        <div class="atm-details-est-row" style="margin-top:2px;border-top:0.5px dashed rgba(0,0,0,0.06);padding-top:2px;">
-          <span class="atm-details-est-label" style="font-weight:600;">Est. Cost:</span>
+        <div class="atm-details-est-row" style="margin-top:12px;">
+          <span class="atm-details-est-label">Est. Cost:</span>
           <span style="font-weight:700;color:#007AFF;">${escapeHtml(est.costStr)}</span>
         </div>
       </div>
@@ -739,6 +809,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     progressDetail.className = 'atm-progress-detail'
     progressDetail.textContent = 'Ready'
 
+    domainChipsContainer = document.createElement('div')
+    domainChipsContainer.className = 'atm-domain-chips'
+
     progressContainer.appendChild(progressHeader)
     progressContainer.appendChild(progressBarBg)
     progressContainer.appendChild(progressDetail)
@@ -757,6 +830,48 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     rightControls.style.display = 'flex'
     rightControls.style.alignItems = 'center'
     rightControls.style.gap = '12px'
+
+    const groupResultsBtn = document.createElement('button')
+    groupResultsBtn.className = 'atm-footer-btn'
+    groupResultsBtn.textContent = 'Group results'
+    groupResultsBtn.title = 'Group the current search results (Shift+Click to set custom name)'
+    groupResultsBtn.addEventListener('click', (e: MouseEvent) => {
+      const tabIds = results
+        .filter(r => !r.isCommand && r.tab && typeof r.tab.id === 'number')
+        .map(r => r.tab.id as number)
+      
+      if (tabIds.length > 0) {
+        let title = input.value.trim() || 'Search Results'
+        if (e.shiftKey) {
+          const customName = window.prompt('Enter custom group name:', title)
+          if (customName === null) return // User cancelled
+          title = customName.trim() || 'Search Results'
+        }
+        chrome.runtime.sendMessage({
+          action: 'GROUP_CLUSTER',
+          payload: { tabIds, title }
+        })
+        hide()
+      }
+    })
+
+    const sortToggleBtn = document.createElement('button')
+    sortToggleBtn.className = 'atm-footer-btn'
+    sortToggleBtn.textContent = 'Sort: Off'
+    sortToggleBtn.title = 'Change sorting (Off, Title, URL)'
+    sortToggleBtn.addEventListener('click', () => {
+      if (sortMode === 'off') {
+        sortMode = 'title'
+        sortToggleBtn.textContent = 'Sort: Title'
+      } else if (sortMode === 'title') {
+        sortMode = 'url'
+        sortToggleBtn.textContent = 'Sort: URL'
+      } else {
+        sortMode = 'off'
+        sortToggleBtn.textContent = 'Sort: Off'
+      }
+      doSearch(input.value, resultsList)
+    })
 
     const toggleLabel = document.createElement('label')
     toggleLabel.className = 'atm-closed-tabs-toggle'
@@ -780,8 +895,26 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     toggleLabel.appendChild(toggleCheckbox)
     toggleLabel.appendChild(toggleText)
 
+    const ungroupedToggleLabel = document.createElement('label')
+    ungroupedToggleLabel.className = 'atm-closed-tabs-toggle'
+
+    const ungroupedCheckbox = document.createElement('input')
+    ungroupedCheckbox.type = 'checkbox'
+    ungroupedCheckbox.checked = showUngroupedOnly
+    ungroupedCheckbox.className = 'atm-closed-tabs-checkbox'
+    ungroupedCheckbox.addEventListener('change', () => {
+      showUngroupedOnly = ungroupedCheckbox.checked
+      doSearch(input.value, resultsList)
+    })
+
+    const ungroupedText = document.createElement('span')
+    ungroupedText.textContent = 'Ungrouped only'
+
+    ungroupedToggleLabel.appendChild(ungroupedCheckbox)
+    ungroupedToggleLabel.appendChild(ungroupedText)
+
     const scoreInfoSpan = document.createElement('span')
-    scoreInfoSpan.className = 'atm-score-info'
+    scoreInfoSpan.className = 'atm-score-info atm-footer-btn'
     scoreInfoSpan.textContent = 'How scoring works'
 
     const scoreTooltip = document.createElement('div')
@@ -801,7 +934,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     `)
     scoreInfoSpan.appendChild(scoreTooltip)
 
+    rightControls.appendChild(groupResultsBtn)
+    rightControls.appendChild(sortToggleBtn)
     rightControls.appendChild(toggleLabel)
+    rightControls.appendChild(ungroupedToggleLabel)
     rightControls.appendChild(scoreInfoSpan)
 
     footer.appendChild(keybindsSpan)
@@ -812,6 +948,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     detailsPanel.style.display = 'none'
 
     container.appendChild(inputWrap)
+    if (domainChipsContainer) container.appendChild(domainChipsContainer)
     container.appendChild(progressContainer)
     container.appendChild(resultsList)
     container.appendChild(detailsPanel)
@@ -913,6 +1050,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   }
 
   function resetAIProgressState() {
+
     isAIOperating = false
     isExternalAI = false
     if (aiProgressInterval) {
@@ -940,7 +1078,6 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         input.disabled = false
         setTimeout(() => input.focus(), 0)
       }
-
       if (container) {
         container.style.opacity = ''
         container.style.pointerEvents = ''
@@ -951,7 +1088,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         backdrop.style.background = ''
         backdrop.style.pointerEvents = ''
         backdrop.style.backdropFilter = ''
-          ; (backdrop.style as any).webkitBackdropFilter = ''
+        ; (backdrop.style as any).webkitBackdropFilter = ''
       }
       if (progressContainer) {
         progressContainer.style.pointerEvents = ''
@@ -1018,6 +1155,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (progressContainer) progressContainer.style.display = 'flex'
     switchToProgressOnlyMode()
 
+
     if (progressCloseBtn) {
       progressCloseBtn.textContent = 'Cancel'
       progressCloseBtn.style.color = '' // Reverts to CSS-defined red color
@@ -1070,6 +1208,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       payload.sendFullUrl = true
     }
 
+    if ((event as MouseEvent | KeyboardEvent)?.shiftKey) {
+      payload = payload || {}
+      payload.shiftKey = true
+    }
+
     const modelDisplayName = MODEL_NAMES[model] || model
 
 
@@ -1093,6 +1236,19 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
       if (res && res.error) {
         throw new Error(res.error)
+      }
+
+      if (res && res.backupData) {
+        const json = JSON.stringify(res.backupData, null, 2)
+        const blob = new Blob([json], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `tabpilot-groups-backup-${new Date().toISOString().split('T')[0]}.json`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
       }
 
       // Success!
@@ -1353,6 +1509,16 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         if (!showClosedTabs) {
           results = results.filter(r => r.isOpen || r.isCommand)
         }
+        if (showUngroupedOnly) {
+          results = results.filter(r => !r.tab || r.tab.groupId === undefined)
+        }
+        
+        if (sortMode === 'title') {
+          results.sort((a, b) => (a.tab.title || '').localeCompare(b.tab.title || ''))
+        } else if (sortMode === 'url') {
+          results.sort((a, b) => (a.tab.url || '').localeCompare(b.tab.url || ''))
+        }
+
         selectedIndex = -1
         renderResults(resultsList, query)
       }
@@ -1364,6 +1530,59 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
   function renderResults(resultsList: HTMLDivElement, query: string) {
     resultsList.textContent = ''
+
+    if (domainChipsContainer) {
+      domainChipsContainer.textContent = ''
+      
+      const domainCounts = new Map<string, number>()
+      for (const result of results) {
+        if (result.isOpen && !result.isCommand && result.tab && result.tab.url) {
+          const domain = getDomain(result.tab.url)
+          if (domain) {
+            domainCounts.set(domain, (domainCounts.get(domain) || 0) + 1)
+          }
+        }
+      }
+      
+      if (domainCounts.size > 0) {
+        domainChipsContainer.style.display = 'flex'
+        
+        if (query !== '') {
+          const allChip = document.createElement('div')
+          allChip.className = 'atm-domain-chip atm-color-blue'
+          allChip.textContent = `All Tabs`
+          allChip.title = 'Clear search filter'
+          allChip.addEventListener('click', () => {
+            const input = shadow?.querySelector('.atm-input') as HTMLInputElement
+            if (input) {
+              input.value = ''
+              doSearch('', resultsList)
+              input.focus()
+            }
+          })
+          domainChipsContainer.appendChild(allChip)
+        }
+
+        const sortedDomains = Array.from(domainCounts.entries())
+          .sort((a, b) => b[1] - a[1])
+          
+        for (const [domain, count] of sortedDomains) {
+          const chip = document.createElement('div')
+          chip.className = 'atm-domain-chip'
+          chip.textContent = `${domain} [${count}]`
+          chip.addEventListener('click', () => {
+            const input = shadow?.querySelector('.atm-input') as HTMLInputElement
+            if (input) {
+              input.value = domain
+              doSearch(domain, resultsList)
+            }
+          })
+          domainChipsContainer.appendChild(chip)
+        }
+      } else {
+        domainChipsContainer.style.display = 'none'
+      }
+    }
 
     if (results.length === 0 && query) {
       const empty = document.createElement('div')
@@ -1429,10 +1648,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       title.className = 'atm-result-title'
       setHighlightedText(title, result.tab.title || 'Untitled', query)
       
-      if ('groupTitle' in result.tab && result.tab.groupTitle) {
+      if ('groupTitle' in result.tab && (result.tab as TabInfo).groupTitle) {
         const chip = document.createElement('span')
-        chip.className = `atm-group-chip atm-color-${result.tab.groupColor || 'grey'}`
-        chip.textContent = result.tab.groupTitle
+        chip.className = `atm-group-chip atm-color-${(result.tab as TabInfo).groupColor || 'grey'}`
+        chip.textContent = (result.tab as TabInfo).groupTitle || ''
         title.appendChild(chip)
       }
 
@@ -1754,6 +1973,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         return
       }
 
+      if (result.commandAction === 'UNGROUP_ALL') {
+        const confirmed = window.confirm(chrome.i18n.getMessage('confirmUngroupAll') || 'Are you sure you want to ungroup all tabs in this window?')
+        if (!confirmed) return
+      }
+
       chrome.runtime.sendMessage({
         action: result.commandAction,
         payload: result.commandAction === 'CLEANUP_GROUPS' ? { minTabs: result.minTabs } : undefined
@@ -1875,6 +2099,30 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
             isCommand: true,
             commandAction: commandAction
           })
+        }
+      }
+    } else if (message?.action === 'AI_OPERATION_PROGRESS') {
+      if (!isAIOperating || !visible) return
+      const status = message.payload?.status
+      if (status) {
+        if (progressDetail) {
+          let detailText = status.statusText || 'Processing...'
+          if (status.batchTotal && status.batchTotal > 1) {
+             detailText += ` (Batch ${status.batchCurrent || 1} of ${status.batchTotal})`
+          }
+          progressDetail.textContent = detailText
+        }
+        if (progressPercent && status.batchTotal && status.batchTotal > 1) {
+           const current = status.batchCurrent || 1
+           const total = status.batchTotal
+           let percent = Math.round(((current - 1) / total) * 100)
+           if (percent < 5) percent = 5
+           if (percent > 95) percent = 95
+           progressPercent.textContent = `${percent}%`
+           if (progressFill) {
+             progressFill.style.width = `${percent}%`
+             progressFill.classList.remove('atm-indeterminate')
+           }
         }
       }
     } else if (message?.action === 'AI_OPERATION_COMPLETE') {

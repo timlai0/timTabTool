@@ -169,7 +169,7 @@ describe('AIClient Retry Logic', () => {
     vi.stubGlobal('fetch', mockFetch)
 
     let lastError = ''
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 35; i++) {
       const result = await client.testConnection()
       if (!result.ok && result.error) {
         lastError = result.error
@@ -179,7 +179,7 @@ describe('AIClient Retry Logic', () => {
 
     expect(lastError).toContain('AI safety safeguard')
     expect(lastError).toContain('Single operation exceeded the safety limit')
-    expect(mockFetch).toHaveBeenCalledTimes(15)
+    expect(mockFetch).toHaveBeenCalledTimes(30)
   })
 
   it('fails early before making any API calls if required operation batches exceed safety limit', async () => {
@@ -193,10 +193,10 @@ describe('AIClient Retry Logic', () => {
     const mockFetch = vi.fn()
     vi.stubGlobal('fetch', mockFetch)
 
-    // Create 350 tabs (350 / 20 = 18 batches > 15 limit)
-    const tabs = Array.from({ length: 350 }, (_, i) => ({ url: `https://example.com/${i}`, title: `Tab ${i}` }))
+    // Create 650 tabs (650 / 20 = 33 batches > 30 limit)
+    const tabs = Array.from({ length: 650 }, (_, i) => ({ url: `https://example.com/${i}`, title: `Tab ${i}` }))
 
-    await expect(client.groupTabsFreely(tabs)).rejects.toThrow('Single operation exceeded the safety limit of 15 requests')
+    await expect(client.groupTabsFreely(tabs)).rejects.toThrow('Single operation exceeded the safety limit of 30 requests')
     expect(mockFetch).toHaveBeenCalledTimes(0)
   })
 
@@ -253,7 +253,7 @@ describe('AIClient Retry Logic', () => {
     // Reset static timestamps to guarantee test determinism
     ;(AIClient as any).globalRequestTimestamps = []
 
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 60; i++) {
       const freshClient = new AIClient(config)
       const result = await freshClient.testConnection()
       if (result.ok) {
@@ -266,7 +266,7 @@ describe('AIClient Retry Logic', () => {
 
     expect(lastError).toContain('AI safety safeguard')
     expect(lastError).toContain('Global rate limit exceeded')
-    expect(totalSuccessCount).toBe(30)
+    expect(totalSuccessCount).toBe(50)
   })
 })
 
@@ -283,7 +283,7 @@ describe('AIClient Prompt Formatting', () => {
     
     // Using cast to access private formatTabForPrompt method
     const formatted = (client as any).formatTabForPrompt(tab, 1, false)
-    expect(formatted).toBe('1. Issue #1 (github.com)')
+    expect(formatted).toBe('1. "Issue #1" (github.com)')
   })
 
   it('formats tab with full URL when sendFullUrl is true', () => {
@@ -297,7 +297,7 @@ describe('AIClient Prompt Formatting', () => {
     const tab = { url: 'https://github.com/florianlanx/timTabTool/issues/1', title: 'Issue #1' }
     
     const formatted = (client as any).formatTabForPrompt(tab, 1, false)
-    expect(formatted).toBe('1. Issue #1 (URL: https://github.com/florianlanx/timTabTool/issues/1)')
+    expect(formatted).toBe('1. "Issue #1" (URL: https://github.com/florianlanx/timTabTool/issues/1)')
   })
 
   it('formats tab with full URL when sendFullUrl is true even if stripTitles is true', () => {
@@ -326,7 +326,7 @@ describe('AIClient Prompt Formatting', () => {
     const tab = { url: 'https://github.com/florianlanx/timTabTool/issues/1', title: 'Issue #1', createdAt: tenMinsAgo }
 
     const formatted = (client as any).formatTabForPrompt(tab, 1, false)
-    expect(formatted).toBe(`1. Issue #1 (github.com) (Opened: ${new Date(tenMinsAgo).toISOString()})`)
+    expect(formatted).toBe(`1. "Issue #1" (github.com) (Opened: ${new Date(tenMinsAgo).toISOString()})`)
   })
 })
 

@@ -29,6 +29,7 @@ import {
   cleanupTabGroups,
   splitGroup,
   mergeGroup,
+  extendOperationTimeout,
   closeDuplicateTabs,
   closePossibleDuplicateTabs,
   organizePossibleDuplicateGroups,
@@ -51,6 +52,7 @@ import { recordTabVisit, getHistoryEntries } from './storage'
 import { STORAGE_KEYS, DEFAULT_SETTINGS } from '../shared/constants'
 import type { ExtensionMessage, TabInfo, ExtensionSettings, WindowGroupsInfo } from '../shared/types'
 import { initMCPBridge, getMCPStatus, reconnectMCP } from './mcp-bridge'
+import { AILogger } from '../shared/ai-logger'
 
 const TAB_GROUP_ID_NONE = typeof chrome !== 'undefined' && typeof chrome.tabGroups !== 'undefined'
   ? chrome.tabGroups.TAB_GROUP_ID_NONE
@@ -446,18 +448,29 @@ chrome.runtime.onMessage.addListener(
   },
 )
 
-/** Resolve window ID from message payload or last focused window (for popup context). */
+/**
+ * Resolve window ID from message payload or last focused window (for popup context).
+ * @param {unknown} payload - The message payload containing an optional windowId.
+ * @returns {Promise<number>} The resolved window ID.
+ */
 async function resolveWindowId(payload: unknown): Promise<number> {
   const windowId = (payload as { windowId?: number })?.windowId
   if (windowId !== undefined && Number.isInteger(windowId)) return windowId
+  // Logic: fallback to last focused normal window if no windowId provided
   const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null)
   return win?.id ?? chrome.windows.WINDOW_ID_NONE
 }
 
-export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai']> | undefined {
+/**
+ * Parse AI override settings from the message payload.
+ * @param {unknown} payload - The message payload.
+ * @returns {Partial<ExtensionSettings['ai']> & { shiftKey?: boolean; verboseLog?: boolean } | undefined} Parsed overrides or undefined.
+ */
+export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai']> & { shiftKey?: boolean; verboseLog?: boolean } | undefined {
+  // Logic: parse object payload for specific AI parameters
   if (payload && typeof payload === 'object') {
-    const p = payload as { provider?: unknown; model?: unknown; sendFullUrl?: unknown; sendRandomOrder?: unknown; groupingPrompt?: unknown; customPrompt?: unknown }
-    const overrides: Partial<ExtensionSettings['ai']> = {}
+    const p = payload as { provider?: unknown; model?: unknown; sendFullUrl?: unknown; sendRandomOrder?: unknown; groupingPrompt?: unknown; customPrompt?: unknown; shiftKey?: unknown; verboseLog?: unknown }
+    const overrides: Partial<ExtensionSettings['ai']> & { shiftKey?: boolean; verboseLog?: boolean } = {}
     
     if (typeof p.model === 'string' && p.model !== '-full') {
       overrides.model = p.model
@@ -487,6 +500,14 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
     if (typeof (p as any).bypassSafeguards === 'boolean') {
       overrides.bypassSafeguards = (p as any).bypassSafeguards
     }
+
+    if (typeof p.shiftKey === 'boolean') {
+      overrides.shiftKey = p.shiftKey
+    }
+
+    if (typeof p.verboseLog === 'boolean') {
+      overrides.verboseLog = p.verboseLog
+    }
     
     if (Object.keys(overrides).length > 0) {
       return overrides
@@ -495,8 +516,41 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
   return undefined
 }
 
+/**
+ * Main message handler for extension messages.
+ * @param {ExtensionMessage} message - The incoming message object.
+ * @param {chrome.runtime.MessageSender} [sender] - The sender information.
+ * @returns {Promise<unknown>} The response payload.
+ */
 async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.MessageSender): Promise<unknown> {
+  // Logic: switch over message actions to handle backend requests
   switch (message.action) {
+    case 'GET_AI_LOGS': {
+      const activeOpsMap = getActiveOperations()
+      const activeWindowIds = new Set(Object.keys(activeOpsMap).filter(id => activeOpsMap[Number(id)]?.type).map(Number))
+      const logs = await AILogger.cleanOrphanedRunningLogs(activeWindowIds)
+      return { ok: true, logs }
+    }
+
+    case 'CLEAR_AI_LOGS': {
+      await AILogger.clearLogs()
+      return { ok: true }
+    }
+
+    case 'DELETE_AI_LOG': {
+      const id = (message.payload as { id?: string })?.id
+      if (id) {
+        await AILogger.deleteLog(id)
+      }
+      return { ok: true }
+    }
+
+    case 'EXTEND_OPERATION': {
+      const windowId = await resolveWindowId(message.payload)
+      const extended = extendOperationTimeout(windowId)
+      return { ok: extended }
+    }
+
     case 'GROUP_TABS': {
       const windowId = await resolveWindowId(message.payload)
       setActiveOperation(windowId, 'group')
@@ -510,6 +564,21 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         return { error: err.message || String(err) }
       }
       return { ok: true }
+    }
+
+    case 'BACKUP_GROUPS': {
+      const windowId = await resolveWindowId(message.payload)
+      const groups = await chrome.tabGroups.query({ windowId })
+      const backupData = await Promise.all(groups.map(async (g) => {
+        const tabs = await chrome.tabs.query({ groupId: g.id })
+        return {
+          title: g.title,
+          color: g.color,
+          collapsed: g.collapsed,
+          tabs: tabs.map(t => ({ url: t.url, title: t.title }))
+        }
+      }))
+      return { ok: true, backupData }
     }
 
     case 'UNGROUP_ALL': {
@@ -751,9 +820,29 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'GROUP_CLUSTER': {
       const { tabIds, title } = (message.payload as { tabIds: number[]; title: string }) || {}
       if (Array.isArray(tabIds) && tabIds.length > 0) {
-        const groupId = await chrome.tabs.group({ tabIds: tabIds as [number, ...number[]] })
-        if (title) {
-          await chrome.tabGroups.update(groupId, { title, color: 'orange' })
+        let targetGroupId: number | undefined
+
+        if (title && typeof chrome.tabGroups !== 'undefined') {
+          const allGroups = await chrome.tabGroups.query({ title })
+          if (allGroups.length > 0) {
+            const currentWindowId = sender?.tab?.windowId || chrome.windows.WINDOW_ID_CURRENT
+            const existingGroup = allGroups.find(g => g.windowId === currentWindowId) || allGroups[0]
+            targetGroupId = existingGroup.id
+          }
+        }
+
+        const groupOptions: chrome.tabs.GroupOptions = { tabIds: tabIds as [number, ...number[]] }
+        if (targetGroupId !== undefined) {
+          groupOptions.groupId = targetGroupId
+        }
+
+        try {
+          const groupId = await chrome.tabs.group(groupOptions)
+          if (targetGroupId === undefined && title) {
+            await chrome.tabGroups.update(groupId, { title, color: 'orange' })
+          }
+        } catch (e) {
+          console.error('[timTabTool] Failed to group cluster:', e)
         }
       }
       return { ok: true }

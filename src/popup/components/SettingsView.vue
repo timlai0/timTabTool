@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, toRaw } from 'vue'
 import { getMessage } from '../../shared/i18n'
-import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS } from '../../shared/constants'
-import { getAutoBatchSize, parseMaxTokensToNumber } from '../../shared/utils'
-import type { ExtensionSettings } from '../../shared/types'
+import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS, MODEL_PRICING, PROVIDER_DEFAULTS } from '../../shared/constants'
+import { getAutoBatchSize, parseMaxTokensToNumber, formatTimeAgo } from '../../shared/utils'
+import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse } from '../../shared/types'
 import { AIClient, SYSTEM_PROMPT, fetchGoogleModels } from '../../shared/ai-client'
 import { APP_VERSION, BUILD_NUMBER, BUILD_HASH, BUILD_TIME } from '../../shared/version'
 
@@ -11,7 +11,11 @@ const props = defineProps<{
   isStandaloneSearch?: boolean
 }>()
 
+/**
+ * Emitted events for SettingsView.
+ */
 const emit = defineEmits<{
+  /** Triggered to navigate back to the main view. */
   back: []
 }>()
 
@@ -34,7 +38,11 @@ const mcpStatus = ref({ state: 'disabled', port: 8585, error: null as string | n
 const reconnecting = ref(false)
 let statusPollInterval: any = null
 
-async function updateMCPStatus() {
+/**
+ * Fetches the current MCP status from the background script.
+ * @returns {Promise<void>}
+ */
+async function updateMCPStatus(): Promise<void> {
   try {
     const res = await chrome.runtime.sendMessage({ action: 'GET_MCP_STATUS' })
     if (res && res.state) {
@@ -45,7 +53,11 @@ async function updateMCPStatus() {
   }
 }
 
-async function triggerReconnect() {
+/**
+ * Triggers an MCP reconnection attempt.
+ * @returns {Promise<void>}
+ */
+async function triggerReconnect(): Promise<void> {
   reconnecting.value = true
   try {
     await chrome.runtime.sendMessage({ action: 'RECONNECT_MCP' })
@@ -84,7 +96,12 @@ const fetchingGoogleModels = ref(false)
 const fetchModelsMessage = ref<string | null>(null)
 const fetchModelsError = ref<string | null>(null)
 
-function autoFillModelParams(modelId: string | undefined, customList?: any[]) {
+/**
+ * Autocompletes token parameters based on the selected AI model.
+ * @param {string | undefined} modelId - The model ID.
+ * @param {any[]} [customList] - Optional custom list of models.
+ */
+function autoFillModelParams(modelId: string | undefined, customList?: any[]): void {
   const list = customList || currentProviderModels.value || []
   const targetId = modelId || settings.value.ai.model || (list[0]?.id ?? '')
   if (!targetId) return
@@ -97,7 +114,11 @@ function autoFillModelParams(modelId: string | undefined, customList?: any[]) {
   }
 }
 
-async function handleFetchGoogleModels() {
+/**
+ * Fetches the available models from the Google API using the configured API key.
+ * @returns {Promise<void>}
+ */
+async function handleFetchGoogleModels(): Promise<void> {
   if (!settings.value.ai.apiKey) {
     fetchModelsError.value = 'Google API Key is required to fetch models.'
     return
@@ -246,12 +267,244 @@ onMounted(async () => {
   // Start polling MCP connection status
   updateMCPStatus()
   statusPollInterval = setInterval(updateMCPStatus, 1000)
+
+  // Load AI operation logs
+  loadAILogs()
 })
 
 onUnmounted(() => {
   if (statusPollInterval) {
     clearInterval(statusPollInterval)
   }
+})
+
+// --- AI Operation Logs state and handlers ---
+const aiLogs = ref<AIOperationLogEntry[]>([])
+const expandedLogId = ref<string | null>(null)
+const logFilterStatus = ref<string>('all')
+
+async function loadAILogs() {
+  try {
+    const res = await chrome.runtime.sendMessage({ action: 'GET_AI_LOGS' })
+    if (res && res.logs) {
+      aiLogs.value = res.logs
+    }
+  } catch (err) {
+    // Ignore error
+  }
+}
+
+async function clearAILogs() {
+  if (confirm('Clear all saved AI operation logs?')) {
+    await chrome.runtime.sendMessage({ action: 'CLEAR_AI_LOGS' })
+    await loadAILogs()
+  }
+}
+
+async function deleteSingleLog(id: string) {
+  await chrome.runtime.sendMessage({ action: 'DELETE_AI_LOG', payload: { id } })
+  await loadAILogs()
+}
+
+async function markLogInterrupted(id: string) {
+  const log = aiLogs.value.find(l => l.id === id)
+  if (log) {
+    log.status = 'CRASHED'
+    log.endTime = Date.now()
+    log.durationMs = log.endTime - log.timestamp
+    log.error = {
+      message: 'Operation marked as interrupted (Tab/Service worker crashed).',
+      name: 'InterruptedException',
+    }
+    log.steps.push({
+      timestamp: Date.now(),
+      step: 'INTERRUPTED',
+      detail: 'Operation marked as interrupted.',
+    })
+    await chrome.storage.local.set({ [STORAGE_KEYS.AI_OPERATION_LOGS]: aiLogs.value })
+    await loadAILogs()
+  }
+}
+
+function exportLogsAsJson() {
+  const jsonStr = JSON.stringify(aiLogs.value, null, 2)
+  const blob = new Blob([jsonStr], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `ai_operation_logs_${Date.now()}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function toggleLogExpand(id: string) {
+  expandedLogId.value = expandedLogId.value === id ? null : id
+}
+
+function formatDurationMs(ms?: number): string {
+  if (!ms || isNaN(ms)) return '0s'
+  if (ms < 1000) return `${ms}ms`
+  const totalSeconds = Math.floor(ms / 1000)
+  const mins = Math.floor(totalSeconds / 60)
+  const secs = totalSeconds % 60
+  const tenths = Math.floor((ms % 1000) / 100)
+  if (mins === 0) {
+    return `${secs}.${tenths}s (${ms}ms)`
+  }
+  const formattedMinSec = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+  return `${formattedMinSec} (${(ms / 1000).toFixed(1)}s)`
+}
+
+const copyReqState = ref<Record<string, boolean>>({})
+const copyRespState = ref<Record<string, boolean>>({})
+
+async function copyToClipboardWithFeedback(text: string, key: string, type: 'req' | 'resp') {
+  try {
+    await navigator.clipboard.writeText(text)
+    if (type === 'req') {
+      copyReqState.value = { ...copyReqState.value, [key]: true }
+      setTimeout(() => { copyReqState.value = { ...copyReqState.value, [key]: false } }, 1500)
+    } else {
+      copyRespState.value = { ...copyRespState.value, [key]: true }
+      setTimeout(() => { copyRespState.value = { ...copyRespState.value, [key]: false } }, 1500)
+    }
+  } catch (err) {
+    console.error('Failed to copy', err)
+  }
+}
+
+function getRequestForBatch(log: AIOperationLogEntry, batchIndex: number) {
+  return log.rawRequests.find(r => r.batchIndex === batchIndex)
+}
+
+function getCompleteApiRequest(log: AIOperationLogEntry, batchIndex: number): string {
+  const req = getRequestForBatch(log, batchIndex)
+  if (!req) return 'No request data recorded'
+  return JSON.stringify({
+    batchIndex: req.batchIndex,
+    endpoint: req.endpoint,
+    requestTimestamp: new Date(req.requestTimestamp).toISOString(),
+    config: log.configSnapshot,
+    systemPrompt: req.systemMessage || log.prompts?.systemPrompt || '',
+    userMessage: req.userMessage || log.prompts?.userPrompt || '',
+    payloadSummary: req.payloadSummary,
+  }, null, 2)
+}
+
+function getCompleteAiResponse(resp: AILogRawResponse): string {
+  if (resp.parsedJson) {
+    return JSON.stringify(resp.parsedJson, null, 2)
+  }
+  return resp.responseBody || resp.error || 'No response body recorded'
+}
+
+function calculateVariancePercent(est?: number, act?: number): string {
+  if (est === undefined || act === undefined || est === 0) return '—'
+  const diff = ((act - est) / est) * 100
+  const sign = diff > 0 ? '+' : ''
+  return `${sign}${diff.toFixed(1)}%`
+}
+
+function calculateCostVariancePercent(estStr?: string, actStr?: string): string {
+  if (!estStr || !actStr || estStr === '—' || actStr === '—') return '—'
+  const est = parseFloat(estStr.replace(/[^0-9.]/g, ''))
+  const act = parseFloat(actStr.replace(/[^0-9.]/g, ''))
+  if (isNaN(est) || isNaN(act) || est === 0) return '—'
+  const diff = ((act - est) / est) * 100
+  const sign = diff > 0 ? '+' : ''
+  return `${sign}${diff.toFixed(1)}%`
+}
+
+function getActualUsage(log: AIOperationLogEntry) {
+  if (log.tokenUsage?.actualInputTokens !== undefined) {
+    return {
+      input: log.tokenUsage.actualInputTokens,
+      output: log.tokenUsage.actualOutputTokens || 0,
+      costStr: log.tokenUsage.actualCostStr || '—'
+    };
+  }
+
+  // Calculate dynamically from rawResponses
+  let totalInput = 0;
+  let totalOutput = 0;
+
+  for (const resp of log.rawResponses || []) {
+    const json = resp.parsedJson as any;
+    if (!json) continue;
+
+    if (json.usage) {
+      totalInput += json.usage.prompt_tokens || json.usage.input_tokens || 0;
+      totalOutput += json.usage.completion_tokens || json.usage.output_tokens || 0;
+    } else if (json.usageMetadata) {
+      totalInput += json.usageMetadata.promptTokenCount || 0;
+      totalOutput += json.usageMetadata.candidatesTokenCount || 0;
+    }
+  }
+
+  if (totalInput === 0 && totalOutput === 0) {
+    return { input: undefined, output: undefined, costStr: undefined };
+  }
+
+  // Calculate cost
+  const provider = log.configSnapshot?.provider || 'openai';
+  const model = log.configSnapshot?.model || DEFAULT_MODELS[provider] || 'gpt-4o-mini';
+  let rates = MODEL_PRICING[model];
+  if (!rates) {
+    rates = (PROVIDER_DEFAULTS as any)[provider] || PROVIDER_DEFAULTS.openai;
+  }
+  const cost = (totalInput * rates.input + totalOutput * rates.output) / 1000000;
+  let costStr = '';
+  if (cost === 0) costStr = 'Free';
+  else if (cost < 0.0001) costStr = '< $0.0001';
+  else costStr = `~$${cost.toFixed(4)}`;
+
+  return { input: totalInput, output: totalOutput, costStr };
+}
+
+async function reuseLogAndGroup(log: AIOperationLogEntry) {
+  if (log.configSnapshot) {
+    settings.value.ai.provider = log.configSnapshot.provider as any
+    if (log.configSnapshot.model) settings.value.ai.model = log.configSnapshot.model
+    if (log.configSnapshot.endpoint) settings.value.ai.endpoint = log.configSnapshot.endpoint
+    if (log.configSnapshot.sendFullUrl !== undefined) settings.value.ai.sendFullUrl = log.configSnapshot.sendFullUrl
+    if (log.configSnapshot.batchSize) settings.value.ai.batchSize = log.configSnapshot.batchSize
+    if (log.configSnapshot.maxTokens) settings.value.ai.maxTokens = log.configSnapshot.maxTokens
+    if (log.configSnapshot.maxRetries !== undefined) settings.value.ai.maxRetries = log.configSnapshot.maxRetries
+    if (log.configSnapshot.bypassSafeguards !== undefined) settings.value.ai.bypassSafeguards = log.configSnapshot.bypassSafeguards
+  }
+  
+  if (log.prompts) {
+    if (log.prompts.systemPrompt !== undefined) settings.value.ai.customPrompt = log.prompts.systemPrompt
+    if (log.prompts.userPrompt !== undefined) {
+      if (log.actionType === 'GROUP_TABS' || log.actionType.startsWith('GROUP_TABS_')) {
+        settings.value.ai.groupingPrompt = log.prompts.userPrompt
+      } else if (log.actionType === 'SPLIT_GROUP') {
+        settings.value.ai.splitPrompt = log.prompts.userPrompt
+      } else if (log.actionType === 'MERGE_GROUP') {
+        settings.value.ai.mergePrompt = log.prompts.userPrompt
+      } else if (log.actionType === 'CLASSIFY_NEW_TABS') {
+        settings.value.ai.classifyPrompt = log.prompts.userPrompt
+      }
+    }
+    if (log.prompts.coherencePrompt !== undefined) settings.value.ai.coherencePrompt = log.prompts.coherencePrompt
+  }
+  
+  await saveSettings()
+  let actionToRun = log.actionType
+  if (actionToRun === 'GROUP_TABS' || actionToRun.startsWith('GROUP_TABS_')) {
+    actionToRun = 'CLASSIFY_NEW_TABS'
+  }
+  await chrome.runtime.sendMessage({ action: actionToRun })
+  alert(`Configuration restored from log and ${actionToRun} initiated!`)
+}
+
+function copyToClipboard(text: string) {
+  navigator.clipboard.writeText(text).catch(console.error)
+}
+
+const filteredLogs = computed(() => {
+  if (logFilterStatus.value === 'all') return aiLogs.value
+  return aiLogs.value.filter(l => l.status === logFilterStatus.value)
 })
 
 function resetGroupingPrompt() {
@@ -429,6 +682,23 @@ async function pasteConfig() {
           </label>
 
           <template v-if="settings.ai.enabled">
+            <!-- Always Log AI Operations toggle -->
+            <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
+              <div class="flex-1">
+                <span class="text-xs block font-medium" style="color: var(--text-primary);">Always Log AI Operations</span>
+                <span class="text-[10px] block" style="color: var(--text-tertiary);">Automatically record detailed verbose logs in Settings (when off: only with Shift+Click)</span>
+              </div>
+              <div class="relative shrink-0">
+                <input
+                  type="checkbox"
+                  v-model="settings.ai.alwaysLogAIOperations"
+                  class="sr-only peer"
+                />
+                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+              </div>
+            </label>
+
             <!-- Send Full URL toggle -->
             <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
               <span class="text-xs flex-1" style="color: var(--text-primary);">Send Full URL (Higher Tokens)</span>
@@ -1306,6 +1576,267 @@ async function pasteConfig() {
               <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
             </div>
           </label>
+        </div>
+      </div>
+
+      <!-- AI Operation Logs Section -->
+      <div>
+        <div class="flex items-center justify-between px-3 mb-1.5">
+          <h2 class="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5" style="color: var(--text-secondary);">
+            <svg class="w-3.5 h-3.5 opacity-80" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h8a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd" />
+            </svg>
+            AI Detailed Operation Logs ({{ aiLogs.length }})
+          </h2>
+          <div class="flex items-center gap-1.5">
+            <button
+              v-if="aiLogs.length > 0"
+              @click="exportLogsAsJson"
+              class="px-2 py-0.5 text-[9px] font-medium rounded-sm transition-all cursor-pointer"
+              style="background: var(--bg-primary); color: var(--accent); border: 0.5px solid var(--border);"
+              title="Export all logs as JSON"
+            >
+              Export JSON
+            </button>
+            <button
+              v-if="aiLogs.length > 0"
+              @click="clearAILogs"
+              class="px-2 py-0.5 text-[9px] font-medium rounded-sm transition-all cursor-pointer"
+              style="background: var(--bg-primary); color: #FF3B30; border: 0.5px solid var(--border);"
+              title="Clear all logs"
+            >
+              Clear Logs
+            </button>
+          </div>
+        </div>
+
+        <div class="rounded-sm overflow-hidden p-2 space-y-2" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
+          <p class="text-[10px] px-1" style="color: var(--text-tertiary);">
+            Logs recorded when Shift-clicking AI operations or when AI operations crash/fail. Retained across restarts.
+          </p>
+
+          <div v-if="aiLogs.length === 0" class="text-center py-6 text-[11px]" style="color: var(--text-tertiary);">
+            No recorded AI logs yet. Hold Shift and click an AI operation (e.g. Group Tabs) to generate a detailed verbose log.
+          </div>
+
+          <div v-else class="space-y-1.5">
+            <div
+              v-for="log in aiLogs"
+              :key="log.id"
+              class="rounded-sm border overflow-hidden transition-all text-xs"
+              style="background: var(--bg-secondary); border-color: var(--border);"
+            >
+              <!-- Log Summary Header -->
+              <div
+                class="p-2 flex items-center justify-between cursor-pointer select-none gap-2 hover:bg-black/5 dark:hover:bg-white/5"
+                @click="toggleLogExpand(log.id)"
+              >
+                <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                  <!-- Status Badge -->
+                  <span
+                    class="px-2 py-0.5 text-[9px] font-semibold rounded-full shrink-0 uppercase"
+                    :style="log.status === 'COMPLETED'
+                      ? 'background: rgba(34, 197, 94, 0.15); color: #16a34a;'
+                      : log.status === 'RUNNING'
+                      ? 'background: rgba(234, 179, 8, 0.15); color: #ca8a04;'
+                      : 'background: rgba(239, 68, 68, 0.15); color: #dc2626;'"
+                  >
+                    {{ log.status }}
+                  </span>
+
+                  <!-- Mark Interrupted button if stuck in RUNNING -->
+                  <button
+                    v-if="log.status === 'RUNNING'"
+                    @click.stop="markLogInterrupted(log.id)"
+                    class="px-2 py-1 text-[9px] font-semibold rounded-sm bg-red-500/15 text-red-600 dark:text-red-400 hover:bg-red-500/25 transition-colors shrink-0 cursor-pointer shadow-sm border border-red-500/20"
+                    title="Mark this interrupted/crashed operation as finished"
+                  >
+                    Mark Interrupted
+                  </button>
+
+                  <button
+                    @click.stop="reuseLogAndGroup(log)"
+                    class="px-2 py-1 text-[9px] font-semibold rounded-sm bg-accent/15 text-accent hover:bg-accent/25 transition-colors shrink-0 cursor-pointer shadow-sm border border-accent/20"
+                    title="Reuse configuration from this log and process tabs (preserves current groups)"
+                  >
+                    Reuse Info & Classify
+                  </button>
+
+                  <!-- Action Name -->
+                  <span class="font-semibold text-[11px] truncate" style="color: var(--text-primary);">
+                    {{ log.actionType }}
+                  </span>
+
+                  <!-- Shift Badge -->
+                  <span v-if="log.triggeredWithShift" class="px-1.5 py-0.5 text-[8.5px] font-semibold rounded-sm shrink-0 border border-accent/20 shadow-sm" style="background: var(--accent-soft); color: var(--accent);">
+                    Shift
+                  </span>
+
+                  <span class="text-[10px] tabular-nums shrink-0" style="color: var(--text-tertiary);">
+                    ({{ log.tabsCount }} tabs)
+                  </span>
+                </div>
+
+                <div class="flex items-center gap-2 shrink-0">
+                  <span class="text-[9.5px] tabular-nums" style="color: var(--text-tertiary);">
+                    {{ formatTimeAgo(log.timestamp) }}
+                  </span>
+                  <button
+                    @click.stop="deleteSingleLog(log.id)"
+                    class="p-1 rounded hover:bg-red-500/10 text-red-500 transition-colors cursor-pointer"
+                    title="Delete log"
+                  >
+                    <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+                    </svg>
+                  </button>
+                  <svg
+                    class="w-3.5 h-3.5 transition-transform duration-200"
+                    :class="expandedLogId === log.id ? 'rotate-180' : ''"
+                    style="color: var(--text-tertiary);"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clip-rule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+
+              <!-- Expanded Log Details -->
+              <div v-if="expandedLogId === log.id" class="p-2.5 border-t space-y-2 text-[10.5px] font-mono leading-relaxed select-text" style="border-color: var(--border); background: var(--bg-primary);">
+                <!-- Error Details if failed -->
+                <div v-if="log.error" class="p-2 rounded bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 space-y-1">
+                  <div class="font-bold flex items-center gap-1">
+                    <span>CRASH / ERROR DETAILS:</span>
+                  </div>
+                  <div>Message: {{ log.error.message }}</div>
+                  <div v-if="log.error.stack" class="whitespace-pre-wrap text-[9.5px] opacity-90 overflow-x-auto p-1 bg-black/5 dark:bg-black/30 rounded">
+                    {{ log.error.stack }}
+                  </div>
+                </div>
+
+                <!-- Config & Metadata -->
+                <div class="grid grid-cols-2 gap-2 p-2 rounded bg-black/5 dark:bg-white/5 text-[10px]">
+                  <div><span class="opacity-60">Provider:</span> {{ log.configSnapshot?.provider }}</div>
+                  <div><span class="opacity-60">Model:</span> {{ log.configSnapshot?.model || 'default' }}</div>
+                  <div><span class="opacity-60">Duration:</span> {{ log.durationMs ? formatDurationMs(log.durationMs) : 'In progress' }}</div>
+                  <div v-if="log.tokenUsage?.estimatedCostStr"><span class="opacity-60">Cost Est:</span> {{ log.tokenUsage.estimatedCostStr }}</div>
+                  <div v-if="log.results?.summary" class="col-span-2"><span class="opacity-60">Result:</span> {{ log.results.summary }}</div>
+                </div>
+
+                <!-- Token Usage & Cost Comparison Card (Estimated vs Actual) -->
+                <div v-if="log.tokenUsage" class="p-2.5 rounded bg-black/5 dark:bg-white/5 space-y-1.5 text-[9.5px]">
+                  <div class="font-bold flex items-center justify-between opacity-90 border-b border-black/10 dark:border-white/10 pb-1">
+                    <span>TOKEN USAGE & COST COMPARISON:</span>
+                    <span class="text-[8.5px] font-normal opacity-70 font-sans">Estimated vs Actual Response</span>
+                  </div>
+                  <div class="grid grid-cols-4 gap-1 text-[9px] font-mono text-center pt-0.5">
+                    <div class="font-bold text-left opacity-70">Metric</div>
+                    <div class="font-semibold opacity-80">Estimated</div>
+                    <div class="font-semibold text-accent">Actual</div>
+                    <div class="font-semibold opacity-80">Variance</div>
+
+                    <!-- Input Tokens -->
+                    <div class="text-left font-sans opacity-80">Input Tokens</div>
+                    <div>{{ log.tokenUsage.estimatedInputTokens?.toLocaleString() ?? '—' }}</div>
+                    <div class="text-accent font-bold">{{ getActualUsage(log).input?.toLocaleString() ?? '—' }}</div>
+                    <div>{{ calculateVariancePercent(log.tokenUsage.estimatedInputTokens, getActualUsage(log).input) }}</div>
+
+                    <!-- Output Tokens -->
+                    <div class="text-left font-sans opacity-80">Output Tokens</div>
+                    <div>{{ log.tokenUsage.estimatedOutputTokens?.toLocaleString() ?? '—' }}</div>
+                    <div class="text-accent font-bold">{{ getActualUsage(log).output?.toLocaleString() ?? '—' }}</div>
+                    <div>{{ calculateVariancePercent(log.tokenUsage.estimatedOutputTokens, getActualUsage(log).output) }}</div>
+
+                    <!-- Total Cost -->
+                    <div class="text-left font-sans opacity-80">Total Cost</div>
+                    <div>{{ log.tokenUsage.estimatedCostStr ?? '—' }}</div>
+                    <div class="text-green-600 dark:text-green-400 font-bold">{{ getActualUsage(log).costStr ?? '—' }}</div>
+                    <div>{{ calculateCostVariancePercent(log.tokenUsage.estimatedCostStr, getActualUsage(log).costStr) }}</div>
+                  </div>
+                </div>
+
+                <!-- Execution Steps -->
+                <div>
+                  <div class="font-semibold text-[10px] mb-1 opacity-80">Execution Steps ({{ log.steps.length }}):</div>
+                  <div class="space-y-1 max-h-36 overflow-y-auto p-1.5 rounded bg-black/5 dark:bg-white/5 text-[9.5px]">
+                    <div v-for="(step, idx) in log.steps" :key="idx" class="flex items-start gap-1.5">
+                      <span class="opacity-50 shrink-0">{{ new Date(step.timestamp).toLocaleTimeString() }}</span>
+                      <span class="font-bold text-accent shrink-0">[{{ step.step }}]</span>
+                      <span class="break-all">{{ step.detail }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Prompts Used -->
+                <div v-if="log.prompts.userPrompt || log.prompts.systemPrompt">
+                  <div class="font-semibold text-[10px] mb-1 opacity-80">Prompts Used:</div>
+                  <div class="space-y-1 max-h-32 overflow-y-auto p-1.5 rounded bg-black/5 dark:bg-white/5 text-[9.5px] whitespace-pre-wrap">
+                    <div v-if="log.prompts.systemPrompt"><span class="font-bold">System:</span> {{ log.prompts.systemPrompt }}</div>
+                    <div v-if="log.prompts.userPrompt"><span class="font-bold">User:</span> {{ log.prompts.userPrompt }}</div>
+                  </div>
+                </div>
+
+                <!-- Raw Network Requests & Responses -->
+                <div v-if="log.rawResponses && log.rawResponses.length > 0">
+                  <div class="font-semibold text-[10px] mb-1 opacity-80 flex items-center justify-between">
+                    <span>Raw API Requests & Responses ({{ log.rawResponses.length }}):</span>
+                  </div>
+                  <div class="space-y-2">
+                    <div v-for="(resp, idx) in log.rawResponses" :key="idx" class="p-2 rounded bg-black/5 dark:bg-white/5 space-y-2 text-[9.5px]">
+                      <div class="flex items-center justify-between font-bold">
+                        <span class="text-accent">Batch #{{ resp.batchIndex }} (Status {{ resp.statusCode ?? 'ERR' }}) - {{ formatDurationMs(resp.responseTimeMs) }}</span>
+                      </div>
+
+                      <!-- Action Buttons: Copy API Request & Copy AI Response -->
+                      <div class="flex items-center gap-1.5 flex-wrap">
+                        <button
+                          @click="copyToClipboardWithFeedback(getCompleteApiRequest(log, resp.batchIndex), `req_${log.id}_${resp.batchIndex}`, 'req')"
+                          class="px-2 py-1 text-[9px] font-semibold rounded-sm bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors flex items-center gap-1 cursor-pointer border border-black/10 dark:border-white/10 shadow-sm"
+                        >
+                          <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
+                            <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h8a2 2 0 00-2-2H5z" />
+                          </svg>
+                          <span>{{ copyReqState[`req_${log.id}_${resp.batchIndex}`] ? 'Copied Request!' : 'Copy Complete API Request' }}</span>
+                        </button>
+
+                        <button
+                          v-if="resp.responseBody || resp.parsedJson"
+                          @click="copyToClipboardWithFeedback(getCompleteAiResponse(resp), `resp_${log.id}_${resp.batchIndex}`, 'resp')"
+                          class="px-2 py-1 text-[9px] font-semibold rounded-sm bg-accent/15 text-accent hover:bg-accent/25 transition-colors flex items-center gap-1 cursor-pointer border border-accent/20 shadow-sm"
+                        >
+                          <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
+                            <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h8a2 2 0 00-2-2H5z" />
+                          </svg>
+                          <span>{{ copyRespState[`resp_${log.id}_${resp.batchIndex}`] ? 'Copied Response!' : 'Copy Complete AI Response' }}</span>
+                        </button>
+                      </div>
+
+                      <!-- Raw Response Body -->
+                      <div v-if="resp.responseBody" class="max-h-44 overflow-y-auto whitespace-pre-wrap p-1.5 bg-black/5 dark:bg-black/40 rounded opacity-90 font-mono text-[9px]">
+                        {{ resp.responseBody }}
+                      </div>
+                      <div v-if="resp.error" class="text-red-500 font-bold">
+                        Error: {{ resp.error }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Input Tabs -->
+                <div v-if="log.tabsInput && log.tabsInput.length > 0">
+                  <div class="font-semibold text-[10px] mb-1 opacity-80">Input Tabs ({{ log.tabsInput.length }}):</div>
+                  <div class="max-h-32 overflow-y-auto space-y-1 p-1.5 rounded bg-black/5 dark:bg-white/5 text-[9.5px]">
+                    <div v-for="tab in log.tabsInput" :key="tab.index" class="truncate">
+                      <span class="opacity-50">#{{ tab.index }}</span> <span class="font-medium">{{ tab.title }}</span> <span class="opacity-60 text-[8.5px]">({{ tab.url }})</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

@@ -1,4 +1,5 @@
 import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory } from './types'
+import type { AILogger } from './ai-logger'
 import { DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS, DEFAULT_ENDPOINTS } from './constants'
 import { getAutoBatchSize, formatTimeAgo, extractDomain, extractJsonSubstring } from './utils'
 
@@ -19,6 +20,7 @@ const MAX_GROUP_NAME_LENGTH = 40
 export class AIClient {
   private config: AIConfig
   private signal?: AbortSignal
+  private logger?: AILogger
 
   // Safety safeguards to prevent runaway token billing and mass API loops
   private static globalRequestTimestamps: number[] = []
@@ -27,14 +29,26 @@ export class AIClient {
   static readonly MAX_REQUESTS_PER_RUN = 30
   static readonly MAX_REQUESTS_PER_MINUTE = 50
 
-  constructor(config: AIConfig, signal?: AbortSignal) {
+  constructor(config: AIConfig, signal?: AbortSignal, logger?: AILogger) {
     this.config = config
     this.signal = signal
+    this.logger = logger
   }
 
   /**
    * Universal token and cost estimator for UI components.
    * Calculates lengths exactly based on the built prompt structure.
+   */
+  /**
+   * Universal token and cost estimator for UI components.
+   * Calculates lengths exactly based on the built prompt structure.
+   * @param {AIConfig} config
+   * @param {number} tabsCount
+   * @param {'group' | 'split' | 'merge' | 'classify'} type
+   * @param {string} [modelOverride]
+   * @param {string} [providerOverride]
+   * @param {string[]} [existingGroupNames]
+   * @returns {{ tokens: number, costStr: string, tokensPerRequest: number, requests: number }}
    */
   static estimateCostAndTokens(
     config: AIConfig,
@@ -130,7 +144,12 @@ export class AIClient {
   /**
    * Test the connection with a simple request.
    */
+  /**
+   * Test the connection with a simple request.
+   * @returns {Promise<{ ok: boolean; error?: string }>}
+   */
   async testConnection(): Promise<{ ok: boolean; error?: string }> {
+    // Logic: Send a ping message to verify the API key and endpoint
     try {
       const response = await this.chat('Respond with exactly: OK')
       return { ok: response.includes('OK') }
@@ -141,6 +160,13 @@ export class AIClient {
 
   /**
    * Classify tabs that the rule engine couldn't confidently categorize.
+   */
+  /**
+   * Classify tabs that the rule engine couldn't confidently categorize.
+   * @param {{ url: string; title: string; lastAccessed?: number; createdAt?: number }[]} tabs
+   * @param {GroupCategory[]} categories
+   * @param {boolean} [stripTitles=false]
+   * @returns {Promise<Map<string, GroupCategory>>}
    */
   async classifyTabs(
     tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
@@ -198,9 +224,16 @@ Only output the JSON array, no other text.`
    * Let AI freely group tabs into dynamic groups with custom names and colors.
    * Splits into batches when tab count exceeds BATCH_SIZE.
    */
+  /**
+   * Let AI freely group tabs into dynamic groups with custom names and colors.
+   * @param {{ url: string; title: string; lastAccessed?: number; createdAt?: number }[]} tabs
+   * @param {string[]} [initialExistingGroupNames]
+   * @returns {Promise<AIGroupResult[]>}
+   */
   async groupTabsFreely(
     tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
-    initialExistingGroupNames: string[] = []
+    initialExistingGroupNames: string[] = [],
+    onProgress?: (current: number, total: number) => void
   ): Promise<AIGroupResult[]> {
     if (tabs.length === 0) return []
 
@@ -212,15 +245,23 @@ Only output the JSON array, no other text.`
       throw new Error(`[timTabTool] AI safety safeguard: Single operation exceeded the safety limit of ${AIClient.MAX_REQUESTS_PER_RUN} requests to prevent run-away token billing. Please close some tabs or group in smaller batches.`)
     }
 
+    if (onProgress) {
+      onProgress(1, requiredBatches)
+    }
+
     if (tabs.length <= batchSize) {
-      return this.groupTabsBatch(tabs, 0, initialExistingGroupNames)
+      return this.groupTabsBatch(tabs, 0, initialExistingGroupNames, false, 1)
     }
 
     const allResults: AIGroupResult[] = []
     const combinedExistingNames = [...initialExistingGroupNames]
     for (let i = 0; i < tabs.length; i += batchSize) {
+      const batchNum = Math.floor(i / batchSize) + 1
+      if (onProgress) {
+        onProgress(batchNum, requiredBatches)
+      }
       const batch = tabs.slice(i, i + batchSize)
-      const batchResults = await this.groupTabsBatch(batch, i, combinedExistingNames)
+      const batchResults = await this.groupTabsBatch(batch, i, combinedExistingNames, false, batchNum)
       
       // Merge batch results into allResults based on case-insensitive group name
       for (const group of batchResults) {
@@ -237,6 +278,13 @@ Only output the JSON array, no other text.`
     return allResults
   }
 
+  /**
+   * Formats a tab into a text string for the AI prompt.
+   * @param {{ url: string; title: string; lastAccessed?: number; createdAt?: number }} tab
+   * @param {number} index
+   * @param {boolean} [stripTitles]
+   * @returns {string}
+   */
   private formatTabForPrompt(
     tab: { url: string; title: string; lastAccessed?: number; createdAt?: number },
     index: number,
@@ -262,11 +310,21 @@ Only output the JSON array, no other text.`
     return `${index}. ${quotedTitle} (${domain})${timeTag}`
   }
 
+  /**
+   * Groups a batch of tabs.
+   * @param {{ url: string; title: string; lastAccessed?: number; createdAt?: number }[]} tabs
+   * @param {number} offset
+   * @param {string[]} [existingGroupNames]
+   * @param {boolean} [stripTitles]
+   * @param {number} [batchIndex]
+   * @returns {Promise<AIGroupResult[]>}
+   */
   private async groupTabsBatch(
     tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
     offset: number,
     existingGroupNames: string[] = [],
     stripTitles = false,
+    batchIndex = 1
   ): Promise<AIGroupResult[]> {
     const tabDescriptions = tabs
       .map((t, i) => this.formatTabForPrompt(t, offset + i + 1, stripTitles))
@@ -292,19 +350,27 @@ ${tabDescriptions}
 JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
 
     try {
-      const response = await this.chat(prompt, true)
+      const response = await this.chat(prompt, true, batchIndex)
       return this.parseFreeGroupResponse(response, offset + tabs.length, offset + 1)
     } catch (err) {
       const msg = (err as Error).message
       if (!stripTitles && (msg.includes('PROHIBITED_CONTENT') || msg.includes('Prohibited Use policy') || msg.includes('promptFeedback'))) {
         console.warn('[timTabTool] Prompt blocked due to sensitive content, retrying with URLs only...')
-        return this.groupTabsBatch(tabs, offset, existingGroupNames, true)
+        return this.groupTabsBatch(tabs, offset, existingGroupNames, true, batchIndex)
       }
       throw err
     }
   }
 
+  /**
+   * Parses the JSON response from a free grouping request.
+   * @param {string} response
+   * @param {number} maxIndex
+   * @param {number} [minIndex=1]
+   * @returns {AIGroupResult[]}
+   */
   private parseFreeGroupResponse(response: string, maxIndex: number, minIndex = 1): AIGroupResult[] {
+    // Logic: Extract JSON, parse it, and construct group results
     const extracted = extractJsonSubstring(response, 'array')
     if (!extracted.startsWith('[')) {
       throw new Error(`No JSON array found in AI response: ${response.slice(0, 200)}`)
@@ -374,10 +440,18 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
    * Returns a map of tab index (0-based) to target group name,
    * or a new group descriptor if no existing group fits.
    */
+  /**
+   * Classify new tabs into existing groups by name.
+   * @param {{ url: string; title: string; lastAccessed?: number; createdAt?: number }[]} tabs
+   * @param {string[]} existingGroupNames
+   * @param {boolean} [stripTitles=false]
+   * @returns {Promise<{ index: number; group: string; newGroupName?: string; newGroupColor?: string }[]>}
+   */
   async classifyNewTabsIntoGroups(
     tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
     existingGroupNames: string[],
     stripTitles = false,
+    onProgress?: (current: number, total: number) => void
   ): Promise<{ index: number; group: string; newGroupName?: string; newGroupColor?: string }[]> {
     if (tabs.length === 0) return []
 
@@ -388,6 +462,10 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
       throw new Error(`[timTabTool] AI safety safeguard: Single operation exceeded the safety limit of ${AIClient.MAX_REQUESTS_PER_RUN} requests to prevent run-away token billing. Please close some tabs or group in smaller batches.`)
     }
 
+    if (onProgress) {
+      onProgress(1, requiredBatches)
+    }
+
     if (tabs.length <= batchSize) {
       return this.classifyNewTabsBatch(tabs, 0, existingGroupNames, stripTitles)
     }
@@ -396,6 +474,10 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
     const combinedExistingNames = [...existingGroupNames]
 
     for (let i = 0; i < tabs.length; i += batchSize) {
+      const batchNum = Math.floor(i / batchSize) + 1
+      if (onProgress) {
+        onProgress(batchNum, requiredBatches)
+      }
       const batch = tabs.slice(i, i + batchSize)
       const batchResults = await this.classifyNewTabsBatch(batch, i, combinedExistingNames, stripTitles)
       
@@ -414,6 +496,14 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
     return allResults
   }
 
+  /**
+   * Classify a batch of new tabs.
+   * @param {{ url: string; title: string; lastAccessed?: number; createdAt?: number }[]} tabs
+   * @param {number} offset
+   * @param {string[]} existingGroupNames
+   * @param {boolean} [stripTitles=false]
+   * @returns {Promise<{ index: number; group: string; newGroupName?: string; newGroupColor?: string }[]>}
+   */
   private async classifyNewTabsBatch(
     tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
     offset: number,
@@ -494,6 +584,13 @@ Only output the JSON array.`
    * Decide if the given group should be merged into one of the other existing groups.
    * Returns the name of the target group to merge into, or "KEEP" if it should remain separate.
    */
+  /**
+   * Decide if the given group should be merged into one of the other existing groups.
+   * @param {{ url: string; title: string; lastAccessed?: number; createdAt?: number }[]} tabs
+   * @param {string[]} existingGroupNames
+   * @param {boolean} [stripTitles=false]
+   * @returns {Promise<string>}
+   */
   async decideMergeGroup(
     tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
     existingGroupNames: string[],
@@ -544,11 +641,24 @@ Only output the JSON object.`
     }
   }
 
+  /**
+   * @deprecated ABANDONED: Fallback method used when AI parsing completely fails.
+   * @param {{ url: string; title: string; lastAccessed?: number; createdAt?: number }[]} tabs
+   * @param {number} [offset=0]
+   * @returns {{ index: number; group: string }[]}
+   */
   private fallbackAllToNew(tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[], offset = 0): { index: number; group: string }[] {
     return tabs.map((_, i) => ({ index: i + offset, group: 'NEW', newGroupName: 'Uncategorized', newGroupColor: 'grey' }))
   }
 
+  /**
+   * Execute an API call with exponential backoff and retry logic.
+   * @template T
+   * @param {() => Promise<T>} fn
+   * @returns {Promise<T>}
+   */
   private async executeWithRetry<T>(fn: () => Promise<T>): Promise<T> {
+    // Logic: Retry failed requests unless aborted or permanently failed
     const maxRetries = this.config.maxRetries !== undefined ? this.config.maxRetries : 2
     const isTest = typeof (globalThis as any).process !== 'undefined' && (globalThis as any).process?.env?.NODE_ENV === 'test'
     let delay = isTest ? 1 : 1000
@@ -617,7 +727,11 @@ Only output the JSON object.`
   /**
    * Enforces safety budget limitations on AI API requests to prevent run-away billing.
    */
+  /**
+   * Enforces safety budget limitations on AI API requests to prevent run-away billing.
+   */
   private checkRequestSafeguards(): void {
+    // Logic: Enforce max requests per run and rate limit per minute
     if (this.config.bypassSafeguards) return
 
     // 1. Instance limit check (per operation run)
@@ -636,12 +750,20 @@ Only output the JSON object.`
     }
   }
 
+  /**
+   * Records a global request timestamp for rate limiting.
+   */
   private static recordGlobalRequest(): void {
     AIClient.globalRequestTimestamps.push(Date.now())
   }
 
   /**
    * Generate embeddings for semantic search (OpenAI only).
+   */
+  /**
+   * Generate embeddings for semantic search (OpenAI only).
+   * @param {string[]} texts
+   * @returns {Promise<number[][] | null>}
    */
   async getEmbeddings(texts: string[]): Promise<number[][] | null> {
     if (this.config.provider !== 'openai') return null
@@ -678,20 +800,28 @@ Only output the JSON object.`
   /**
    * Send a chat completion request.
    */
-  private async chat(userMessage: string, jsonMode?: boolean): Promise<string> {
+  /**
+   * Send a chat completion request to the configured provider.
+   * @param {string} userMessage
+   * @param {boolean} [jsonMode]
+   * @param {number} [batchIndex]
+   * @returns {Promise<string>}
+   */
+  private async chat(userMessage: string, jsonMode?: boolean, batchIndex = 1): Promise<string> {
+    // Logic: Delegate request to OpenAI, Claude, or Gemini
     return this.executeWithRetry(async () => {
       const { provider } = this.config
 
       if (provider === 'claude') {
-        return this.chatClaude(userMessage, jsonMode)
+        return this.chatClaude(userMessage, jsonMode, batchIndex)
       }
 
       if (provider === 'gemini') {
-        return this.chatGemini(userMessage, jsonMode)
+        return this.chatGemini(userMessage, jsonMode, batchIndex)
       }
 
       // OpenAI / Custom (OpenAI-compatible)
-      return this.chatOpenAI(userMessage, jsonMode)
+      return this.chatOpenAI(userMessage, jsonMode, batchIndex)
     })
   }
 
@@ -706,7 +836,15 @@ Only output the JSON object.`
     return SYSTEM_PROMPT
   }
 
-  private async chatOpenAI(userMessage: string, jsonMode?: boolean): Promise<string> {
+  /**
+   * Send chat request using OpenAI format.
+   * @param {string} userMessage
+   * @param {boolean} [jsonMode]
+   * @param {number} [batchIndex]
+   * @returns {Promise<string>}
+   */
+  private async chatOpenAI(userMessage: string, jsonMode?: boolean, batchIndex = 1): Promise<string> {
+    // loop through items to handle max token continuations
     const maxContinuations = 3
     let continuations = 0
     let accumulatedContent = ''
@@ -716,8 +854,15 @@ Only output the JSON object.`
       { role: 'user', content: userMessage },
     ]
 
+    const endpoint = `${this.getBaseUrl()}/chat/completions`
+
     while (continuations <= maxContinuations) {
-      const response = await fetch(`${this.getBaseUrl()}/chat/completions`, {
+      const startTime = Date.now()
+      if (this.logger) {
+        this.logger.logRawRequest(batchIndex, endpoint, `Message len: ${userMessage.length}`, this.systemPrompt, userMessage)
+      }
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify({
@@ -730,10 +875,15 @@ Only output the JSON object.`
         signal: this.signal,
       })
 
+      const duration = Date.now() - startTime
+
       if (!response.ok) {
         let err = await response.text()
         if (!err.trim()) {
           err = response.statusText || 'Unknown Error'
+        }
+        if (this.logger) {
+          this.logger.logRawResponse(batchIndex, response.status, duration, err, undefined, `API error ${response.status}: ${err}`)
         }
         throw new Error(`API error ${response.status}: ${err}`)
       }
@@ -742,6 +892,10 @@ Only output the JSON object.`
       const choice = data.choices?.[0]
       const text = choice?.message?.content || ''
       accumulatedContent += text
+
+      if (this.logger) {
+        this.logger.logRawResponse(batchIndex, response.status, duration, text, data)
+      }
 
       if (choice) {
         const finishReason = choice.finish_reason
@@ -763,8 +917,17 @@ Only output the JSON object.`
     return accumulatedContent
   }
 
-  private async chatClaude(userMessage: string, jsonMode?: boolean): Promise<string> {
+  /**
+   * Send chat request using Anthropic Claude format.
+   * @param {string} userMessage
+   * @param {boolean} [jsonMode]
+   * @param {number} [batchIndex]
+   * @returns {Promise<string>}
+   */
+  private async chatClaude(userMessage: string, jsonMode?: boolean, batchIndex = 1): Promise<string> {
+    // loop through items to handle max token continuations
     const baseUrl = this.config.endpoint || DEFAULT_ENDPOINTS.claude
+    const endpoint = `${baseUrl}/v1/messages`
     const maxContinuations = 3
     let continuations = 0
     let accumulatedContent = ''
@@ -777,7 +940,12 @@ Only output the JSON object.`
     }
 
     while (continuations <= maxContinuations) {
-      const response = await fetch(`${baseUrl}/v1/messages`, {
+      const startTime = Date.now()
+      if (this.logger) {
+        this.logger.logRawRequest(batchIndex, endpoint, `Message len: ${userMessage.length}`, this.systemPrompt, userMessage)
+      }
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -794,10 +962,15 @@ Only output the JSON object.`
         signal: this.signal,
       })
 
+      const duration = Date.now() - startTime
+
       if (!response.ok) {
         let err = await response.text()
         if (!err.trim()) {
           err = response.statusText || 'Unknown Error'
+        }
+        if (this.logger) {
+          this.logger.logRawResponse(batchIndex, response.status, duration, err, undefined, `API error ${response.status}: ${err}`)
         }
         throw new Error(`API error ${response.status}: ${err}`)
       }
@@ -809,6 +982,10 @@ Only output the JSON object.`
         accumulatedContent += '[' + text
       } else {
         accumulatedContent += text
+      }
+
+      if (this.logger) {
+        this.logger.logRawResponse(batchIndex, response.status, duration, text, data)
       }
 
       const stopReason = data.stop_reason
@@ -835,9 +1012,18 @@ Only output the JSON object.`
     return accumulatedContent
   }
 
-  private async chatGemini(userMessage: string, jsonMode?: boolean): Promise<string> {
+  /**
+   * Send chat request using Google Gemini format.
+   * @param {string} userMessage
+   * @param {boolean} [jsonMode]
+   * @param {number} [batchIndex]
+   * @returns {Promise<string>}
+   */
+  private async chatGemini(userMessage: string, jsonMode?: boolean, batchIndex = 1): Promise<string> {
+    // loop through items to handle max token continuations
     const baseUrl = this.config.endpoint || DEFAULT_ENDPOINTS.gemini
     const model = this.config.model || this.defaultModel
+    const endpoint = `${baseUrl}/v1beta/models/${model}:generateContent`
     const maxContinuations = 3
     let continuations = 0
     let accumulatedContent = ''
@@ -847,8 +1033,13 @@ Only output the JSON object.`
     ]
 
     while (continuations <= maxContinuations) {
+      const startTime = Date.now()
+      if (this.logger) {
+        this.logger.logRawRequest(batchIndex, endpoint, `Message len: ${userMessage.length}`, this.systemPrompt, userMessage)
+      }
+
       const response = await fetch(
-        `${baseUrl}/v1beta/models/${model}:generateContent?key=${this.config.apiKey}`,
+        `${endpoint}?key=${this.config.apiKey}`,
         {
           method: 'POST',
           headers: {
@@ -869,18 +1060,27 @@ Only output the JSON object.`
         },
       )
 
+      const duration = Date.now() - startTime
+
       if (!response.ok) {
         let errText = await response.text()
         try {
           const parsed = JSON.parse(errText)
           if (parsed.promptFeedback?.blockReason === 'PROHIBITED_CONTENT' || parsed.error?.message?.includes('PROHIBITED_CONTENT')) {
-            throw new Error(`PROHIBITED_CONTENT: ${parsed.promptFeedback?.blockReasonMessage || parsed.error?.message || 'Prohibited content blocked.'}`)
+            const errMsg = `PROHIBITED_CONTENT: ${parsed.promptFeedback?.blockReasonMessage || parsed.error?.message || 'Prohibited content blocked.'}`
+            if (this.logger) {
+              this.logger.logRawResponse(batchIndex, response.status, duration, errText, parsed, errMsg)
+            }
+            throw new Error(errMsg)
           }
-        } catch {
-          // Not JSON
+        } catch (e: any) {
+          if (e.message?.startsWith('PROHIBITED_CONTENT')) throw e
         }
         if (!errText.trim()) {
           errText = response.statusText || 'Unknown Error'
+        }
+        if (this.logger) {
+          this.logger.logRawResponse(batchIndex, response.status, duration, errText, undefined, `API error ${response.status}: ${errText}`)
         }
         throw new Error(`API error ${response.status}: ${errText}`)
       }
@@ -888,12 +1088,20 @@ Only output the JSON object.`
       const data = await response.json()
       
       if (data.promptFeedback?.blockReason === 'PROHIBITED_CONTENT') {
-        throw new Error(`PROHIBITED_CONTENT: ${data.promptFeedback.blockReasonMessage || 'Prohibited content blocked.'}`)
+        const errMsg = `PROHIBITED_CONTENT: ${data.promptFeedback.blockReasonMessage || 'Prohibited content blocked.'}`
+        if (this.logger) {
+          this.logger.logRawResponse(batchIndex, response.status, duration, JSON.stringify(data), data, errMsg)
+        }
+        throw new Error(errMsg)
       }
 
       const candidate = data.candidates?.[0]
       const text = candidate?.content?.parts?.[0]?.text || ''
       accumulatedContent += text
+
+      if (this.logger) {
+        this.logger.logRawResponse(batchIndex, response.status, duration, text, data)
+      }
 
       if (candidate) {
         const finishReason = candidate.finishReason
@@ -931,7 +1139,14 @@ Only output the JSON object.`
  * Repairs a truncated JSON string by slicing up to the last known structural boundary
  * and closing all open strings, arrays, and objects.
  */
+/**
+ * Repairs a truncated JSON string by slicing up to the last known structural boundary
+ * and closing all open strings, arrays, and objects.
+ * @param {string} jsonStr
+ * @returns {string}
+ */
 function repairTruncatedJson(jsonStr: string): string {
+  // Logic: Use a stack to track bracket depth and append missing closures
   let str = jsonStr.trim()
   if (!str.startsWith('[') && !str.startsWith('{')) {
     return str

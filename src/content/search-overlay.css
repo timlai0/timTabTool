@@ -678,24 +678,25 @@
 }
 
 .atm-details-section-title {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: #86868B;
-  margin-top: 2px;
+  margin-top: 8px;
+  margin-bottom: 2px;
 }
 
 .atm-details-section-body {
   font-size: 11px;
-  line-height: 1.4;
+  line-height: 1.5;
   color: #1D1D1F;
-  background: #FFFFFF;
-  padding: 6px 8px;
+  background: #F5F5F7;
+  padding: 12px 14px;
   border-radius: 4px;
   white-space: pre-wrap;
   word-break: break-word;
-  border: 0.5px solid rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.04);
 }
 
 .atm-details-est {
@@ -742,7 +743,7 @@
   .atm-details-section-body {
     background: #1C1C1E;
     color: #F5F5F7;
-    border-color: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
   }
   .atm-details-est {
     border-top-color: rgba(255, 255, 255, 0.08);
@@ -782,7 +783,7 @@
 :host([data-theme="dark"]) .atm-details-section-body {
   background: #1C1C1E;
   color: #F5F5F7;
-  border-color: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 :host([data-theme="dark"]) .atm-details-est {
@@ -886,6 +887,34 @@
 }
 
 .atm-progress-close-btn:active {
+  transform: scale(0.96);
+}
+
+.atm-progress-extend-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  color: #007AFF;
+  background: rgba(0, 122, 255, 0.08);
+  border: 0.5px solid rgba(0, 122, 255, 0.2);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  outline: none;
+  text-decoration: none;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.atm-progress-extend-btn:hover {
+  background: rgba(0, 122, 255, 0.16);
+  color: #0056b3;
+}
+
+.atm-progress-extend-btn:active {
   transform: scale(0.96);
 }
 
@@ -1030,6 +1059,17 @@
   color: #FF6961;
 }
 
+:host([data-theme="dark"]) .atm-progress-extend-btn {
+  color: #0A84FF;
+  background: rgba(10, 132, 255, 0.15);
+  border-color: rgba(10, 132, 255, 0.3);
+}
+
+:host([data-theme="dark"]) .atm-progress-extend-btn:hover {
+  background: rgba(10, 132, 255, 0.25);
+  color: #409CFF;
+}
+
 /* ─── Closed Tabs Toggle ─── */
 
 .atm-closed-tabs-toggle {
@@ -1052,6 +1092,32 @@
   color: #1D1D1F;
 }
 
+/* ─── Footer Buttons ─── */
+
+.atm-footer-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 10px;
+  font-weight: 500;
+  font-family: inherit;
+  color: #86868B;
+  background: #F5F5F7;
+  padding: 2px 7px;
+  border-radius: 2px;
+  border: none;
+  outline: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.atm-footer-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #1D1D1F;
+}
+
 .atm-closed-tabs-checkbox {
   margin: 0;
   cursor: pointer;
@@ -1070,6 +1136,14 @@
     background: rgba(255, 255, 255, 0.1);
     color: #F5F5F7;
   }
+  .atm-footer-btn {
+    background: #2C2C2E;
+    color: #98989D;
+  }
+  .atm-footer-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #F5F5F7;
+  }
 }
 
 :host([data-theme="dark"]) .atm-closed-tabs-toggle {
@@ -1078,6 +1152,16 @@
 }
 
 :host([data-theme="dark"]) .atm-closed-tabs-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #F5F5F7;
+}
+
+:host([data-theme="dark"]) .atm-footer-btn {
+  background: #2C2C2E;
+  color: #98989D;
+}
+
+:host([data-theme="dark"]) .atm-footer-btn:hover {
   background: rgba(255, 255, 255, 0.1);
   color: #F5F5F7;
 }
@@ -1098,5 +1182,50 @@
   border-radius: 0 !important;
 }
 
+.atm-domain-chips {
+  display: flex;
+  overflow-x: auto;
+  gap: 8px;
+  padding: 8px 16px 8px;
+  white-space: nowrap;
+  background: transparent;
+  border-bottom: 0.5px solid rgba(0, 0, 0, 0.06);
+}
 
+.atm-domain-chips::-webkit-scrollbar {
+  display: none;
+}
 
+.atm-domain-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 500;
+  color: #3A3A3C;
+  background: rgba(0, 0, 0, 0.05);
+  border: 0.5px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.atm-domain-chip:hover {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+:host([data-theme="dark"]) .atm-domain-chips {
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+}
+
+:host([data-theme="dark"]) .atm-domain-chip {
+  color: #E5E5EA;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+:host([data-theme="dark"]) .atm-domain-chip:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+}
