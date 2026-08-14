@@ -275,6 +275,11 @@ Only output the JSON array, no other text.`
         }
       }
     }
+
+    if (onProgress) {
+      onProgress(requiredBatches + 1, requiredBatches)
+    }
+
     return allResults
   }
 
@@ -491,6 +496,10 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
           }
         }
       }
+    }
+
+    if (onProgress) {
+      onProgress(requiredBatches + 1, requiredBatches)
     }
 
     return allResults

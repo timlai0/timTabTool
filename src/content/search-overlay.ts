@@ -2108,7 +2108,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         if (progressDetail) {
           let detailText = status.statusText || 'Processing...'
           if (status.batchTotal && status.batchTotal > 1) {
-             detailText += ` (Batch ${status.batchCurrent || 1} of ${status.batchTotal})`
+             const current = status.batchCurrent || 1
+             if (current > status.batchTotal) {
+               detailText = 'Applying groups to browser...'
+             } else {
+               detailText += ` (Batch ${current} of ${status.batchTotal})`
+             }
           }
           progressDetail.textContent = detailText
         }
@@ -2116,8 +2121,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
            const current = status.batchCurrent || 1
            const total = status.batchTotal
            let percent = Math.round(((current - 1) / total) * 100)
+           if (current > total) {
+             percent = 100
+           }
            if (percent < 5) percent = 5
-           if (percent > 95) percent = 95
+           if (percent > 95 && current <= total) percent = 95
            progressPercent.textContent = `${percent}%`
            if (progressFill) {
              progressFill.style.width = `${percent}%`
