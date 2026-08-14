@@ -1576,6 +1576,13 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
       return
     }
 
+    // Explicitly ungroup ALL tabs from the original group before applying new groups.
+    // This prevents Chrome from breaking unrelated groups due to internal grouping bugs when re-grouping sorted tabs.
+    const allTabIds = tabs.map(t => t.id).filter((id): id is number => id !== undefined)
+    if (allTabIds.length > 0) {
+      await retryTabOperation(() => chrome.tabs.ungroup(allTabIds as [number, ...number[]]))
+    }
+
     // Apply the sub-groups to Chrome
     for (const subGroup of subGroups) {
       if (controller.signal.aborted) return
@@ -2084,14 +2091,30 @@ export async function isolateDomainTabs(windowId: number): Promise<void> {
 
 export async function sortTabsByDomainAndTitle(windowId: number): Promise<void> {
   const tabs = await chrome.tabs.query({ windowId })
-  const unpinned = tabs.filter((t) => !t.pinned)
-  const sorted = sortTabsByDomainAndTitleHelper(unpinned)
-  const tabIds = sorted.map((t) => t.id).filter((id): id is number => id !== undefined)
-  const pinnedCount = tabs.length - unpinned.length
-  if (tabIds.length > 0) {
-    await retryTabOperation(() => chrome.tabs.move(tabIds, { index: pinnedCount }))
+
+  // 1. Sort ungrouped unpinned tabs and move them to the end
+  const ungrouped = tabs.filter((t) => !t.pinned && (t.groupId === undefined || t.groupId === TAB_GROUP_ID_NONE))
+  if (ungrouped.length > 0) {
+    const sorted = sortTabsByDomainAndTitleHelper(ungrouped)
+    const tabIds = sorted.map((t) => t.id).filter((id): id is number => id !== undefined)
+    await retryTabOperation(() => chrome.tabs.move(tabIds, { index: -1 }))
   }
+
+  // 2. Sort tabs WITHIN each group
+  const groupIds = [...new Set(tabs.map(t => t.groupId).filter(id => id !== undefined && id !== TAB_GROUP_ID_NONE))]
+  for (const gid of groupIds) {
+    const groupTabs = tabs.filter(t => t.groupId === gid)
+    if (groupTabs.length > 0) {
+      const sorted = sortTabsByDomainAndTitleHelper(groupTabs)
+      const tabIds = sorted.map((t) => t.id).filter((id): id is number => id !== undefined)
+      // Find the current starting index of this group to keep it in place
+      const startIndex = Math.min(...groupTabs.map(t => t.index))
+      await retryTabOperation(() => chrome.tabs.move(tabIds, { index: startIndex }))
+    }
+  }
+
   invalidatePreviewCache(windowId)
+  debouncedUpdateNewTabsBadge(windowId)
 }
 
 /**
