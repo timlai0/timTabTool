@@ -866,18 +866,6 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       return { ok: true }
     }
 
-    case 'SORT_GROUPS_BY_NAME': {
-      const windowId = await resolveWindowId(message.payload)
-      await sortGroupsByName(windowId)
-      return { ok: true }
-    }
-
-    case 'SORT_GROUPS_BY_SIZE': {
-      const windowId = await resolveWindowId(message.payload)
-      await sortGroupsBySize(windowId)
-      return { ok: true }
-    }
-
     case 'MERGE_WINDOWS': {
       const windowId = await resolveWindowId(message.payload)
       await mergeAllWindows(windowId)

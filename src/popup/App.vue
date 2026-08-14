@@ -832,12 +832,6 @@ async function setWindowSort(windowId: number, mode: 'name' | 'size') {
     windowGroupSort.value[windowId] = 'default'
   } else {
     windowGroupSort.value[windowId] = mode
-    if (mode === 'name') {
-      await chrome.runtime.sendMessage({ action: 'SORT_GROUPS_BY_NAME', payload: { windowId } })
-    } else if (mode === 'size') {
-      await chrome.runtime.sendMessage({ action: 'SORT_GROUPS_BY_SIZE', payload: { windowId } })
-    }
-    await loadAllPreviews()
   }
 }
 
