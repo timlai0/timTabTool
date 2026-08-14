@@ -94,7 +94,7 @@ export function searchTabs(
     return timeB - timeA
   })
 
-  return results
+  return results.slice(0, 50)
 }
 
 /**

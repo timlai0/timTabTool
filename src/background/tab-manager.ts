@@ -162,7 +162,7 @@ setActivityCallback((windowId: number) => {
 })
 
 export interface OperationStatus {
-  type: 'group' | 'classify' | 'split' | 'merge' | null
+  type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | null
   error: string | null
   batchCurrent?: number
   batchTotal?: number
@@ -218,13 +218,15 @@ export function updateOperationProgress(
     }
   }).catch(() => {})
 
-  chrome.runtime.sendMessage({
-    action: 'ACTIVE_OPERATIONS_UPDATED',
-    payload: getActiveOperations()
-  }).catch(() => {})
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    chrome.runtime.sendMessage({
+      action: 'ACTIVE_OPERATIONS_UPDATED',
+      payload: getActiveOperations()
+    }).catch(() => {})
+  }
 }
 
-export function setActiveOperation(windowId: number, type: 'group' | 'classify' | 'split' | 'merge' | null, error: string | null = null): void {
+export function setActiveOperation(windowId: number, type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | null, error: string | null = null): void {
   if (type === null && error === null) {
     activeOperationsMap.delete(windowId)
   } else {
@@ -240,10 +242,12 @@ export function setActiveOperation(windowId: number, type: 'group' | 'classify' 
       autoExtendCount: autoExtendCounts.get(windowId) ?? 0,
     })
   }
-  chrome.runtime.sendMessage({
-    action: 'ACTIVE_OPERATIONS_UPDATED',
-    payload: getActiveOperations()
-  }).catch(() => {})
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    chrome.runtime.sendMessage({
+      action: 'ACTIVE_OPERATIONS_UPDATED',
+      payload: getActiveOperations()
+    }).catch(() => {})
+  }
 }
 
 export function getActiveOperations(): Record<number, OperationStatus> {
@@ -269,6 +273,18 @@ export function clearWindowCache(windowId: number): void {
   cacheIsAIGroupedMap.delete(windowId)
   titlesHiddenMap.delete(windowId)
   activeOperationsMap.delete(windowId)
+  lastAutoExtendMap.delete(windowId)
+  clearOperationTimeout(windowId)
+  const bt = badgeTimeoutsByWindow.get(windowId)
+  if (bt) {
+    clearTimeout(bt)
+    badgeTimeoutsByWindow.delete(windowId)
+  }
+  const rt = rebuildTimeoutsByWindow.get(windowId)
+  if (rt) {
+    clearTimeout(rt)
+    rebuildTimeoutsByWindow.delete(windowId)
+  }
   const controller = activeAbortControllers.get(windowId)
   if (controller) {
     controller.abort()
@@ -2090,63 +2106,78 @@ export async function isolateDomainTabs(windowId: number): Promise<void> {
 }
 
 export async function sortTabsByDomainAndTitle(windowId: number): Promise<void> {
-  const tabs = await chrome.tabs.query({ windowId })
+  setActiveOperation(windowId, 'sort')
+  try {
+    const tabs = await chrome.tabs.query({ windowId })
 
-  // 1. Sort ungrouped unpinned tabs and move them to the end
-  const ungrouped = tabs.filter((t) => !t.pinned && (t.groupId === undefined || t.groupId === TAB_GROUP_ID_NONE))
-  if (ungrouped.length > 0) {
-    const sorted = sortTabsByDomainAndTitleHelper(ungrouped)
-    const tabIds = sorted.map((t) => t.id).filter((id): id is number => id !== undefined)
-    await retryTabOperation(() => chrome.tabs.move(tabIds, { index: -1 }))
-  }
-
-  // 2. Sort tabs WITHIN each group
-  const groupIds = [...new Set(tabs.map(t => t.groupId).filter(id => id !== undefined && id !== TAB_GROUP_ID_NONE))]
-  for (const gid of groupIds) {
-    const groupTabs = tabs.filter(t => t.groupId === gid)
-    if (groupTabs.length > 0) {
-      const sorted = sortTabsByDomainAndTitleHelper(groupTabs)
+    // 1. Sort ungrouped unpinned tabs and move them to the end
+    const ungrouped = tabs.filter((t) => !t.pinned && (t.groupId === undefined || t.groupId === TAB_GROUP_ID_NONE))
+    if (ungrouped.length > 0) {
+      const sorted = sortTabsByDomainAndTitleHelper(ungrouped)
       const tabIds = sorted.map((t) => t.id).filter((id): id is number => id !== undefined)
-      // Find the current starting index of this group to keep it in place
-      const startIndex = Math.min(...groupTabs.map(t => t.index))
-      await retryTabOperation(() => chrome.tabs.move(tabIds, { index: startIndex }))
+      const originalIds = ungrouped.map((t) => t.id).filter((id): id is number => id !== undefined)
+      const isAlreadySorted = originalIds.length === tabIds.length && originalIds.every((id, i) => id === tabIds[i])
+      if (!isAlreadySorted) {
+        await retryTabOperation(() => chrome.tabs.move(tabIds, { index: -1 }))
+      }
     }
-  }
 
-  invalidatePreviewCache(windowId)
-  debouncedUpdateNewTabsBadge(windowId)
+    // 2. Sort tabs WITHIN each group
+    const groupIds = [...new Set(tabs.map(t => t.groupId).filter(id => id !== undefined && id !== TAB_GROUP_ID_NONE))]
+    for (const gid of groupIds) {
+      const groupTabs = tabs.filter(t => t.groupId === gid)
+      if (groupTabs.length > 0) {
+        const sorted = sortTabsByDomainAndTitleHelper(groupTabs)
+        const tabIds = sorted.map((t) => t.id).filter((id): id is number => id !== undefined)
+        const originalIds = groupTabs.map((t) => t.id).filter((id): id is number => id !== undefined)
+        const isAlreadySorted = originalIds.length === tabIds.length && originalIds.every((id, i) => id === tabIds[i])
+        if (!isAlreadySorted) {
+          const startIndex = Math.min(...groupTabs.map(t => t.index))
+          await retryTabOperation(() => chrome.tabs.move(tabIds, { index: startIndex }))
+        }
+      }
+    }
+
+    invalidatePreviewCache(windowId)
+    debouncedUpdateNewTabsBadge(windowId)
+  } finally {
+    setActiveOperation(windowId, null)
+  }
 }
 
 /**
  * Sort tab groups in the given window alphabetically by name.
  */
 export async function sortGroupsByName(windowId: number): Promise<void> {
-  // Logic: Abort if tab groups are not supported in the browser
-  // Programming logic: Return early if tab groups are not supported in this browser
   if (!isTabGroupsSupported()) return
-  const groups = await chrome.tabGroups.query({ windowId })
-  if (groups.length <= 1) return
+  setActiveOperation(windowId, 'sort')
+  try {
+    const groups = await chrome.tabGroups.query({ windowId })
+    if (groups.length <= 1) return
 
-  const sortedGroups = [...groups].sort((a, b) => {
-    const nameA = (a.title || groupTitleMap.get(a.id) || '').trim()
-    const nameB = (b.title || groupTitleMap.get(b.id) || '').trim()
-    return nameA.localeCompare(nameB, undefined, { sensitivity: 'base', numeric: true })
-  })
+    const sortedGroups = [...groups].sort((a, b) => {
+      const nameA = (a.title || groupTitleMap.get(a.id) || '').trim()
+      const nameB = (b.title || groupTitleMap.get(b.id) || '').trim()
+      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base', numeric: true })
+    })
 
-  const tabs = await chrome.tabs.query({ windowId })
-  const pinnedCount = tabs.filter((t) => t.pinned).length
-  let currentIndex = pinnedCount
+    const tabs = await chrome.tabs.query({ windowId })
+    const pinnedCount = tabs.filter((t) => t.pinned).length
+    let currentIndex = pinnedCount
 
-  for (const group of sortedGroups) {
-    const memberTabs = tabs.filter((t) => t.groupId === group.id)
-    const tabIds = memberTabs.map((t) => t.id).filter((id): id is number => id !== undefined)
-    if (tabIds.length > 0) {
-      await retryTabOperation(() => chrome.tabs.move(tabIds, { index: currentIndex }))
-      currentIndex += tabIds.length
+    for (const group of sortedGroups) {
+      const memberTabs = tabs.filter((t) => t.groupId === group.id)
+      const tabIds = memberTabs.map((t) => t.id).filter((id): id is number => id !== undefined)
+      if (tabIds.length > 0) {
+        await retryTabOperation(() => chrome.tabs.move(tabIds, { index: currentIndex }))
+        currentIndex += tabIds.length
+      }
     }
-  }
 
-  invalidatePreviewCache(windowId)
+    invalidatePreviewCache(windowId)
+  } finally {
+    setActiveOperation(windowId, null)
+  }
 }
 
 /**
@@ -2154,40 +2185,45 @@ export async function sortGroupsByName(windowId: number): Promise<void> {
  */
 export async function sortGroupsBySize(windowId: number): Promise<void> {
   if (!isTabGroupsSupported()) return
-  const groups = await chrome.tabGroups.query({ windowId })
-  if (groups.length <= 1) return
+  setActiveOperation(windowId, 'sort')
+  try {
+    const groups = await chrome.tabGroups.query({ windowId })
+    if (groups.length <= 1) return
 
-  const tabs = await chrome.tabs.query({ windowId })
-  const groupTabCounts = new Map<number, number>()
-  for (const group of groups) {
-    const count = tabs.filter((t) => t.groupId === group.id).length
-    groupTabCounts.set(group.id, count)
-  }
-
-  const sortedGroups = [...groups].sort((a, b) => {
-    const countA = groupTabCounts.get(a.id) ?? 0
-    const countB = groupTabCounts.get(b.id) ?? 0
-    if (countB !== countA) {
-      return countB - countA
+    const tabs = await chrome.tabs.query({ windowId })
+    const groupTabCounts = new Map<number, number>()
+    for (const group of groups) {
+      const count = tabs.filter((t) => t.groupId === group.id).length
+      groupTabCounts.set(group.id, count)
     }
-    const nameA = (a.title || groupTitleMap.get(a.id) || '').trim()
-    const nameB = (b.title || groupTitleMap.get(b.id) || '').trim()
-    return nameA.localeCompare(nameB, undefined, { sensitivity: 'base', numeric: true })
-  })
 
-  const pinnedCount = tabs.filter((t) => t.pinned).length
-  let currentIndex = pinnedCount
+    const sortedGroups = [...groups].sort((a, b) => {
+      const countA = groupTabCounts.get(a.id) ?? 0
+      const countB = groupTabCounts.get(b.id) ?? 0
+      if (countB !== countA) {
+        return countB - countA
+      }
+      const nameA = (a.title || groupTitleMap.get(a.id) || '').trim()
+      const nameB = (b.title || groupTitleMap.get(b.id) || '').trim()
+      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base', numeric: true })
+    })
 
-  for (const group of sortedGroups) {
-    const memberTabs = tabs.filter((t) => t.groupId === group.id)
-    const tabIds = memberTabs.map((t) => t.id).filter((id): id is number => id !== undefined)
-    if (tabIds.length > 0) {
-      await retryTabOperation(() => chrome.tabs.move(tabIds, { index: currentIndex }))
-      currentIndex += tabIds.length
+    const pinnedCount = tabs.filter((t) => t.pinned).length
+    let currentIndex = pinnedCount
+
+    for (const group of sortedGroups) {
+      const memberTabs = tabs.filter((t) => t.groupId === group.id)
+      const tabIds = memberTabs.map((t) => t.id).filter((id): id is number => id !== undefined)
+      if (tabIds.length > 0) {
+        await retryTabOperation(() => chrome.tabs.move(tabIds, { index: currentIndex }))
+        currentIndex += tabIds.length
+      }
     }
-  }
 
-  invalidatePreviewCache(windowId)
+    invalidatePreviewCache(windowId)
+  } finally {
+    setActiveOperation(windowId, null)
+  }
 }
 
 

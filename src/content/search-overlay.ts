@@ -969,16 +969,21 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
 
     if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onCreated) {
+      let refreshSearchTimer: ReturnType<typeof setTimeout> | null = null
       const refreshSearch = () => {
         if (visible) {
-          const input = shadow?.querySelector('.atm-input') as HTMLInputElement
-          const resList = shadow?.querySelector('.atm-results') as HTMLDivElement
-          if (input && resList) {
-            const query = input.value
-            if (!query || !query.startsWith('/')) {
-              doSearch(query, resList)
+          if (refreshSearchTimer) clearTimeout(refreshSearchTimer)
+          refreshSearchTimer = setTimeout(() => {
+            refreshSearchTimer = null
+            const input = shadow?.querySelector('.atm-input') as HTMLInputElement
+            const resList = shadow?.querySelector('.atm-results') as HTMLDivElement
+            if (input && resList) {
+              const query = input.value
+              if (!query || !query.startsWith('/')) {
+                doSearch(query, resList)
+              }
             }
-          }
+          }, 150)
         }
       }
       chrome.tabs.onCreated.addListener(refreshSearch)
