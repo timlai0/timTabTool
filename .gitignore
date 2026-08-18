@@ -7,12 +7,26 @@ dist-firefox/
 *.zip
 
 # IDE / AI tooling (not published)
+.agents/
 .claude/
 .cursor/
+.fleet/
+.gemini/
+.idea/
 .vscode/
+AGENTS.md
 CLAUDE.md
+GEMINI.md
 TODO.md
+
+# Temporary and log files
+tmp_*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # Secrets and Artifacts
 .env
+.env*.local
 web-ext-artifacts/
