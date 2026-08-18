@@ -85,8 +85,111 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let aiProgressInterval: ReturnType<typeof setInterval> | null = null
   let aiProgressTimeout: ReturnType<typeof setTimeout> | null = null
 
+  let aiStartTime: number | null = null
+  let aiBatchCurrent = 0
+  let aiBatchTotal = 0
+  let aiStatusText = 'Processing...'
+  let aiProgressTicker: ReturnType<typeof setInterval> | null = null
+
   let overlayTimeoutSeconds = 270
   let overlayTimeoutInterval: ReturnType<typeof setInterval> | null = null
+
+  /**
+   * Formats remaining seconds into a human-readable ETA string (e.g. "~12s remaining", "~1m 15s remaining").
+   * @param {number} totalSec - Total estimated remaining seconds.
+   * @returns {string} Formatted ETA text.
+   */
+  function formatEtaSeconds(totalSec: number): string {
+    if (totalSec <= 2) return 'almost done'
+    if (totalSec < 60) return `~${totalSec}s remaining`
+    const mins = Math.floor(totalSec / 60)
+    const secs = totalSec % 60
+    return secs > 0 ? `~${mins}m ${secs}s remaining` : `~${mins}m remaining`
+  }
+
+  /**
+   * Starts tracking AI progress for ETA and percentage remaining estimations.
+   * @param {string} [initialStatus] - Initial status message to display.
+   */
+  function startAIProgressTracking(initialStatus: string = 'Processing...'): void {
+    aiStartTime = Date.now()
+    aiBatchCurrent = 0
+    aiBatchTotal = 0
+    aiStatusText = initialStatus
+
+    if (aiProgressTicker) {
+      clearInterval(aiProgressTicker)
+      aiProgressTicker = null
+    }
+
+    updateAIProgressUI()
+
+    aiProgressTicker = setInterval(() => {
+      updateAIProgressUI()
+    }, 1000)
+  }
+
+  /**
+   * Stops AI progress tracking and clears internal timers.
+   */
+  function stopAIProgressTracking(): void {
+    if (aiProgressTicker) {
+      clearInterval(aiProgressTicker)
+      aiProgressTicker = null
+    }
+    aiStartTime = null
+    aiBatchCurrent = 0
+    aiBatchTotal = 0
+  }
+
+  /**
+   * Recalculates progress percentage, percentage remaining, and estimated time remaining,
+   * then updates the overlay DOM elements synchronously.
+   */
+  function updateAIProgressUI(): void {
+    if (!isAIOperating || !progressContainer) return
+
+    const elapsedSec = aiStartTime ? (Date.now() - aiStartTime) / 1000 : 0
+    let percent = 5
+
+    if (aiBatchTotal > 1) {
+      if (aiBatchCurrent > aiBatchTotal) {
+        percent = 98
+        aiStatusText = 'Applying groups to browser...'
+      } else if (aiBatchCurrent > 0) {
+        const batchBase = ((aiBatchCurrent - 1) / aiBatchTotal) * 90
+        const batchSpan = (1 / aiBatchTotal) * 90
+        const timeFactor = Math.min(0.9, (elapsedSec % 6) / 6)
+        percent = Math.round(Math.min(95, Math.max(5, batchBase + (timeFactor * batchSpan))))
+      }
+    } else {
+      if (aiStatusText.includes('Applying groups')) {
+        percent = 98
+      } else {
+        percent = Math.min(90, Math.max(5, Math.round(5 + (1 - Math.exp(-elapsedSec / 10)) * 85)))
+      }
+    }
+
+    const remainingPercent = Math.max(0, 100 - percent)
+
+    let etaString = 'Calculating ETA...'
+    if (percent > 5 && percent < 100 && elapsedSec > 0.5) {
+      const estimatedTotalSec = elapsedSec / (percent / 100)
+      const remainingSec = Math.max(1, Math.round(estimatedTotalSec - elapsedSec))
+      etaString = formatEtaSeconds(remainingSec)
+    }
+
+    if (progressPercent) {
+      progressPercent.textContent = `${percent}% (${remainingPercent}% remaining)`
+    }
+    if (progressFill) {
+      progressFill.style.width = `${percent}%`
+      progressFill.classList.remove('atm-indeterminate')
+    }
+    if (progressDetail) {
+      progressDetail.textContent = `${aiStatusText} • Est. time: ${etaString}`
+    }
+  }
 
   /**
    * Formats a timeout value in seconds to MM:SS string.
@@ -458,7 +561,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           </div>
           <div class="atm-details-est-row">
             <span class="atm-details-est-label">Cost:</span>
-            <span style="font-weight:700;color:#34C759;">Free</span>
+            <span style="font-weight:700;color:var(--group-green, #34C759);">Free</span>
           </div>
         </div>
       `)
@@ -486,7 +589,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       setHTMLContent(detailsPanel, `
         <div class="atm-details-title">${escapeHtml(result.tab.title)}</div>
         <div class="atm-details-meta">
-          <span style="color:#FF3B30;font-weight:600;">AI not configured</span>
+          <span style="color:var(--group-red, #FF3B30);font-weight:600;">AI not configured</span>
         </div>
         <div class="atm-details-section-title">Instructions</div>
         <div class="atm-details-section-body">AI is currently disabled or missing an API Key. Please enable AI and configure your connection credentials in timTabTool Settings first.</div>
@@ -591,7 +694,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         </div>
         <div class="atm-details-est-row" style="margin-top:12px;">
           <span class="atm-details-est-label">Est. Cost:</span>
-          <span style="font-weight:700;color:#007AFF;">${escapeHtml(est.costStr)}</span>
+          <span style="font-weight:700;color:var(--accent, #007AFF);">${escapeHtml(est.costStr)}</span>
         </div>
       </div>
     `)
@@ -1108,6 +1211,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       if (footer) footer.style.visibility = ''
     }
 
+    stopAIProgressTracking()
     if (progressContainer) progressContainer.style.display = 'none'
     if (progressStatus) {
       progressStatus.style.color = '' // reset color
@@ -1151,6 +1255,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (!shadow || !result.commandAction) return
 
     isAIOperating = true
+    startAIProgressTracking('Executing AI Command...')
 
     // Keep search input enabled so user can search while progress bar runs
     const input = shadow.querySelector('.atm-input') as HTMLInputElement
@@ -1257,16 +1362,17 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       }
 
       // Success!
+      stopAIProgressTracking()
       isAIOperating = false
-      if (progressPercent) progressPercent.textContent = ''
+      if (progressPercent) progressPercent.textContent = '100% (0% remaining)'
       if (progressFill) {
         progressFill.style.width = '100%'
         progressFill.classList.remove('atm-indeterminate')
-        progressFill.style.backgroundColor = '#34C759' // Glow green
+        progressFill.style.backgroundColor = 'var(--group-green, #34C759)'
       }
       if (progressStatus) {
         progressStatus.textContent = 'Success!'
-        progressStatus.style.color = '#34C759'
+        progressStatus.style.color = 'var(--group-green, #34C759)'
       }
       if (progressDetail) {
         progressDetail.textContent = 'Operation completed successfully.'
@@ -1285,6 +1391,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       }, 1500)
 
     } catch (err: any) {
+      stopAIProgressTracking()
       isAIOperating = false
       if (aiProgressInterval) {
         clearInterval(aiProgressInterval)
@@ -1297,20 +1404,20 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       if (progressFill) {
         progressFill.style.width = '100%'
         progressFill.classList.remove('atm-indeterminate')
-        progressFill.style.backgroundColor = '#FF3B30' // Red
+        progressFill.style.backgroundColor = 'var(--group-red, #FF3B30)'
       }
       if (progressStatus) {
         progressStatus.textContent = 'AI Operation Failed'
-        progressStatus.style.color = '#FF3B30'
+        progressStatus.style.color = 'var(--group-red, #FF3B30)'
       }
       if (progressDetail) {
         progressDetail.textContent = err.message || 'An unknown error occurred.'
-        progressDetail.style.color = '#FF3B30'
+        progressDetail.style.color = 'var(--group-red, #FF3B30)'
 
         if (err.message && (err.message.includes('safety safeguard') || err.message.includes('safety limit'))) {
           const btn = document.createElement('button')
           btn.textContent = 'Proceed Anyways'
-          btn.style.cssText = 'margin-top:8px;padding:4px 10px;font-size:10.5px;font-weight:600;background:#FF3B30;color:#ffffff;border:none;border-radius:4px;cursor:pointer;display:inline-block;'
+          btn.style.cssText = 'margin-top:8px;padding:4px 10px;font-size:10.5px;font-weight:600;background:var(--group-red, #FF3B30);color:#ffffff;border:none;border-radius:2px;cursor:pointer;display:inline-block;'
           btn.addEventListener('click', async () => {
             try {
               if (progressStatus) progressStatus.textContent = 'AI Grouping (Bypassing Limits)...'
@@ -1329,7 +1436,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       }
       if (progressCloseBtn) {
         progressCloseBtn.textContent = 'Dismiss'
-        progressCloseBtn.style.color = '#FF3B30'
+        progressCloseBtn.style.color = 'var(--group-red, #FF3B30)'
         progressCloseBtn.style.display = 'block'
       }
       if (progressHideBtn) {
@@ -1916,15 +2023,16 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       }
 
       // Success!
+      stopAIProgressTracking()
       isAIOperating = false
-      if (progressPercent) progressPercent.textContent = '100%'
+      if (progressPercent) progressPercent.textContent = '100% (0% remaining)'
       if (progressFill) {
         progressFill.style.width = '100%'
-        progressFill.style.backgroundColor = '#34C759'
+        progressFill.style.backgroundColor = 'var(--group-green, #34C759)'
       }
       if (progressStatus) {
         progressStatus.textContent = 'Success!'
-        progressStatus.style.color = '#34C759'
+        progressStatus.style.color = 'var(--group-green, #34C759)'
       }
       if (progressDetail) {
         progressDetail.textContent = `Default model is now set to ${displayName}.`
@@ -1945,18 +2053,18 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     } catch (err: any) {
       isAIOperating = false
       if (progressFill) {
-        progressFill.style.backgroundColor = '#FF3B30'
+        progressFill.style.backgroundColor = 'var(--group-red, #FF3B30)'
       }
       if (progressStatus) {
         progressStatus.textContent = 'Failed to update model'
-        progressStatus.style.color = '#FF3B30'
+        progressStatus.style.color = 'var(--group-red, #FF3B30)'
       }
       if (progressDetail) {
         progressDetail.textContent = err.message || 'An unknown error occurred.'
       }
       if (progressCloseBtn) {
         progressCloseBtn.textContent = 'Dismiss'
-        progressCloseBtn.style.color = '#FF3B30'
+        progressCloseBtn.style.color = 'var(--group-red, #FF3B30)'
         progressCloseBtn.style.display = 'block'
       }
       if (progressHideBtn) {
@@ -2097,6 +2205,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           switchToProgressOnlyMode()
 
           isExternalAI = true
+          startAIProgressTracking(actionTitle)
           runAICommand({
             tab: { title: actionTitle, url: 'Executing from Background...' },
             score: 0,
@@ -2110,36 +2219,24 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       if (!isAIOperating || !visible) return
       const status = message.payload?.status
       if (status) {
-        if (progressDetail) {
-          let detailText = status.statusText || 'Processing...'
-          if (status.batchTotal && status.batchTotal > 1) {
-             const current = status.batchCurrent || 1
-             if (current > status.batchTotal) {
-               detailText = 'Applying groups to browser...'
-             } else {
-               detailText += ` (Batch ${current} of ${status.batchTotal})`
-             }
+        aiBatchCurrent = status.batchCurrent || 0
+        aiBatchTotal = status.batchTotal || 0
+        if (status.statusText) {
+          aiStatusText = status.statusText
+        }
+        if (status.batchTotal && status.batchTotal > 1) {
+          const current = status.batchCurrent || 1
+          if (current > status.batchTotal) {
+            aiStatusText = 'Applying groups to browser...'
+          } else {
+            aiStatusText = `${status.statusText || 'Processing...'} (Batch ${current} of ${status.batchTotal})`
           }
-          progressDetail.textContent = detailText
         }
-        if (progressPercent && status.batchTotal && status.batchTotal > 1) {
-           const current = status.batchCurrent || 1
-           const total = status.batchTotal
-           let percent = Math.round(((current - 1) / total) * 100)
-           if (current > total) {
-             percent = 100
-           }
-           if (percent < 5) percent = 5
-           if (percent > 95 && current <= total) percent = 95
-           progressPercent.textContent = `${percent}%`
-           if (progressFill) {
-             progressFill.style.width = `${percent}%`
-             progressFill.classList.remove('atm-indeterminate')
-           }
-        }
+        updateAIProgressUI()
       }
     } else if (message?.action === 'AI_OPERATION_COMPLETE') {
       if (isAIOperating) {
+        stopAIProgressTracking()
         if (aiProgressInterval) {
           clearInterval(aiProgressInterval)
           aiProgressInterval = null
@@ -2147,15 +2244,15 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         isAIOperating = false
         isExternalAI = false
 
-        if (progressPercent) progressPercent.textContent = ''
+        if (progressPercent) progressPercent.textContent = '100% (0% remaining)'
         if (progressFill) {
           progressFill.style.width = '100%'
           progressFill.classList.remove('atm-indeterminate')
-          progressFill.style.backgroundColor = '#34C759'
+          progressFill.style.backgroundColor = 'var(--group-green, #34C759)'
         }
         if (progressStatus) {
           progressStatus.textContent = 'Success!'
-          progressStatus.style.color = '#34C759'
+          progressStatus.style.color = 'var(--group-green, #34C759)'
         }
         if (progressDetail) {
           progressDetail.textContent = 'Operation completed successfully.'
@@ -2177,6 +2274,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         syncThemeAttribute()
         switchToProgressOnlyMode()
 
+        stopAIProgressTracking()
         if (aiProgressInterval) {
           clearInterval(aiProgressInterval)
           aiProgressInterval = null
@@ -2190,18 +2288,18 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         if (progressFill) {
           progressFill.style.width = '100%'
           progressFill.classList.remove('atm-indeterminate')
-          progressFill.style.backgroundColor = '#FF3B30'
+          progressFill.style.backgroundColor = 'var(--group-red, #FF3B30)'
         }
         if (progressStatus) {
           progressStatus.textContent = 'AI Operation Failed'
-          progressStatus.style.color = '#FF3B30'
+          progressStatus.style.color = 'var(--group-red, #FF3B30)'
         }
         if (progressDetail) {
           progressDetail.textContent = message.payload?.error || 'An unknown error occurred.'
         }
         if (progressCloseBtn) {
           progressCloseBtn.textContent = 'Dismiss'
-          progressCloseBtn.style.color = '#FF3B30'
+          progressCloseBtn.style.color = 'var(--group-red, #FF3B30)'
           progressCloseBtn.style.display = 'block'
         }
         if (progressHideBtn) {
