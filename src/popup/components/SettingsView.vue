@@ -641,8 +641,8 @@ async function pasteConfig() {
       <!-- Save settings header button -->
       <button
         @click="saveSettings"
-        class="px-2.5 py-1 text-xs font-semibold rounded-sm transition-all flex items-center gap-1.5 focus:outline-none"
-        style="background: var(--accent); color: #fff;"
+        class="px-2.5 py-1 text-xs font-semibold rounded-sm transition-all flex items-center gap-1.5 focus:outline-none text-white"
+        style="background: var(--accent);"
       >
         <span v-if="saved" class="inline-flex items-center gap-1">
           <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -1244,15 +1244,15 @@ async function pasteConfig() {
                   <span 
                     class="w-2.5 h-2.5 rounded-full inline-block"
                     :class="{
-                      'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]': mcpStatus.state === 'connected',
-                      'bg-yellow-500 animate-pulse shadow-[0_0_8px_rgba(234,179,8,0.6)]': mcpStatus.state === 'connecting',
-                      'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]': mcpStatus.state === 'disconnected' || mcpStatus.state === 'disabled'
+                      'bg-green-500 shadow-[0_0_8px_rgba(52,199,89,0.6)]': mcpStatus.state === 'connected',
+                      'bg-yellow-500 animate-pulse shadow-[0_0_8px_rgba(255,159,10,0.6)]': mcpStatus.state === 'connecting',
+                      'bg-red-500 shadow-[0_0_8px_rgba(255,59,48,0.6)]': mcpStatus.state === 'disconnected' || mcpStatus.state === 'disabled'
                     }"
                     :style="{
-                      background: mcpStatus.state === 'connected' ? 'var(--group-green)' : (mcpStatus.state === 'connecting' ? '#eab308' : 'var(--group-red)')
+                      background: mcpStatus.state === 'connected' ? 'var(--group-green)' : (mcpStatus.state === 'connecting' ? 'var(--group-yellow)' : 'var(--group-red)')
                     }"
                   />
-                  <span class="text-xs font-semibold capitalize" :style="{ color: mcpStatus.state === 'connected' ? 'var(--group-green)' : (mcpStatus.state === 'connecting' ? '#eab308' : 'var(--text-primary)') }">
+                  <span class="text-xs font-semibold capitalize" :style="{ color: mcpStatus.state === 'connected' ? 'var(--group-green)' : (mcpStatus.state === 'connecting' ? 'var(--group-yellow)' : 'var(--text-primary)') }">
                     {{ mcpStatus.state }}
                   </span>
                 </div>
@@ -1270,12 +1270,12 @@ async function pasteConfig() {
               <!-- Connection Error Display -->
               <p 
                 v-if="mcpStatus.state === 'disconnected' && mcpStatus.error" 
-                class="text-[10px] leading-relaxed p-1.5 rounded-[3px] border mt-1" 
-                style="color: var(--group-red); background: rgba(239,68,68,0.06); border-color: rgba(239,68,68,0.15);"
+                class="text-[10px] leading-relaxed p-1.5 rounded-sm border mt-1" 
+                style="color: var(--group-red); background: rgba(255,59,48,0.06); border-color: rgba(255,59,48,0.15);"
               >
                 <strong>Error:</strong> {{ mcpStatus.error }}
                 <br />
-                <span v-if="mcpStatus.autoRetrySecondsLeft && mcpStatus.autoRetrySecondsLeft > 0" class="text-[9px] opacity-90">Auto-retry in <span class="font-bold" style="color: #fbbf24;">{{ mcpStatus.autoRetrySecondsLeft }}</span>s...</span>
+                <span v-if="mcpStatus.autoRetrySecondsLeft && mcpStatus.autoRetrySecondsLeft > 0" class="text-[9px] opacity-90">Auto-retry in <span class="font-bold" style="color: var(--group-yellow);">{{ mcpStatus.autoRetrySecondsLeft }}</span>s...</span>
                 <span v-else class="text-[9px] opacity-75">Auto-retrying every 5 seconds...</span>
               </p>
             </div>
@@ -1602,7 +1602,7 @@ async function pasteConfig() {
               v-if="aiLogs.length > 0"
               @click="clearAILogs"
               class="px-2 py-0.5 text-[9px] font-medium rounded-sm transition-all cursor-pointer"
-              style="background: var(--bg-primary); color: #FF3B30; border: 0.5px solid var(--border);"
+              style="background: var(--bg-primary); color: var(--group-red); border: 0.5px solid var(--border);"
               title="Clear all logs"
             >
               Clear Logs
@@ -1634,12 +1634,12 @@ async function pasteConfig() {
                 <div class="flex items-center gap-1.5 min-w-0 flex-1">
                   <!-- Status Badge -->
                   <span
-                    class="px-2 py-0.5 text-[9px] font-semibold rounded-full shrink-0 uppercase"
+                    class="px-2 py-0.5 text-[9px] font-semibold rounded-sm shrink-0 uppercase"
                     :style="log.status === 'COMPLETED'
-                      ? 'background: rgba(34, 197, 94, 0.15); color: #16a34a;'
+                      ? 'background: rgba(52, 199, 89, 0.15); color: var(--group-green);'
                       : log.status === 'RUNNING'
-                      ? 'background: rgba(234, 179, 8, 0.15); color: #ca8a04;'
-                      : 'background: rgba(239, 68, 68, 0.15); color: #dc2626;'"
+                      ? 'background: rgba(255, 159, 10, 0.15); color: var(--group-yellow);'
+                      : 'background: rgba(255, 59, 48, 0.15); color: var(--group-red);'"
                   >
                     {{ log.status }}
                   </span>

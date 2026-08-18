@@ -1149,8 +1149,8 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
         <!-- Last AI Operation Result Indicator -->
         <span v-if="lastAIResult && activeAIOperationsCount === 0" class="relative group shrink-0">
           <span 
-            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs transition-all hover:opacity-90"
-            :style="lastAIResult.error ? 'color: #FF3B30; background: rgba(255,59,48,0.1); border: 1px solid rgba(255,59,48,0.2);' : 'color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border);'"
+            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm flex items-center gap-1.5 cursor-pointer shadow-xs transition-all hover:opacity-90"
+            :style="lastAIResult.error ? 'color: var(--group-red); background: rgba(255,59,48,0.1); border: 1px solid rgba(255,59,48,0.2);' : 'color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border);'"
           >
             <svg v-if="!lastAIResult.error" class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3.25 3.25a.75.75 0 001.06-1.06L10.75 10.44V5z" clip-rule="evenodd" />
@@ -1165,8 +1165,8 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           </span>
 
           <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[280px] max-w-[calc(100vw-24px)] z-50">
-            <div class="p-3 rounded-md shadow-card text-left leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
-              <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" :style="lastAIResult.error ? 'color: #FF3B30;' : 'color: var(--accent);'">
+            <div class="p-3 rounded-sm shadow-card text-left leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+              <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" :style="lastAIResult.error ? 'color: var(--group-red);' : 'color: var(--accent);'">
                 <span class="flex items-center gap-1.5 min-w-0">
                   <svg v-if="!lastAIResult.error" class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3.25 3.25a.75.75 0 001.06-1.06L10.75 10.44V5z" clip-rule="evenodd" />
@@ -1180,7 +1180,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
               </div>
 
               <div class="flex flex-col gap-1.5 text-[10px]">
-                <div v-if="lastAIResult.error" class="text-[10.5px] font-medium whitespace-pre-wrap mt-0.5" style="color: #FF3B30;">
+                <div v-if="lastAIResult.error" class="text-[10.5px] font-medium whitespace-pre-wrap mt-0.5" style="color: var(--group-red);">
                   {{ lastAIResult.error }}
                 </div>
                 <template v-else>
@@ -1199,7 +1199,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                       <span 
                         v-for="gName in lastAIResult.createdGroupNames" 
                         :key="gName"
-                        class="px-1.5 py-0.5 rounded text-[9.5px] font-medium"
+                        class="px-1.5 py-0.5 rounded-sm text-[9.5px] font-medium"
                         style="background: var(--hover); color: var(--text-primary); border: 0.5px solid var(--border);"
                       >
                         {{ gName }}
@@ -1215,8 +1215,8 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
         <!-- Running AI Operations Indicator -->
         <span v-if="activeAIOperationsCount > 0" class="relative group shrink-0">
           <span 
-            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md flex items-center gap-1.5 cursor-pointer shadow-xs transition-all animate-pulse" 
-            style="color: #ffffff; background: var(--accent); border: 1px solid var(--accent);"
+            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm flex items-center gap-1.5 cursor-pointer shadow-xs transition-all animate-pulse text-white" 
+            style="background: var(--accent); border: 1px solid var(--accent);"
           >
             <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
             <span>{{ activeAIOperationsCount }} AI op{{ activeAIOperationsCount > 1 ? 's' : '' }} running</span>
@@ -1226,7 +1226,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           </span>
 
           <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[275px] max-w-[calc(100vw-24px)] z-50">
-            <div class="p-3 rounded-md shadow-card text-left leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+            <div class="p-3 rounded-sm shadow-card text-left leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
               <div class="font-semibold mb-2 text-xs flex items-center justify-between" style="color: var(--accent);">
                 <span class="flex items-center gap-1.5">
                   <span class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
@@ -1237,12 +1237,12 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 <div 
                   v-for="op in activeAIOperationsList" 
                   :key="op.windowId" 
-                  class="p-2.5 rounded-md bg-black/5 dark:bg-white/5 border flex flex-col gap-1 text-[10px]"
+                  class="p-2.5 rounded-sm bg-black/5 dark:bg-white/5 border flex flex-col gap-1 text-[10px]"
                   style="border-color: var(--border);"
                 >
                   <div class="flex items-center justify-between gap-2 font-medium">
                     <span class="truncate flex-1 font-semibold" style="color: var(--text-primary);">{{ op.windowName }}</span>
-                    <span class="text-[9px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wider shrink-0" style="background: var(--accent-soft); color: var(--accent);">
+                    <span class="text-[9px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wider shrink-0" style="background: var(--accent-soft); color: var(--accent);">
                       {{ op.type === 'group' ? 'Grouping' : 'Classifying' }}
                     </span>
                   </div>
@@ -1261,12 +1261,12 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           </div>
         </span>
 
-        <span class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: var(--hover); border: 1px solid var(--border);">
+        <span class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm shrink-0" style="color: var(--text-primary); background: var(--hover); border: 1px solid var(--border);">
           {{ totalTabs }} tabs · {{ totalGroups }} groups · {{ totalWindows }} windows
         </span>
 
-        <div v-if="exactDuplicatesCount > 0 || possibleDuplicatesCount > 0 || duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0" class="relative group flex items-center gap-1 text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-md shrink-0" style="color: var(--text-primary); background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3);">
-          <svg class="w-3 h-3" style="color: #ef4444;" viewBox="0 0 20 20" fill="currentColor">
+        <div v-if="exactDuplicatesCount > 0 || possibleDuplicatesCount > 0 || duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0" class="relative group flex items-center gap-1 text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm shrink-0" style="color: var(--text-primary); background: rgba(255, 59, 48, 0.15); border: 1px solid rgba(255, 59, 48, 0.3);">
+          <svg class="w-3 h-3" style="color: var(--group-red);" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
           </svg>
           <button v-if="exactDuplicatesCount > 0" class="hover:underline focus:outline-none cursor-pointer" @click="closeExactDuplicates" title="Close all exact duplicates">
@@ -1283,13 +1283,13 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
           <!-- Single Unified Duplicates Popover Card anchored at left-0 of the red pill badge -->
           <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[320px] max-w-[calc(100vw-32px)] z-50">
-            <div class="p-3 rounded-md shadow-card text-left whitespace-normal leading-relaxed transition-all duration-200 flex flex-col gap-2.5 max-h-[320px] overflow-y-auto scrollbar-thin" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+            <div class="p-3 rounded-sm shadow-card text-left whitespace-normal leading-relaxed transition-all duration-200 flex flex-col gap-2.5 max-h-[320px] overflow-y-auto scrollbar-thin" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
               
               <!-- Exact Duplicates Section -->
               <div v-if="exactDuplicatesCount > 0">
                 <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" style="color: var(--accent);">
                   <span>Exact Duplicates ({{ exactDuplicateTabs.length }})</span>
-                  <button @click.stop="closeExactDuplicates" class="text-[9px] px-1.5 py-0.5 rounded font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer">
+                  <button @click.stop="closeExactDuplicates" class="text-[9px] px-1.5 py-0.5 rounded-sm font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer">
                     Close Exact
                   </button>
                 </div>
@@ -1297,7 +1297,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   <div 
                     v-for="tab in exactDuplicateTabs" 
                     :key="tab.id" 
-                    class="flex items-center gap-2 text-[10px] p-1.5 rounded-md cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors border-b border-dashed last:border-b-0 group/tabrow"
+                    class="flex items-center gap-2 text-[10px] p-1.5 rounded-sm cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors border-b border-dashed last:border-b-0 group/tabrow"
                     style="border-color: var(--border);"
                     @click="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
                     @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
@@ -1312,7 +1312,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                       v-if="tab.id !== undefined"
                       @click.stop="closeSingleTab(tab.id)"
                       @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
-                      class="w-4 h-4 rounded flex items-center justify-center opacity-0 group-hover/tabrow:opacity-100 hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
+                      class="w-4 h-4 rounded-sm flex items-center justify-center opacity-0 group-hover/tabrow:opacity-100 hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
                       style="color: var(--text-tertiary);"
                       title="Close this tab (or Middle-click row)"
                     >
@@ -1332,23 +1332,23 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" style="color: var(--accent);">
                   <span>Possible Dupes ({{ possibleDuplicatesCount }})</span>
                   <div class="flex items-center gap-1.5">
-                    <button @click.stop="closePossibleDuplicates" class="text-[9px] px-1.5 py-0.5 rounded font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer">
+                    <button @click.stop="closePossibleDuplicates" class="text-[9px] px-1.5 py-0.5 rounded-sm font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer">
                       Close Dupes
                     </button>
-                    <button @click.stop="organizePossibleDuplicates" class="text-[9px] px-1.5 py-0.5 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);">
+                    <button @click.stop="organizePossibleDuplicates" class="text-[9px] px-1.5 py-0.5 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);">
                       Group All
                     </button>
                   </div>
                 </div>
                 <div class="flex flex-col gap-2">
-                  <div v-for="cluster in possibleDuplicateClusters" :key="cluster.cleanUrl" class="p-2 rounded-md bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
+                  <div v-for="cluster in possibleDuplicateClusters" :key="cluster.cleanUrl" class="p-2 rounded-sm bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
                     <div class="font-medium text-[9.5px] flex items-center justify-between gap-1" style="color: var(--accent);">
                       <span class="truncate min-w-0">{{ cluster.domain }} <span class="opacity-60 text-[9px]" style="color: var(--text-secondary);">({{ cluster.tabs.length }} variants)</span></span>
                       <div class="flex items-center gap-1 shrink-0">
-                        <button @click.stop="closeClusterDuplicates(cluster)" class="text-[8.5px] px-1 py-0.2 rounded font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer" title="Keep first, close other variants in this cluster">
+                        <button @click.stop="closeClusterDuplicates(cluster)" class="text-[8.5px] px-1 py-0.2 rounded-sm font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer" title="Keep first, close other variants in this cluster">
                           Dedupe
                         </button>
-                        <button @click.stop="groupCluster(cluster)" class="text-[8.5px] px-1 py-0.2 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Group these variants into a tab group">
+                        <button @click.stop="groupCluster(cluster)" class="text-[8.5px] px-1 py-0.2 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Group these variants into a tab group">
                           Group
                         </button>
                       </div>
@@ -1356,7 +1356,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                     <div 
                       v-for="tab in cluster.tabs" 
                       :key="tab.id"
-                      class="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-black/10 dark:hover:bg-white/10 transition-colors group/tabrow"
+                      class="flex items-center gap-1.5 p-1 rounded-sm cursor-pointer hover:bg-black/10 dark:hover:bg-white/10 transition-colors group/tabrow"
                       @click="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
                       @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
                     >
@@ -1370,7 +1370,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                         v-if="tab.id !== undefined"
                         @click.stop="closeSingleTab(tab.id)"
                         @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
-                        class="w-4 h-4 rounded flex items-center justify-center opacity-0 group-hover/tabrow:opacity-100 hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
+                        class="w-4 h-4 rounded-sm flex items-center justify-center opacity-0 group-hover/tabrow:opacity-100 hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
                         style="color: var(--text-tertiary);"
                         title="Close this tab (or Middle-click row)"
                       >
@@ -1390,16 +1390,16 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
               <div v-if="duplicateGroupsCount > 0">
                 <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" style="color: var(--accent);">
                   <span>Duplicate Groups ({{ duplicateGroupsCount }})</span>
-                  <button @click.stop="mergeAllDuplicateGroups" class="text-[9px] px-1.5 py-0.5 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);">
+                  <button @click.stop="mergeAllDuplicateGroups" class="text-[9px] px-1.5 py-0.5 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);">
                     Merge All
                   </button>
                 </div>
                 <div class="flex flex-col gap-2">
-                  <div v-for="cluster in duplicateGroupClusters" :key="cluster.normalized" class="p-2 rounded-md bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
+                  <div v-for="cluster in duplicateGroupClusters" :key="cluster.normalized" class="p-2 rounded-sm bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
                     <div class="font-medium text-[9.5px] flex items-center justify-between gap-1" style="color: var(--accent);">
                       <span class="truncate min-w-0">{{ cluster.originalNames[0] }} <span class="opacity-60 text-[9px]" style="color: var(--text-secondary);">({{ cluster.count }} duplicate groups)</span></span>
                       <div class="flex items-center gap-1 shrink-0">
-                        <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1 py-0.2 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Merge these duplicate groups into one">
+                        <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1 py-0.2 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Merge these duplicate groups into one">
                           Merge
                         </button>
                       </div>
@@ -1414,11 +1414,11 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   <span title="These duplicate groups span across multiple windows">Duplicate Groups (Cross-Window) ({{ crossWindowDuplicateGroupsCount }})</span>
                 </div>
                 <div class="flex flex-col gap-2">
-                  <div v-for="cluster in crossWindowDuplicateGroupClusters" :key="'cross_'+cluster.normalized" class="p-2 rounded-md bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
+                  <div v-for="cluster in crossWindowDuplicateGroupClusters" :key="'cross_'+cluster.normalized" class="p-2 rounded-sm bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
                     <div class="font-medium text-[9.5px] flex items-center justify-between gap-1" style="color: var(--accent);">
                       <span class="truncate min-w-0">{{ cluster.originalNames[0] }} <span class="opacity-60 text-[9px]" style="color: var(--text-secondary);">({{ cluster.count }} duplicate groups across windows)</span></span>
                       <div class="flex items-center gap-1 shrink-0">
-                        <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1 py-0.2 rounded font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Merge these cross-window duplicate groups into one window">
+                        <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1 py-0.2 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Merge these cross-window duplicate groups into one window">
                           Merge
                         </button>
                       </div>
@@ -1489,9 +1489,9 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
     <div
       v-if="errorMessage"
       class="mx-3 mt-2 p-2.5 rounded-sm flex items-start gap-2 shadow-xs border transition-all duration-300"
-      style="background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.25);"
+      style="background: rgba(255, 59, 48, 0.08); border-color: rgba(255, 59, 48, 0.25);"
     >
-      <svg class="w-3.5 h-3.5 shrink-0 mt-0.5" style="color: #ef4444;" viewBox="0 0 20 20" fill="currentColor">
+      <svg class="w-3.5 h-3.5 shrink-0 mt-0.5" style="color: var(--group-red);" viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
       </svg>
       <div class="flex-1 text-[10.5px] leading-normal flex flex-col gap-1.5" style="color: var(--text-primary); font-weight: 500;">
@@ -1499,8 +1499,8 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
         <button
           v-if="errorMessage.includes('safety safeguard') || errorMessage.includes('safety limit')"
           @click="handleProceedAnyways"
-          class="self-start px-2 py-0.5 text-[10px] font-semibold rounded-sm transition-all cursor-pointer flex items-center gap-1 shrink-0"
-          style="background: #ef4444; color: #ffffff;"
+          class="self-start px-2 py-0.5 text-[10px] font-semibold rounded-sm transition-all cursor-pointer flex items-center gap-1 shrink-0 text-white"
+          style="background: var(--group-red);"
         >
           <span>Proceed Anyways</span>
           <svg class="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
@@ -1531,7 +1531,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
     <!-- Empty state -->
     <div v-else-if="totalTabs === 0" class="flex-1 flex items-center justify-center py-16">
       <div class="text-center">
-        <div class="w-10 h-10 mx-auto mb-3 rounded-2xl flex items-center justify-center" style="background: var(--bg-secondary);">
+        <div class="w-10 h-10 mx-auto mb-3 rounded-sm flex items-center justify-center" style="background: var(--bg-secondary);">
           <svg class="w-5 h-5" style="color: var(--text-tertiary);" viewBox="0 0 20 20" fill="currentColor">
             <path d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10zm0 5.25a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75z" />
           </svg>
@@ -1621,10 +1621,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
               <div class="flex items-center gap-1 shrink-0">
                 <!-- Group Tabs Hero Button -->
                 <button
-                  class="px-2.5 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap"
+                  class="px-2.5 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap text-white"
                   :style="groupingWindowId === w.windowId
-                    ? { background: 'var(--group-red)', color: '#fff' }
-                    : { background: 'var(--accent)', color: '#fff' }"
+                    ? { background: 'var(--group-red)' }
+                    : { background: 'var(--accent)' }"
                   @click="groupingWindowId === w.windowId ? handleCancelGroup(w.windowId) : handleGroup(w.windowId, undefined, false, $event.shiftKey)"
                   @mouseenter="activeHoverAction = 'group'; hoveredActionWindowId = w.windowId"
                   @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
@@ -1647,7 +1647,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   v-if="newTabsCount(w) > 0"
                   class="px-2 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap shrink-0"
                   :style="classifyingWindowId === w.windowId
-                    ? { background: 'var(--group-red)', color: '#fff' }
+                    ? { background: 'var(--group-red)', color: '#ffffff' }
                     : { background: 'var(--accent-soft)', color: 'var(--accent)' }"
                   @click="classifyingWindowId === w.windowId ? handleCancelClassify(w.windowId) : handleClassifyNew(w.windowId, $event.shiftKey)"
                   @mouseenter="activeHoverAction = 'classify'; hoveredActionWindowId = w.windowId"
@@ -1671,7 +1671,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 <button
                   class="p-[5px] rounded-btn flex items-center justify-center transition-all shrink-0"
                   :style="activePromptWindowId === w.windowId
-                    ? { background: 'var(--accent)', color: '#fff' }
+                    ? { background: 'var(--accent)', color: '#ffffff' }
                     : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
                   @click="toggleOneShotPromptPopover(w.windowId)"
                   title="One-Shot AI Prompt (Custom tab grouping instruction)"
@@ -1686,7 +1686,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   <button
                     class="p-[5px] rounded-btn flex items-center justify-center transition-all shrink-0"
                     :style="(activeSortMenuWindowId === w.windowId || (windowGroupSort[w.windowId] && windowGroupSort[w.windowId] !== 'default'))
-                      ? { background: 'var(--accent)', color: '#fff' }
+                      ? { background: 'var(--accent)', color: '#ffffff' }
                       : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
                     @click="toggleSortMenuPopover(w.windowId)"
                     :title="getMessage('sort')"
@@ -1696,7 +1696,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                     </svg>
                   </button>
 
-                  <div v-if="activeSortMenuWindowId === w.windowId" class="absolute right-0 top-full mt-1 w-44 p-1 rounded-md shadow-card z-50 flex flex-col gap-0.5 text-left" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+                  <div v-if="activeSortMenuWindowId === w.windowId" class="absolute right-0 top-full mt-1 w-44 p-1 rounded-sm shadow-card z-50 flex flex-col gap-0.5 text-left" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
                     <button
                       @click="setWindowSort(w.windowId, 'name')"
                       class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
@@ -1759,7 +1759,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   <button
                     class="p-[5px] rounded-btn flex items-center justify-center transition-colors shrink-0"
                     :style="activeMoreMenuWindowId === w.windowId
-                      ? { background: 'var(--accent)', color: '#fff' }
+                      ? { background: 'var(--accent)', color: '#ffffff' }
                       : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
                     @click="toggleMoreMenuPopover(w.windowId)"
                     title="More actions"
@@ -1769,7 +1769,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                     </svg>
                   </button>
 
-                  <div v-if="activeMoreMenuWindowId === w.windowId" class="absolute right-0 top-full mt-1 w-44 p-1 rounded-md shadow-card z-50 flex flex-col gap-0.5 text-left" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+                  <div v-if="activeMoreMenuWindowId === w.windowId" class="absolute right-0 top-full mt-1 w-44 p-1 rounded-sm shadow-card z-50 flex flex-col gap-0.5 text-left" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
                     <button
                       @click="handleUngroup(w.windowId)"
                       class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
@@ -1825,7 +1825,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             </div>
 
             <!-- One-Shot Prompt Popover -->
-            <div v-if="activePromptWindowId === w.windowId" class="w-full p-2.5 rounded-md flex flex-col gap-2 transition-all shadow-card z-40" style="background: var(--bg-elevated); border: 0.5px solid var(--border);">
+            <div v-if="activePromptWindowId === w.windowId" class="w-full p-2.5 rounded-sm flex flex-col gap-2 transition-all shadow-card z-40" style="background: var(--bg-elevated); border: 0.5px solid var(--border);">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-1.5 text-[11px] font-semibold" style="color: var(--accent);">
                   <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -1841,13 +1841,13 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   type="text"
                   :placeholder="getMessage('enterCustomPromptPlaceholder')"
                   class="w-full px-2.5 py-1.5 text-[11px] rounded-sm focus:outline-none"
-                  style="background: var(--bg-main); color: var(--text-primary); border: 0.5px solid var(--border);"
+                  style="background: var(--bg-primary); color: var(--text-primary); border: 0.5px solid var(--border);"
                   @keydown.enter="runOneShotPrompt(w.windowId)"
                   @keydown.esc="activePromptWindowId = null"
                 />
                 <button
-                  class="px-3 py-1.5 text-[10px] font-medium rounded-sm transition-colors whitespace-nowrap shrink-0"
-                  style="background: var(--accent); color: #fff;"
+                  class="px-3 py-1.5 text-[10px] font-medium rounded-sm transition-colors whitespace-nowrap shrink-0 text-white"
+                  style="background: var(--accent);"
                   @click="runOneShotPrompt(w.windowId)"
                 >
                   {{ getMessage('runPrompt') }}

@@ -34,6 +34,8 @@ export default {
       borderRadius: {
         'card': '2px',
         'btn': '2px',
+        'sm': '2px',
+        'md': '2px',
       },
       transitionTimingFunction: {
         'apple': 'cubic-bezier(0.25, 0.1, 0.25, 1)',
