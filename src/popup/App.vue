@@ -4,7 +4,7 @@ import { getMessage } from '../shared/i18n'
 import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS } from '../shared/constants'
 import { SYSTEM_PROMPT, AIClient } from '../shared/ai-client'
 import { getAutoBatchSize, getOptimalFaviconUrl, detectDuplicateTabs, normalizeUrl } from '../shared/utils'
-import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInfo, LastAIResult } from '../shared/types'
+import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInfo, LastAIResult, OperationStatusInfo } from '../shared/types'
 import { APP_VERSION, BUILD_NUMBER, BUILD_STRING } from '../shared/version'
 import GroupList from './components/GroupList.vue'
 import SettingsView from './components/SettingsView.vue'
@@ -496,21 +496,87 @@ async function jumpToMostRecentTab(windowId?: number) {
 
 const isDarkActive = computed(() => document.documentElement.classList.contains('dark'))
 
-const allActiveOperations = ref<Record<number, { type: 'group' | 'classify' | null; error: string | null }>>({})
+const allActiveOperations = ref<Record<number, OperationStatusInfo>>({})
+
+function formatTimer(ms?: number): string {
+  if (!ms || ms <= 0) return '0s'
+  const totalSec = Math.round(ms / 1000)
+  const min = Math.floor(totalSec / 60)
+  const sec = totalSec % 60
+  if (min === 0) return `${sec}s`
+  return `${min}m ${sec}s`
+}
 
 const activeAIOperationsList = computed(() => {
-  const list: Array<{ windowId: number; type: 'group' | 'classify'; windowName: string }> = []
+  const list: Array<{
+    windowId: number
+    type: 'group' | 'classify' | 'split' | 'merge' | 'sort'
+    windowName: string
+    stage?: string
+    statusText?: string
+    batchCurrent?: number
+    batchTotal?: number
+    processedTabs?: number
+    totalTabs?: number
+    tabStartIndex?: number
+    tabEndIndex?: number
+    model?: string
+    provider?: string
+    discoveredGroupNames?: string[]
+    retry?: { attempt: number; maxRetries: number; delayMs: number; reason: string }
+    tokenEstimate?: { tokens: number; costStr: string }
+    timeoutRemainingSec?: number
+    elapsedMs?: number
+    estimatedRemainingMs?: number
+    percent: number
+  }> = []
+
   for (const [widStr, status] of Object.entries(allActiveOperations.value)) {
     const wid = Number(widStr)
-    const opStatus = status as { type: 'group' | 'classify' | null; error: string | null }
+    const opStatus = status as OperationStatusInfo
     if (opStatus && opStatus.type) {
       const winObj = allWindows.value.find(w => w.windowId === wid)
       const winIndex = allWindows.value.findIndex(w => w.windowId === wid)
       const name = winObj ? windowLabel(winObj, winIndex >= 0 ? winIndex : 0) : `Window ${wid}`
+      
+      let pct = 0
+      if (opStatus.stage === 'completed') {
+        pct = 100
+      } else if (opStatus.batchTotal && opStatus.batchTotal > 0 && opStatus.batchCurrent) {
+        if (opStatus.stage === 'applying') {
+          pct = 90
+        } else {
+          pct = Math.min(90, Math.round(((opStatus.batchCurrent - 0.5) / opStatus.batchTotal) * 100))
+        }
+      } else if (opStatus.stage === 'applying') {
+        pct = 85
+      } else if (opStatus.stage === 'querying') {
+        pct = 40
+      } else if (opStatus.stage === 'preparing') {
+        pct = 10
+      }
+
       list.push({
         windowId: wid,
         type: opStatus.type,
         windowName: name,
+        stage: opStatus.stage || 'querying',
+        statusText: opStatus.statusText,
+        batchCurrent: opStatus.batchCurrent,
+        batchTotal: opStatus.batchTotal,
+        processedTabs: opStatus.processedTabs,
+        totalTabs: opStatus.totalTabs,
+        tabStartIndex: opStatus.tabStartIndex,
+        tabEndIndex: opStatus.tabEndIndex,
+        model: opStatus.model || activeModel.value,
+        provider: opStatus.provider || aiSettings.value.provider,
+        discoveredGroupNames: opStatus.discoveredGroupNames,
+        retry: opStatus.retry,
+        tokenEstimate: opStatus.tokenEstimate,
+        timeoutRemainingSec: opStatus.timeoutRemainingSec,
+        elapsedMs: opStatus.elapsedMs,
+        estimatedRemainingMs: opStatus.estimatedRemainingMs,
+        percent: Math.max(5, Math.min(100, pct)),
       })
     }
   }
@@ -592,9 +658,17 @@ function handleRuntimeMessage(msg: any) {
     allActiveOperations.value = msg.payload
     for (const [widStr, status] of Object.entries(msg.payload)) {
       const wid = Number(widStr)
-      const opStatus = status as { type: 'group' | 'classify' | null; error: string | null }
+      const opStatus = status as OperationStatusInfo
       if (opStatus.type === 'group') groupingWindowId.value = wid
       if (opStatus.type === 'classify') classifyingWindowId.value = wid
+    }
+  } else if (msg?.action === 'AI_OPERATION_PROGRESS' && msg.payload) {
+    const { windowId, status } = msg.payload
+    if (windowId !== undefined && status) {
+      allActiveOperations.value = {
+        ...allActiveOperations.value,
+        [windowId]: status
+      }
     }
   } else if (msg?.action === 'START_AI_PROGRESS') {
     chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' }).then((ops) => {
@@ -1225,7 +1299,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             </svg>
           </span>
 
-          <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[275px] max-w-[calc(100vw-24px)] z-50">
+          <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[320px] max-w-[calc(100vw-24px)] z-50">
             <div class="p-3 rounded-sm shadow-card text-left leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
               <div class="font-semibold mb-2 text-xs flex items-center justify-between" style="color: var(--accent);">
                 <span class="flex items-center gap-1.5">
@@ -1233,27 +1307,90 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   <span>Active AI Operations ({{ activeAIOperationsCount }})</span>
                 </span>
               </div>
-              <div class="flex flex-col gap-2">
+              <div class="flex flex-col gap-2.5">
                 <div 
                   v-for="op in activeAIOperationsList" 
                   :key="op.windowId" 
-                  class="p-2.5 rounded-sm bg-black/5 dark:bg-white/5 border flex flex-col gap-1 text-[10px]"
+                  class="p-2.5 rounded-sm bg-black/5 dark:bg-white/5 border flex flex-col gap-1.5 text-[10px]"
                   style="border-color: var(--border);"
                 >
                   <div class="flex items-center justify-between gap-2 font-medium">
                     <span class="truncate flex-1 font-semibold" style="color: var(--text-primary);">{{ op.windowName }}</span>
-                    <span class="text-[9px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wider shrink-0" style="background: var(--accent-soft); color: var(--accent);">
-                      {{ op.type === 'group' ? 'Grouping' : 'Classifying' }}
+                    <span 
+                      class="text-[9px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wider shrink-0" 
+                      :style="op.stage === 'retrying' ? 'background: rgba(255,159,10,0.15); color: var(--group-yellow);' : 'background: var(--accent-soft); color: var(--accent);'"
+                    >
+                      {{ op.stage === 'retrying' ? 'Retrying' : (op.stage === 'applying' ? 'Applying' : (op.type === 'group' ? 'Grouping' : (op.type === 'split' ? 'Splitting' : (op.type === 'merge' ? 'Merging' : 'Classifying')))) }}
                     </span>
                   </div>
-                  <div class="flex items-center justify-between gap-2 text-[9.5px] mt-0.5" style="color: var(--text-secondary);">
-                    <span class="truncate flex-1" :title="'Processing with ' + activeModel">Processing: {{ activeModel }}</span>
-                    <button 
-                      @click.stop="op.type === 'group' ? handleCancelGroup(op.windowId) : handleCancelClassify(op.windowId)" 
-                      class="text-red-500 hover:underline font-semibold cursor-pointer shrink-0"
+
+                  <!-- Progress Bar -->
+                  <div class="w-full bg-black/10 dark:bg-white/10 rounded-full h-1.5 overflow-hidden">
+                    <div 
+                      class="h-full rounded-full transition-all duration-300" 
+                      :style="{
+                        width: op.percent + '%',
+                        background: op.stage === 'retrying' ? 'var(--group-yellow)' : (op.stage === 'applying' ? 'var(--group-green)' : 'var(--accent)')
+                      }"
+                    />
+                  </div>
+
+                  <!-- Status Text / Batch Info -->
+                  <div class="text-[9.5px] leading-tight font-medium" style="color: var(--text-primary);">
+                    {{ op.statusText || 'Processing...' }}
+                  </div>
+
+                  <!-- Batch & Tab Count Metrics -->
+                  <div class="flex items-center justify-between gap-2 text-[9px]" style="color: var(--text-secondary);">
+                    <span>
+                      <template v-if="op.batchTotal && op.batchTotal > 1">
+                        Batch {{ op.batchCurrent }}/{{ op.batchTotal }} · 
+                      </template>
+                      <template v-if="op.totalTabs">
+                        {{ op.tabStartIndex && op.tabEndIndex ? `Tabs ${op.tabStartIndex}–${op.tabEndIndex} of ${op.totalTabs}` : `${op.totalTabs} tabs total` }}
+                      </template>
+                    </span>
+                    <span v-if="op.tokenEstimate" class="tabular-nums opacity-90">
+                      {{ op.tokenEstimate.costStr }}
+                    </span>
+                  </div>
+
+                  <!-- Discovered Group Chips (if any) -->
+                  <div v-if="op.discoveredGroupNames && op.discoveredGroupNames.length > 0" class="flex flex-wrap gap-1 pt-0.5">
+                    <span 
+                      v-for="gName in op.discoveredGroupNames.slice(0, 4)" 
+                      :key="gName" 
+                      class="px-1.5 py-0.5 rounded-sm text-[8.5px] font-medium truncate max-w-[120px]"
+                      style="background: var(--hover); color: var(--text-primary); border: 0.5px solid var(--border);"
                     >
-                      Cancel
-                    </button>
+                      {{ gName }}
+                    </span>
+                    <span v-if="op.discoveredGroupNames.length > 4" class="text-[8.5px] self-center opacity-70">
+                      +{{ op.discoveredGroupNames.length - 4 }} more
+                    </span>
+                  </div>
+
+                  <!-- Elapsed & ETA & Controls -->
+                  <div class="flex items-center justify-between gap-2 text-[9px] pt-0.5 border-t border-black/5 dark:border-white/5" style="color: var(--text-secondary);">
+                    <div class="flex items-center gap-1.5 tabular-nums">
+                      <span v-if="op.elapsedMs">{{ formatTimer(op.elapsedMs) }} elapsed</span>
+                      <span v-if="op.estimatedRemainingMs && op.estimatedRemainingMs > 0">· ~{{ formatTimer(op.estimatedRemainingMs) }} left</span>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                      <button 
+                        @click.stop="handleExtendOperation(op.windowId)" 
+                        class="text-accent hover:underline font-semibold cursor-pointer"
+                        title="Extend timeout by +5 minutes"
+                      >
+                        +5m
+                      </button>
+                      <button 
+                        @click.stop="op.type === 'group' ? handleCancelGroup(op.windowId) : handleCancelClassify(op.windowId)" 
+                        class="text-red-500 hover:underline font-semibold cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1822,6 +1959,16 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   </div>
                 </div>
               </div>
+            </div>
+
+            <!-- Active Operation Progress Status Line -->
+            <div 
+              v-if="(groupingWindowId === w.windowId || classifyingWindowId === w.windowId) && allActiveOperations[w.windowId]?.statusText" 
+              class="text-[9.5px] px-1 font-medium flex items-center gap-1.5 transition-all"
+              style="color: var(--accent);"
+            >
+              <span class="animate-spin w-2 h-2 border border-current border-t-transparent rounded-full shrink-0" />
+              <span class="truncate">{{ allActiveOperations[w.windowId]?.statusText }}</span>
             </div>
 
             <!-- One-Shot Prompt Popover -->
