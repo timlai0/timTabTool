@@ -1,4 +1,4 @@
-import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory } from './types'
+import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory, AIProgressCallback, AIProgressUpdate, OperationRetryInfo } from './types'
 import type { AILogger } from './ai-logger'
 import { DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS, DEFAULT_ENDPOINTS } from './constants'
 import { getAutoBatchSize, formatTimeAgo, extractDomain, extractJsonSubstring } from './utils'
@@ -233,7 +233,7 @@ Only output the JSON array, no other text.`
   async groupTabsFreely(
     tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
     initialExistingGroupNames: string[] = [],
-    onProgress?: (current: number, total: number) => void
+    onProgress?: AIProgressCallback | ((current: number, total: number) => void)
   ): Promise<AIGroupResult[]> {
     if (tabs.length === 0) return []
 
@@ -245,23 +245,69 @@ Only output the JSON array, no other text.`
       throw new Error(`[timTabTool] AI safety safeguard: Single operation exceeded the safety limit of ${AIClient.MAX_REQUESTS_PER_RUN} requests to prevent run-away token billing. Please close some tabs or group in smaller batches.`)
     }
 
-    if (onProgress) {
-      onProgress(1, requiredBatches)
+    const reportProgress = (update: AIProgressUpdate) => {
+      if (!onProgress) return
+      try {
+        if (typeof onProgress === 'function') {
+          (onProgress as any)(update)
+          if (update.batchCurrent !== undefined && update.batchTotal !== undefined) {
+            try {
+              (onProgress as any)(update.batchCurrent, update.batchTotal)
+            } catch {}
+          }
+        }
+      } catch {}
     }
 
+    const modelName = this.config.model || DEFAULT_MODELS[this.config.provider] || 'default'
+
     if (tabs.length <= batchSize) {
-      return this.groupTabsBatch(tabs, 0, initialExistingGroupNames, false, 1)
+      reportProgress({
+        stage: 'querying',
+        statusText: `Querying ${modelName} (1 batch, ${tabs.length} tabs)...`,
+        batchCurrent: 1,
+        batchTotal: 1,
+        tabStartIndex: 1,
+        tabEndIndex: tabs.length,
+        totalTabs: tabs.length,
+        processedTabs: 0,
+      })
+      const results = await this.groupTabsBatch(tabs, 0, initialExistingGroupNames, false, 1, reportProgress)
+      reportProgress({
+        stage: 'parsing',
+        statusText: `Parsed ${results.length} group${results.length === 1 ? '' : 's'} from response`,
+        batchCurrent: 2,
+        batchTotal: 1,
+        tabStartIndex: 1,
+        tabEndIndex: tabs.length,
+        totalTabs: tabs.length,
+        processedTabs: tabs.length,
+        discoveredGroupNames: results.map(r => r.name),
+      })
+      return results
     }
 
     const allResults: AIGroupResult[] = []
     const combinedExistingNames = [...initialExistingGroupNames]
     for (let i = 0; i < tabs.length; i += batchSize) {
       const batchNum = Math.floor(i / batchSize) + 1
-      if (onProgress) {
-        onProgress(batchNum, requiredBatches)
-      }
-      const batch = tabs.slice(i, i + batchSize)
-      const batchResults = await this.groupTabsBatch(batch, i, combinedExistingNames, false, batchNum)
+      const tabStart = i + 1
+      const tabEnd = Math.min(i + batchSize, tabs.length)
+      const currentBatchTabs = tabs.slice(i, i + batchSize)
+
+      reportProgress({
+        stage: 'querying',
+        statusText: `Querying ${modelName} (Batch ${batchNum}/${requiredBatches}, tabs ${tabStart}–${tabEnd} of ${tabs.length})...`,
+        batchCurrent: batchNum,
+        batchTotal: requiredBatches,
+        tabStartIndex: tabStart,
+        tabEndIndex: tabEnd,
+        totalTabs: tabs.length,
+        processedTabs: i,
+        discoveredGroupNames: allResults.map(r => r.name),
+      })
+
+      const batchResults = await this.groupTabsBatch(currentBatchTabs, i, combinedExistingNames, false, batchNum, reportProgress)
       
       // Merge batch results into allResults based on case-insensitive group name
       for (const group of batchResults) {
@@ -274,11 +320,31 @@ Only output the JSON array, no other text.`
           combinedExistingNames.push(group.name)
         }
       }
+
+      reportProgress({
+        stage: 'parsing',
+        statusText: `Discovered ${allResults.length} group${allResults.length === 1 ? '' : 's'} so far (Batch ${batchNum}/${requiredBatches})...`,
+        batchCurrent: batchNum,
+        batchTotal: requiredBatches,
+        tabStartIndex: tabStart,
+        tabEndIndex: tabEnd,
+        totalTabs: tabs.length,
+        processedTabs: tabEnd,
+        discoveredGroupNames: allResults.map(r => r.name),
+      })
     }
 
-    if (onProgress) {
-      onProgress(requiredBatches + 1, requiredBatches)
-    }
+    reportProgress({
+      stage: 'parsing',
+      statusText: `AI clustering complete. ${allResults.length} groups generated.`,
+      batchCurrent: requiredBatches + 1,
+      batchTotal: requiredBatches,
+      tabStartIndex: 1,
+      tabEndIndex: tabs.length,
+      totalTabs: tabs.length,
+      processedTabs: tabs.length,
+      discoveredGroupNames: allResults.map(r => r.name),
+    })
 
     return allResults
   }
@@ -329,7 +395,8 @@ Only output the JSON array, no other text.`
     offset: number,
     existingGroupNames: string[] = [],
     stripTitles = false,
-    batchIndex = 1
+    batchIndex = 1,
+    onProgress?: (update: AIProgressUpdate) => void
   ): Promise<AIGroupResult[]> {
     const tabDescriptions = tabs
       .map((t, i) => this.formatTabForPrompt(t, offset + i + 1, stripTitles))
@@ -354,14 +421,24 @@ ${tabDescriptions}
 
 JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
 
+    const onRetry = (retry: OperationRetryInfo) => {
+      if (onProgress) {
+        onProgress({
+          stage: 'retrying',
+          statusText: `Rate limit / transient error. Retrying in ${(retry.delayMs / 1000).toFixed(0)}s (Attempt ${retry.attempt}/${retry.maxRetries})...`,
+          retry,
+        })
+      }
+    }
+
     try {
-      const response = await this.chat(prompt, true, batchIndex)
+      const response = await this.chat(prompt, true, batchIndex, onRetry)
       return this.parseFreeGroupResponse(response, offset + tabs.length, offset + 1)
     } catch (err) {
       const msg = (err as Error).message
       if (!stripTitles && (msg.includes('PROHIBITED_CONTENT') || msg.includes('Prohibited Use policy') || msg.includes('promptFeedback'))) {
         console.warn('[timTabTool] Prompt blocked due to sensitive content, retrying with URLs only...')
-        return this.groupTabsBatch(tabs, offset, existingGroupNames, true, batchIndex)
+        return this.groupTabsBatch(tabs, offset, existingGroupNames, true, batchIndex, onProgress)
       }
       throw err
     }
@@ -456,7 +533,7 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
     tabs: { url: string; title: string; lastAccessed?: number; createdAt?: number }[],
     existingGroupNames: string[],
     stripTitles = false,
-    onProgress?: (current: number, total: number) => void
+    onProgress?: AIProgressCallback | ((current: number, total: number) => void)
   ): Promise<{ index: number; group: string; newGroupName?: string; newGroupColor?: string }[]> {
     if (tabs.length === 0) return []
 
@@ -467,12 +544,43 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
       throw new Error(`[timTabTool] AI safety safeguard: Single operation exceeded the safety limit of ${AIClient.MAX_REQUESTS_PER_RUN} requests to prevent run-away token billing. Please close some tabs or group in smaller batches.`)
     }
 
-    if (onProgress) {
-      onProgress(1, requiredBatches)
+    const reportProgress = (update: AIProgressUpdate) => {
+      if (!onProgress) return
+      try {
+        if (typeof onProgress === 'function') {
+          (onProgress as any)(update)
+          if (update.batchCurrent !== undefined && update.batchTotal !== undefined) {
+            try {
+              (onProgress as any)(update.batchCurrent, update.batchTotal)
+            } catch {}
+          }
+        }
+      } catch {}
     }
 
+    const modelName = this.config.model || DEFAULT_MODELS[this.config.provider] || 'default'
+
     if (tabs.length <= batchSize) {
-      return this.classifyNewTabsBatch(tabs, 0, existingGroupNames, stripTitles)
+      reportProgress({
+        stage: 'querying',
+        statusText: `Classifying ${tabs.length} tab${tabs.length === 1 ? '' : 's'} with ${modelName}...`,
+        batchCurrent: 1,
+        batchTotal: 1,
+        tabStartIndex: 1,
+        tabEndIndex: tabs.length,
+        totalTabs: tabs.length,
+        processedTabs: 0,
+      })
+      const results = await this.classifyNewTabsBatch(tabs, 0, existingGroupNames, stripTitles, reportProgress)
+      reportProgress({
+        stage: 'parsing',
+        statusText: `Classified ${tabs.length} tabs into existing and new groups`,
+        batchCurrent: 2,
+        batchTotal: 1,
+        totalTabs: tabs.length,
+        processedTabs: tabs.length,
+      })
+      return results
     }
 
     const allResults: { index: number; group: string; newGroupName?: string; newGroupColor?: string }[] = []
@@ -480,27 +588,56 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
 
     for (let i = 0; i < tabs.length; i += batchSize) {
       const batchNum = Math.floor(i / batchSize) + 1
-      if (onProgress) {
-        onProgress(batchNum, requiredBatches)
-      }
-      const batch = tabs.slice(i, i + batchSize)
-      const batchResults = await this.classifyNewTabsBatch(batch, i, combinedExistingNames, stripTitles)
+      const tabStart = i + 1
+      const tabEnd = Math.min(i + batchSize, tabs.length)
+      const currentBatch = tabs.slice(i, i + batchSize)
+
+      reportProgress({
+        stage: 'querying',
+        statusText: `Classifying batch ${batchNum}/${requiredBatches} (tabs ${tabStart}–${tabEnd} of ${tabs.length}) with ${modelName}...`,
+        batchCurrent: batchNum,
+        batchTotal: requiredBatches,
+        tabStartIndex: tabStart,
+        tabEndIndex: tabEnd,
+        totalTabs: tabs.length,
+        processedTabs: i,
+        discoveredGroupNames: combinedExistingNames,
+      })
+
+      const batchResults = await this.classifyNewTabsBatch(currentBatch, i, combinedExistingNames, stripTitles, reportProgress)
       
       for (const item of batchResults) {
         allResults.push(item)
         if (item.group === 'NEW' && item.newGroupName) {
-          // If a new group was created, add it to existing names for subsequent batches
           const newNameStr = item.newGroupName
           if (!combinedExistingNames.some(n => n.toLowerCase() === newNameStr.toLowerCase())) {
             combinedExistingNames.push(item.newGroupName)
           }
         }
       }
+
+      reportProgress({
+        stage: 'parsing',
+        statusText: `Classified ${tabEnd}/${tabs.length} tabs so far...`,
+        batchCurrent: batchNum,
+        batchTotal: requiredBatches,
+        tabStartIndex: tabStart,
+        tabEndIndex: tabEnd,
+        totalTabs: tabs.length,
+        processedTabs: tabEnd,
+        discoveredGroupNames: combinedExistingNames,
+      })
     }
 
-    if (onProgress) {
-      onProgress(requiredBatches + 1, requiredBatches)
-    }
+    reportProgress({
+      stage: 'parsing',
+      statusText: `Classification complete across ${tabs.length} tabs.`,
+      batchCurrent: requiredBatches + 1,
+      batchTotal: requiredBatches,
+      totalTabs: tabs.length,
+      processedTabs: tabs.length,
+      discoveredGroupNames: combinedExistingNames,
+    })
 
     return allResults
   }
@@ -518,6 +655,7 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
     offset: number,
     existingGroupNames: string[],
     stripTitles = false,
+    onProgress?: (update: AIProgressUpdate) => void
   ): Promise<{ index: number; group: string; newGroupName?: string; newGroupColor?: string }[]> {
     const tabDescriptions = tabs
       .map((t, i) => this.formatTabForPrompt(t, i + 1, stripTitles))
@@ -538,8 +676,18 @@ Colors: grey,blue,red,yellow,green,pink,purple,cyan
 JSON format: [{"index":1,"group":"existing group name"}] or [{"index":2,"group":"NEW","newGroupName":"...","newGroupColor":"blue"}]
 Only output the JSON array.`
 
+    const onRetry = (retry: OperationRetryInfo) => {
+      if (onProgress) {
+        onProgress({
+          stage: 'retrying',
+          statusText: `Rate limit / transient error. Retrying in ${(retry.delayMs / 1000).toFixed(0)}s (Attempt ${retry.attempt}/${retry.maxRetries})...`,
+          retry,
+        })
+      }
+    }
+
     try {
-      const response = await this.chat(prompt, true)
+      const response = await this.chat(prompt, true, 1, onRetry)
 
       const extracted = extractJsonSubstring(response, 'array')
       if (!extracted.startsWith('[')) return this.fallbackAllToNew(tabs, offset)
@@ -666,7 +814,10 @@ Only output the JSON object.`
    * @param {() => Promise<T>} fn
    * @returns {Promise<T>}
    */
-  private async executeWithRetry<T>(fn: () => Promise<T>): Promise<T> {
+  private async executeWithRetry<T>(
+    fn: () => Promise<T>,
+    onRetry?: (info: OperationRetryInfo) => void
+  ): Promise<T> {
     // Logic: Retry failed requests unless aborted or permanently failed
     const maxRetries = this.config.maxRetries !== undefined ? this.config.maxRetries : 2
     const isTest = typeof (globalThis as any).process !== 'undefined' && (globalThis as any).process?.env?.NODE_ENV === 'test'
@@ -708,6 +859,21 @@ Only output the JSON object.`
           throw err
         }
 
+        const retryInfo: OperationRetryInfo = {
+          attempt: attempt + 1,
+          maxRetries,
+          delayMs: delay,
+          reason: errorMsg,
+        }
+
+        if (onRetry) {
+          onRetry(retryInfo)
+        }
+
+        if (this.logger) {
+          this.logger.logStep('API_RETRY', `Retrying API request in ${delay}ms (Attempt ${attempt + 1}/${maxRetries}): ${errorMsg}`, { attempt: attempt + 1, maxRetries, delayMs: delay })
+        }
+
         console.warn(`[timTabTool] AI API call failed: ${errorMsg}. Retrying in ${delay}ms... (Attempt ${attempt + 1}/${maxRetries})`)
 
         await new Promise<void>((resolve, reject) => {
@@ -733,9 +899,6 @@ Only output the JSON object.`
     throw new Error('executeWithRetry: unreachable')
   }
 
-  /**
-   * Enforces safety budget limitations on AI API requests to prevent run-away billing.
-   */
   /**
    * Enforces safety budget limitations on AI API requests to prevent run-away billing.
    */
@@ -768,11 +931,6 @@ Only output the JSON object.`
 
   /**
    * Generate embeddings for semantic search (OpenAI only).
-   */
-  /**
-   * Generate embeddings for semantic search (OpenAI only).
-   * @param {string[]} texts
-   * @returns {Promise<number[][] | null>}
    */
   async getEmbeddings(texts: string[]): Promise<number[][] | null> {
     if (this.config.provider !== 'openai') return null
@@ -807,16 +965,19 @@ Only output the JSON object.`
   }
 
   /**
-   * Send a chat completion request.
-   */
-  /**
    * Send a chat completion request to the configured provider.
    * @param {string} userMessage
    * @param {boolean} [jsonMode]
    * @param {number} [batchIndex]
+   * @param {Function} [onRetry]
    * @returns {Promise<string>}
    */
-  private async chat(userMessage: string, jsonMode?: boolean, batchIndex = 1): Promise<string> {
+  private async chat(
+    userMessage: string,
+    jsonMode?: boolean,
+    batchIndex = 1,
+    onRetry?: (info: OperationRetryInfo) => void
+  ): Promise<string> {
     // Logic: Delegate request to OpenAI, Claude, or Gemini
     return this.executeWithRetry(async () => {
       const { provider } = this.config
@@ -831,7 +992,7 @@ Only output the JSON object.`
 
       // OpenAI / Custom (OpenAI-compatible)
       return this.chatOpenAI(userMessage, jsonMode, batchIndex)
-    })
+    }, onRetry)
   }
 
   private get defaultModel(): string {

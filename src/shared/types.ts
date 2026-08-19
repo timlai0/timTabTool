@@ -338,19 +338,82 @@ export interface AIOperationLogEntry {
   }
 }
 /**
+ * @type {OperationStage}
+ * Represents granular progress stages of an active AI operation.
+ */
+export type OperationStage =
+  | 'idle'
+  | 'preparing'
+  | 'querying'
+  | 'retrying'
+  | 'parsing'
+  | 'applying'
+  | 'completed'
+  | 'failed'
+
+/**
+ * @interface OperationRetryInfo
+ * Information about an active retry attempt due to rate limits or transient errors.
+ */
+export interface OperationRetryInfo {
+  attempt: number
+  maxRetries: number
+  delayMs: number
+  reason: string
+}
+
+/**
+ * @interface AIProgressUpdate
+ * Payload emitted by AIClient and TabManager during progress events.
+ */
+export interface AIProgressUpdate {
+  stage?: OperationStage
+  statusText?: string
+  batchCurrent?: number
+  batchTotal?: number
+  tabStartIndex?: number
+  tabEndIndex?: number
+  totalTabs?: number
+  processedTabs?: number
+  discoveredGroupNames?: string[]
+  retry?: OperationRetryInfo
+}
+
+/**
+ * @type {AIProgressCallback}
+ */
+export type AIProgressCallback = (update: AIProgressUpdate) => void
+
+/**
  * @interface OperationStatusInfo
+ * Complete real-time status of an active operation per window.
  */
 export interface OperationStatusInfo {
-  type: 'group' | 'classify' | 'split' | 'merge' | null
+  type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | null
   error: string | null
+  stage?: OperationStage
+  statusText?: string
   batchCurrent?: number
   batchTotal?: number
   processedTabs?: number
   totalTabs?: number
-  statusText?: string
+  tabStartIndex?: number
+  tabEndIndex?: number
+  model?: string
+  provider?: string
+  discoveredGroupNames?: string[]
+  retry?: OperationRetryInfo
+  tokenEstimate?: {
+    tokens: number
+    costStr: string
+  }
+  startTimestamp?: number
+  elapsedMs?: number
+  estimatedRemainingMs?: number
   timeoutRemainingSec?: number
   timeoutEndTimestamp?: number
   lastAutoExtendTimestamp?: number
   autoExtendCount?: number
 }
+
 

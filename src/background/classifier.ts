@@ -1,4 +1,4 @@
-import type { ClassifyResult, GroupCategory, AIConfig, ChromeTabGroupColor } from '../shared/types'
+import type { ClassifyResult, GroupCategory, AIConfig, ChromeTabGroupColor, AIProgressCallback } from '../shared/types'
 import type { AILogger } from '../shared/ai-logger'
 import { DOMAIN_RULES, KEYWORD_RULES } from '../shared/rules'
 import { extractDomain } from '../shared/utils'
@@ -89,6 +89,7 @@ export interface FreeGroupResult {
  * @param {AIConfig} aiConfig - AI configuration settings.
  * @param {AbortSignal} [signal] - Optional abort signal.
  * @param {AILogger} [logger] - Optional logger instance.
+ * @param {AIProgressCallback | Function} [onProgress] - Optional progress callback.
  * @returns {Promise<FreeGroupResult[]>} The AI generated grouping result.
  */
 export async function groupTabsFreelyWithAI(
@@ -96,7 +97,7 @@ export async function groupTabsFreelyWithAI(
   aiConfig: AIConfig,
   signal?: AbortSignal,
   logger?: AILogger,
-  onProgress?: (current: number, total: number) => void
+  onProgress?: AIProgressCallback | ((current: number, total: number) => void)
 ): Promise<FreeGroupResult[]> {
   const validTabs = tabs.filter(
     (t): t is { url: string; title: string; id: number; lastAccessed?: number; createdAt?: number } => !!t.id && !!t.url,

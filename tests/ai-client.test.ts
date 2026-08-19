@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { AIClient, fetchGoogleModels, getGoogleModelPricing } from '../src/shared/ai-client'
-import type { AIConfig } from '../src/shared/types'
+import type { AIConfig, AIProgressUpdate } from '../src/shared/types'
 
 describe('getGoogleModelPricing', () => {
   it('correctly maps Gemini 3.6 Flash, Gemini 3.5 Flash Lite, and Gemini 3.5 Flash prices', () => {
@@ -391,3 +391,103 @@ describe('fetchGoogleModels', () => {
     expect(gemmaModel?.costDetails).toBe('Free')
   })
 })
+
+describe('AIClient Progress Tracking & Streaming', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    ;(AIClient as any).globalRequestTimestamps = []
+  })
+
+  it('emits progress updates during groupTabsFreely execution', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openai',
+      apiKey: 'test-key',
+    }
+    const client = new AIClient(config)
+
+    const mockResponse = {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify([
+              { name: 'Dev Tools', color: 'blue', tabIndices: [1, 2] }
+            ])
+          }
+        }
+      ]
+    }
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(mockResponse), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    ))
+
+    const progressUpdates: any[] = []
+    const tabs = [
+      { url: 'https://github.com', title: 'GitHub' },
+      { url: 'https://stackoverflow.com', title: 'Stack Overflow' },
+    ]
+
+    const result = await client.groupTabsFreely(tabs, undefined, (update: AIProgressUpdate) => {
+      progressUpdates.push(update)
+    })
+
+    expect(result.length).toBe(1)
+    expect(result[0].name).toBe('Dev Tools')
+    expect(progressUpdates.length).toBeGreaterThanOrEqual(2)
+    
+    // Check stages
+    const queryingUpdate = progressUpdates.find(u => u.stage === 'querying')
+    expect(queryingUpdate).toBeDefined()
+    expect(queryingUpdate.batchCurrent).toBe(1)
+    expect(queryingUpdate.batchTotal).toBe(1)
+    expect(queryingUpdate.totalTabs).toBe(2)
+    expect(queryingUpdate.tabStartIndex).toBe(1)
+    expect(queryingUpdate.tabEndIndex).toBe(2)
+
+    const parsingUpdate = progressUpdates.find(u => u.stage === 'parsing')
+    expect(parsingUpdate).toBeDefined()
+    expect(parsingUpdate.discoveredGroupNames).toContain('Dev Tools')
+  })
+
+  it('emits retry progress updates during transient errors', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openai',
+      apiKey: 'test-key',
+      maxRetries: 2,
+    }
+    const client = new AIClient(config)
+
+    let callCount = 0
+    const mockFetch = vi.fn().mockImplementation(() => {
+      callCount++
+      if (callCount === 1) {
+        return Promise.resolve(new Response('Rate limited', { status: 429 }))
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify([{ name: 'Test', color: 'blue', tabIndices: [1] }]) } }]
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const progressUpdates: any[] = []
+    const tabs = [{ url: 'https://example.com', title: 'Example' }]
+
+    await client.groupTabsFreely(tabs, undefined, (update: AIProgressUpdate) => {
+      progressUpdates.push(update)
+    })
+
+    const retryUpdate = progressUpdates.find(u => u.stage === 'retrying')
+    expect(retryUpdate).toBeDefined()
+    expect(retryUpdate.retry).toBeDefined()
+    expect(retryUpdate.retry.attempt).toBe(1)
+    expect(retryUpdate.retry.maxRetries).toBe(2)
+  })
+})
+
