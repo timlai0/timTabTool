@@ -89,6 +89,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let aiBatchCurrent = 0
   let aiBatchTotal = 0
   let aiStatusText = 'Processing...'
+  let aiModel = ''
+  let aiDiscoveredGroups: string[] = []
+  let aiRetryText = ''
   let aiProgressTicker: ReturnType<typeof setInterval> | null = null
 
   let overlayTimeoutSeconds = 270
@@ -116,6 +119,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     aiBatchCurrent = 0
     aiBatchTotal = 0
     aiStatusText = initialStatus
+    aiModel = ''
+    aiDiscoveredGroups = []
+    aiRetryText = ''
 
     if (aiProgressTicker) {
       clearInterval(aiProgressTicker)
@@ -140,6 +146,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     aiStartTime = null
     aiBatchCurrent = 0
     aiBatchTotal = 0
+    aiDiscoveredGroups = []
+    aiRetryText = ''
+    aiModel = ''
   }
 
   /**
@@ -187,7 +196,16 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       progressFill.classList.remove('atm-indeterminate')
     }
     if (progressDetail) {
-      progressDetail.textContent = `${aiStatusText} • Est. time: ${etaString}`
+      let detail = `${aiStatusText} • Est. time: ${etaString}`
+      if (aiRetryText) {
+        detail = `${aiRetryText} • ${detail}`
+      }
+      if (aiDiscoveredGroups.length > 0) {
+        const sample = aiDiscoveredGroups.slice(0, 3).join(', ')
+        const extra = aiDiscoveredGroups.length > 3 ? ` (+${aiDiscoveredGroups.length - 3} more)` : ''
+        detail += ` • Discovered: [${sample}${extra}]`
+      }
+      progressDetail.textContent = detail
     }
   }
 
@@ -2223,6 +2241,17 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         aiBatchTotal = status.batchTotal || 0
         if (status.statusText) {
           aiStatusText = status.statusText
+        }
+        if (status.model) {
+          aiModel = status.model
+        }
+        if (status.discoveredGroupNames && Array.isArray(status.discoveredGroupNames)) {
+          aiDiscoveredGroups = status.discoveredGroupNames
+        }
+        if (status.retry) {
+          aiRetryText = `Rate limit / retry in ${(status.retry.delayMs / 1000).toFixed(0)}s (Attempt ${status.retry.attempt}/${status.retry.maxRetries})`
+        } else {
+          aiRetryText = ''
         }
         if (status.batchTotal && status.batchTotal > 1) {
           const current = status.batchCurrent || 1
