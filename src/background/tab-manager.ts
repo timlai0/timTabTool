@@ -1,11 +1,11 @@
 import { classify, classifyTabs, groupTabsFreelyWithAI } from './classifier'
 import type { FreeGroupResult } from './classifier'
-import { GROUP_DEFINITIONS, STORAGE_KEYS, DEFAULT_SETTINGS } from '../shared/constants'
+import { GROUP_DEFINITIONS, STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_MODELS } from '../shared/constants'
 import { extractDomain, normalizeUrl, detectDuplicateTabs } from '../shared/utils'
 import { getMessage } from '../shared/i18n'
 import { AIClient, SYSTEM_PROMPT } from '../shared/ai-client'
 import { AILogger, setActivityCallback } from '../shared/ai-logger'
-import type { GroupCategory, GroupedTabs, TabInfo, ExtensionSettings, ChromeTabGroupColor, LastAIResult } from '../shared/types'
+import type { GroupCategory, GroupedTabs, TabInfo, ExtensionSettings, ChromeTabGroupColor, LastAIResult, OperationStatusInfo, OperationStage, AIProgressUpdate, OperationRetryInfo } from '../shared/types'
 
 function isTabGroupsSupported(): boolean {
   return typeof chrome !== 'undefined' && typeof chrome.tabGroups !== 'undefined'
@@ -161,48 +161,49 @@ setActivityCallback((windowId: number) => {
   autoExtendOperationTimeout(windowId)
 })
 
-export interface OperationStatus {
-  type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | null
-  error: string | null
-  batchCurrent?: number
-  batchTotal?: number
-  processedTabs?: number
-  totalTabs?: number
-  statusText?: string
-  timeoutRemainingSec?: number
-  timeoutEndTimestamp?: number
-  lastAutoExtendTimestamp?: number
-  autoExtendCount?: number
-}
+export type OperationStatus = OperationStatusInfo
 
+const operationStartTimestamps = new Map<number, number>()
 const activeOperationsMap = new Map<number, OperationStatus>()
 
 /**
  * Update the progress of an active operation and broadcast to listeners.
  * @param {number} windowId - The window ID.
- * @param {object} details - Progress details including batch info and status.
+ * @param {Partial<OperationStatusInfo>} details - Progress details including batch info, stages, and metrics.
  */
 export function updateOperationProgress(
   windowId: number,
-  details: {
-    batchCurrent?: number
-    batchTotal?: number
-    processedTabs?: number
-    totalTabs?: number
-    statusText?: string
-  }
+  details: Partial<OperationStatusInfo>
 ): void {
   // Logic: apply details to existing operation status and broadcast update
   const current = activeOperationsMap.get(windowId)
   if (!current) return
 
-  const endTs = timeoutEndTimestamps.get(windowId) ?? (Date.now() + OPERATION_TIMEOUT_MS)
-  const remainingSec = Math.max(0, Math.round((endTs - Date.now()) / 1000))
+  const startTs = operationStartTimestamps.get(windowId) ?? current.startTimestamp ?? Date.now()
+  const now = Date.now()
+  const elapsedMs = Math.max(0, now - startTs)
+
+  let estimatedRemainingMs = current.estimatedRemainingMs
+  const batchCurrent = details.batchCurrent ?? current.batchCurrent
+  const batchTotal = details.batchTotal ?? current.batchTotal
+
+  if (batchCurrent && batchTotal && batchTotal > 0 && batchCurrent > 1) {
+    const batchesCompleted = batchCurrent - 1
+    const msPerBatch = elapsedMs / batchesCompleted
+    const batchesRemaining = Math.max(0, batchTotal - batchesCompleted)
+    estimatedRemainingMs = Math.round(msPerBatch * batchesRemaining)
+  }
+
+  const endTs = timeoutEndTimestamps.get(windowId) ?? (now + OPERATION_TIMEOUT_MS)
+  const remainingSec = Math.max(0, Math.round((endTs - now) / 1000))
   const extendCount = autoExtendCounts.get(windowId) ?? 0
 
   const updated: OperationStatus = {
     ...current,
     ...details,
+    startTimestamp: startTs,
+    elapsedMs,
+    estimatedRemainingMs,
     timeoutRemainingSec: remainingSec,
     timeoutEndTimestamp: endTs,
     autoExtendCount: extendCount,
@@ -229,7 +230,9 @@ export function updateOperationProgress(
 export function setActiveOperation(windowId: number, type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | null, error: string | null = null): void {
   if (type === null && error === null) {
     activeOperationsMap.delete(windowId)
+    operationStartTimestamps.delete(windowId)
   } else {
+    const startTs = operationStartTimestamps.get(windowId) ?? Date.now()
     const endTs = timeoutEndTimestamps.get(windowId) ?? (Date.now() + OPERATION_TIMEOUT_MS)
     const remainingSec = Math.max(0, Math.round((endTs - Date.now()) / 1000))
     const existing = activeOperationsMap.get(windowId)
@@ -237,6 +240,8 @@ export function setActiveOperation(windowId: number, type: 'group' | 'classify' 
       ...existing,
       type,
       error,
+      stage: type ? 'preparing' : 'idle',
+      startTimestamp: startTs,
       timeoutRemainingSec: remainingSec,
       timeoutEndTimestamp: endTs,
       autoExtendCount: autoExtendCounts.get(windowId) ?? 0,
@@ -1031,17 +1036,29 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
 
       try {
         await setAIBadge()
+        operationStartTimestamps.set(windowId, Date.now())
+        const modelName = settings.ai.model || DEFAULT_MODELS[settings.ai.provider] || 'default'
+        const est = AIClient.estimateCostAndTokens(settings.ai, unpinnedTabs.length, 'group')
+
+        updateOperationProgress(windowId, {
+          type: 'group',
+          error: null,
+          stage: 'preparing',
+          statusText: `Analyzing ${unpinnedTabs.length} tabs & preparing prompt...`,
+          totalTabs: unpinnedTabs.length,
+          processedTabs: 0,
+          model: modelName,
+          provider: settings.ai.provider,
+          tokenEstimate: { tokens: est.tokens, costStr: est.costStr },
+        })
+
         // Make the AI call first while tabs are untouched
         const unpinnedTabsWithTime = unpinnedTabs.map((t) => ({
           ...t,
           createdAt: t.id !== undefined ? tabCreatedTimesMap.get(t.id) ?? t.lastAccessed : t.lastAccessed,
         }))
-        const freeGroups = await groupTabsFreelyWithAI(unpinnedTabsWithTime, settings.ai, controller.signal, logger, (current, total) => {
-          updateOperationProgress(windowId, {
-            batchCurrent: current,
-            batchTotal: total,
-            statusText: 'Processing...'
-          })
+        const freeGroups = await groupTabsFreelyWithAI(unpinnedTabsWithTime, settings.ai, controller.signal, logger, (update: Partial<OperationStatusInfo>) => {
+          updateOperationProgress(windowId, update)
         })
         if (controller.signal.aborted) {
           if (logger) await logger.markFailed(new Error('Operation aborted by user'))
@@ -1049,6 +1066,14 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
         }
 
         // AI succeeded! We can now ungroup all tabs and apply AI groups safely
+        updateOperationProgress(windowId, {
+          stage: 'applying',
+          statusText: `Applying ${freeGroups.length} AI groups in browser...`,
+          totalTabs: unpinnedTabs.length,
+          processedTabs: 0,
+          discoveredGroupNames: freeGroups.map(g => g.name),
+        })
+
         await ungroupAllTabs(windowId)
 
         // Bulk move tabs into sorted order before grouping to prevent UI freezing
@@ -1058,10 +1083,19 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
           await retryTabOperation(() => chrome.tabs.move(orderedTabIds, { index: pinnedCount }))
         }
 
-        for (const group of freeGroups) {
+        let appliedTabCount = 0
+        for (let gi = 0; gi < freeGroups.length; gi++) {
+          const group = freeGroups[gi]
           if (controller.signal.aborted) return
           if (group.tabIds.length === 0) continue
           if (group.name === '_ungrouped_') continue // Leave tabs ungrouped instead of creating a literal "_ungrouped_" group
+
+          updateOperationProgress(windowId, {
+            stage: 'applying',
+            statusText: `Grouping tabs into "${group.name}" (${gi + 1}/${freeGroups.length})...`,
+            processedTabs: appliedTabCount,
+            totalTabs: unpinnedTabs.length,
+          })
 
           const groupId = await retryTabOperation(() =>
             chrome.tabs.group({
@@ -1078,11 +1112,20 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
               color: group.color,
             }),
           )
+          appliedTabCount += group.tabIds.length
         }
         previewCacheMap.set(windowId, sortGroups(freeGroupsToGroupedTabs(freeGroups, tabs)))
         cacheIsAIGroupedMap.set(windowId, true)
         debouncedUpdateNewTabsBadge(windowId)
+        
+        updateOperationProgress(windowId, {
+          stage: 'completed',
+          statusText: `Organized ${unpinnedTabs.length} tabs into ${freeGroups.length} groups`,
+          processedTabs: unpinnedTabs.length,
+          totalTabs: unpinnedTabs.length,
+        })
         activeOperationsMap.delete(windowId)
+        operationStartTimestamps.delete(windowId)
 
         const finalGroups = isTabGroupsSupported() ? await chrome.tabGroups.query({ windowId }) : []
         const groupsAfter = finalGroups.length
@@ -1294,6 +1337,22 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     }
 
     await setAIBadge()
+    operationStartTimestamps.set(windowId, Date.now())
+    const modelName = settings.ai.model || DEFAULT_MODELS[settings.ai.provider] || 'default'
+    const est = AIClient.estimateCostAndTokens(settings.ai, newTabs.length, 'classify', undefined, undefined, existingGroupNames)
+
+    updateOperationProgress(windowId, {
+      type: 'classify',
+      error: null,
+      stage: 'preparing',
+      statusText: `Classifying ${newTabs.length} new tab${newTabs.length === 1 ? '' : 's'} into groups...`,
+      totalTabs: newTabs.length,
+      processedTabs: 0,
+      model: modelName,
+      provider: settings.ai.provider,
+      tokenEstimate: { tokens: est.tokens, costStr: est.costStr },
+    })
+
     const client = new AIClient(settings.ai, controller.signal, logger)
     let classifications
     try {
@@ -1306,12 +1365,8 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
         })),
         existingGroupNames,
         false,
-        (current, total) => {
-          updateOperationProgress(windowId, {
-            batchCurrent: current,
-            batchTotal: total,
-            statusText: 'Processing...'
-          })
+        (update: Partial<OperationStatusInfo>) => {
+          updateOperationProgress(windowId, update)
         }
       )
     } catch (classifyErr) {
@@ -1323,6 +1378,13 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
       if (logger) await logger.markFailed(new Error('Operation aborted'))
       return
     }
+
+    updateOperationProgress(windowId, {
+      stage: 'applying',
+      statusText: 'Applying classifications to browser tabs...',
+      totalTabs: newTabs.length,
+      processedTabs: 0,
+    })
 
     if (logger) {
       await logger.markCompleted({
@@ -1579,18 +1641,45 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
       registerTimeoutLogger(windowId, logger)
     }
 
+    const modelName = settings.ai.model || DEFAULT_MODELS[settings.ai.provider] || 'default'
+    const est = AIClient.estimateCostAndTokens(settings.ai, tabs.length, 'split')
+
+    activeOperationsMap.set(windowId, { type: 'split', error: null })
+    operationStartTimestamps.set(windowId, Date.now())
+
+    updateOperationProgress(windowId, {
+      type: 'split',
+      error: null,
+      stage: 'preparing',
+      statusText: `Splitting group into granular sub-groups (${tabs.length} tabs)...`,
+      totalTabs: tabs.length,
+      processedTabs: 0,
+      model: modelName,
+      provider: settings.ai.provider,
+      tokenEstimate: { tokens: est.tokens, costStr: est.costStr },
+    })
+
     const client = new AIClient({
       ...settings.ai,
       ...aiOverrides,
       groupingPrompt: splitPrompt
     }, controller.signal, logger)
 
-    const subGroups = await client.groupTabsFreely(tabInputs, otherGroupNames)
+    const subGroups = await client.groupTabsFreely(tabInputs, otherGroupNames, (update: Partial<OperationStatusInfo>) => {
+      updateOperationProgress(windowId, update)
+    })
 
     if (controller.signal.aborted) {
       if (logger) await logger.markFailed(new Error('Operation aborted'))
       return
     }
+
+    updateOperationProgress(windowId, {
+      stage: 'applying',
+      statusText: `Applying ${subGroups.length} sub-groups in browser...`,
+      totalTabs: tabs.length,
+      processedTabs: 0,
+    })
 
     // Explicitly ungroup ALL tabs from the original group before applying new groups.
     // This prevents Chrome from breaking unrelated groups due to internal grouping bugs when re-grouping sorted tabs.
@@ -1681,7 +1770,8 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
   const controller = new AbortController()
   setupOperationTimeout(windowId, controller)
   activeAbortControllers.set(windowId, controller)
-  activeOperationsMap.set(windowId, { type: 'group', error: null })
+  activeOperationsMap.set(windowId, { type: 'merge', error: null })
+  operationStartTimestamps.set(windowId, Date.now())
 
   try {
     const group = await chrome.tabGroups.get(groupId)
@@ -1743,10 +1833,37 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
       registerTimeoutLogger(windowId, logger)
     }
 
+    const modelName = settings.ai.model || DEFAULT_MODELS[settings.ai.provider] || 'default'
+    const est = AIClient.estimateCostAndTokens(settings.ai, tabs.length, 'merge', undefined, undefined, otherGroupNames)
+
+    updateOperationProgress(windowId, {
+      type: 'merge',
+      error: null,
+      stage: 'preparing',
+      statusText: `Evaluating merge opportunities for "${group.title || 'group'}" (${tabs.length} tabs)...`,
+      totalTabs: tabs.length,
+      processedTabs: 0,
+      model: modelName,
+      provider: settings.ai.provider,
+      tokenEstimate: { tokens: est.tokens, costStr: est.costStr },
+    })
+
     const client = new AIClient({
       ...settings.ai,
       ...aiOverrides
     }, controller.signal, logger)
+
+    updateOperationProgress(windowId, {
+      stage: 'querying',
+      statusText: `Comparing against ${otherGroupNames.length} existing group candidates...`,
+    })
+
+    const target = await client.decideMergeGroup(tabInputs, otherGroupNames)
+
+    updateOperationProgress(windowId, {
+      stage: 'applying',
+      statusText: target === 'KEEP' ? 'Group will remain separate.' : `Merging tabs into "${target}"...`,
+    })
     
     await setAIBadge()
     let mergeTarget
