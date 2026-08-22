@@ -86,6 +86,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let aiProgressTimeout: ReturnType<typeof setTimeout> | null = null
 
   let aiStartTime: number | null = null
+  let aiBatchStartTime: number | null = null
+  let lastTrackedBatch = 0
+  let lastRecordedPercent = 5
+  let smoothedRemainingSec: number | null = null
   let aiBatchCurrent = 0
   let aiBatchTotal = 0
   let aiStatusText = 'Processing...'
@@ -107,6 +111,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (totalSec < 60) return `~${totalSec}s remaining`
     const mins = Math.floor(totalSec / 60)
     const secs = totalSec % 60
+    if (mins >= 60) {
+      const hours = Math.floor(mins / 60)
+      const remMins = mins % 60
+      return `~${hours}h ${remMins}m remaining`
+    }
     return secs > 0 ? `~${mins}m ${secs}s remaining` : `~${mins}m remaining`
   }
 
@@ -116,6 +125,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
    */
   function startAIProgressTracking(initialStatus: string = 'Processing...'): void {
     aiStartTime = Date.now()
+    aiBatchStartTime = Date.now()
+    lastTrackedBatch = 0
+    lastRecordedPercent = 5
+    smoothedRemainingSec = null
     aiBatchCurrent = 0
     aiBatchTotal = 0
     aiStatusText = initialStatus
@@ -144,6 +157,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       aiProgressTicker = null
     }
     aiStartTime = null
+    aiBatchStartTime = null
+    lastTrackedBatch = 0
+    lastRecordedPercent = 5
+    smoothedRemainingSec = null
     aiBatchCurrent = 0
     aiBatchTotal = 0
     aiDiscoveredGroups = []
@@ -158,6 +175,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   function updateAIProgressUI(): void {
     if (!isAIOperating || !progressContainer) return
 
+    if (aiBatchCurrent !== lastTrackedBatch) {
+      lastTrackedBatch = aiBatchCurrent
+      aiBatchStartTime = Date.now()
+    }
+
     const elapsedSec = aiStartTime ? (Date.now() - aiStartTime) / 1000 : 0
     let percent = 5
 
@@ -168,24 +190,38 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       } else if (aiBatchCurrent > 0) {
         const batchBase = ((aiBatchCurrent - 1) / aiBatchTotal) * 90
         const batchSpan = (1 / aiBatchTotal) * 90
-        const timeFactor = Math.min(0.9, (elapsedSec % 6) / 6)
-        percent = Math.round(Math.min(95, Math.max(5, batchBase + (timeFactor * batchSpan))))
+        const batchElapsed = aiBatchStartTime ? (Date.now() - aiBatchStartTime) / 1000 : elapsedSec
+        const timeFactor = 1 - Math.exp(-batchElapsed / 30)
+        const targetPercent = Math.round(batchBase + (timeFactor * batchSpan * 0.9))
+        percent = Math.max(lastRecordedPercent, Math.min(95, Math.max(5, targetPercent)))
       }
     } else {
       if (aiStatusText.includes('Applying groups')) {
         percent = 98
       } else {
-        percent = Math.min(90, Math.max(5, Math.round(5 + (1 - Math.exp(-elapsedSec / 10)) * 85)))
+        const targetPercent = Math.round(5 + (1 - Math.exp(-elapsedSec / 20)) * 85)
+        percent = Math.max(lastRecordedPercent, Math.min(90, Math.max(5, targetPercent)))
       }
     }
 
+    lastRecordedPercent = percent
     const remainingPercent = Math.max(0, 100 - percent)
 
     let etaString = 'Calculating ETA...'
-    if (percent > 5 && percent < 100 && elapsedSec > 0.5) {
-      const estimatedTotalSec = elapsedSec / (percent / 100)
-      const remainingSec = Math.max(1, Math.round(estimatedTotalSec - elapsedSec))
-      etaString = formatEtaSeconds(remainingSec)
+    if (percent > 5 && percent < 100 && elapsedSec > 1) {
+      let rawRemaining = 0
+      if (aiBatchTotal > 1 && aiBatchCurrent > 1) {
+        const completedBatches = aiBatchCurrent - 1
+        const avgBatchSec = elapsedSec / completedBatches
+        const batchElapsed = aiBatchStartTime ? (Date.now() - aiBatchStartTime) / 1000 : 0
+        const remainingBatches = aiBatchTotal - completedBatches
+        rawRemaining = Math.max(1, Math.round(remainingBatches * avgBatchSec - batchElapsed))
+      } else {
+        const estimatedTotalSec = elapsedSec / Math.max(0.05, percent / 100)
+        rawRemaining = Math.max(1, Math.round(estimatedTotalSec - elapsedSec))
+      }
+      smoothedRemainingSec = smoothedRemainingSec === null ? rawRemaining : Math.round(smoothedRemainingSec * 0.85 + rawRemaining * 0.15)
+      etaString = formatEtaSeconds(smoothedRemainingSec)
     }
 
     if (progressPercent) {
@@ -2018,7 +2054,6 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       if (modelId.includes('/')) {
         provider = 'openrouter'
         maxTokens = modelId === 'stealth/ox-alpha' ? 131072 : 16384
-      } else if (modelId.startsWith('gemini') || modelId.startsWith('gemma')) {
         provider = 'gemini'
         maxTokens = 65536
       } else if (modelId.startsWith('gpt')) {
