@@ -788,6 +788,13 @@ const activeModel = computed(() => {
   return DEFAULT_MODELS[aiSettings.value.provider] || 'gpt-4o-mini'
 })
 
+const isAIConfigured = computed(() => {
+  return Boolean(
+    aiSettings.value.enabled &&
+    (aiSettings.value.apiKey || aiSettings.value.provider === 'custom')
+  )
+})
+
 function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classify' | null = 'group') {
   const type = countType === 'classify' ? 'classify' : 'group'
   const tabsCount = type === 'group' ? unpinnedTabsCount(w) : newTabsCount(w)
@@ -1220,72 +1227,6 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           <h1 class="text-[15px] font-semibold tracking-tight" style="color: var(--text-primary);">timTabTool</h1>
           <span class="text-[9px] font-medium opacity-60 tabular-nums px-1 py-0.2 rounded-xs" style="color: var(--text-secondary); background: var(--hover);">{{ APP_VERSION }}b{{ BUILD_NUMBER }}</span>
         </div>
-        <!-- Last AI Operation Result Indicator -->
-        <span v-if="lastAIResult && activeAIOperationsCount === 0" class="relative group shrink-0">
-          <span 
-            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm flex items-center gap-1.5 cursor-pointer shadow-xs transition-all hover:opacity-90"
-            :style="lastAIResult.error ? 'color: var(--group-red); background: rgba(255,59,48,0.1); border: 1px solid rgba(255,59,48,0.2);' : 'color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border);'"
-          >
-            <svg v-if="!lastAIResult.error" class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3.25 3.25a.75.75 0 001.06-1.06L10.75 10.44V5z" clip-rule="evenodd" />
-            </svg>
-            <svg v-else class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
-            </svg>
-            <span>{{ lastAIResult.error ? 'AI Failed' : 'AI: ' + lastAIResult.summary }}</span>
-            <svg class="w-2.5 h-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
-            </svg>
-          </span>
-
-          <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[280px] max-w-[calc(100vw-24px)] z-50">
-            <div class="p-3 rounded-sm shadow-card text-left leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
-              <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" :style="lastAIResult.error ? 'color: var(--group-red);' : 'color: var(--accent);'">
-                <span class="flex items-center gap-1.5 min-w-0">
-                  <svg v-if="!lastAIResult.error" class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3.25 3.25a.75.75 0 001.06-1.06L10.75 10.44V5z" clip-rule="evenodd" />
-                  </svg>
-                  <svg v-else class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
-                  </svg>
-                  <span class="truncate">{{ lastAIResult.actionTitle || 'Last AI Operation' }}</span>
-                </span>
-                <span class="text-[9px] opacity-60 font-normal shrink-0" style="color: var(--text-tertiary);">{{ formatTimeAgo(lastAIResult.timestamp) }}</span>
-              </div>
-
-              <div class="flex flex-col gap-1.5 text-[10px]">
-                <div v-if="lastAIResult.error" class="text-[10.5px] font-medium whitespace-pre-wrap mt-0.5" style="color: var(--group-red);">
-                  {{ lastAIResult.error }}
-                </div>
-                <template v-else>
-                  <div class="flex items-center justify-between" style="color: var(--text-secondary);">
-                    <span>Tabs Processed:</span>
-                    <span class="font-semibold tabular-nums" style="color: var(--text-primary);">{{ lastAIResult.tabsProcessed }} tabs</span>
-                  </div>
-                  <div v-if="lastAIResult.groupsBefore !== undefined && lastAIResult.groupsAfter !== undefined" class="flex items-center justify-between" style="color: var(--text-secondary);">
-                    <span>Group Count:</span>
-                    <span class="font-semibold tabular-nums" style="color: var(--text-primary);">{{ lastAIResult.groupsBefore }} → {{ lastAIResult.groupsAfter }} groups</span>
-                  </div>
-
-                  <div v-if="lastAIResult.createdGroupNames && lastAIResult.createdGroupNames.length > 0" class="mt-1 pt-1.5 border-t" style="border-color: var(--border);">
-                    <div class="text-[9px] uppercase font-bold tracking-wider mb-1" style="color: var(--text-tertiary);">Groups Created / Categorized</div>
-                    <div class="flex flex-wrap gap-1">
-                      <span 
-                        v-for="gName in lastAIResult.createdGroupNames" 
-                        :key="gName"
-                        class="px-1.5 py-0.5 rounded-sm text-[9.5px] font-medium"
-                        style="background: var(--hover); color: var(--text-primary); border: 0.5px solid var(--border);"
-                      >
-                        {{ gName }}
-                      </span>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </div>
-        </span>
-
         <!-- Running AI Operations Indicator -->
         <span v-if="activeAIOperationsCount > 0" class="relative group shrink-0">
           <span 
@@ -1394,6 +1335,122 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </span>
+
+        <!-- Last AI Operation Result Indicator -->
+        <span v-else-if="lastAIResult" class="relative group shrink-0">
+          <span 
+            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm flex items-center gap-1.5 cursor-pointer shadow-xs transition-all hover:opacity-90"
+            :style="lastAIResult.error ? 'color: var(--group-red); background: rgba(255,59,48,0.1); border: 1px solid rgba(255,59,48,0.2);' : 'color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border);'"
+          >
+            <svg v-if="!lastAIResult.error" class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3.25 3.25a.75.75 0 001.06-1.06L10.75 10.44V5z" clip-rule="evenodd" />
+            </svg>
+            <svg v-else class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
+            </svg>
+            <span>{{ lastAIResult.error ? 'AI Failed' : 'AI: ' + lastAIResult.summary }}</span>
+            <svg class="w-2.5 h-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+            </svg>
+          </span>
+
+          <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[280px] max-w-[calc(100vw-24px)] z-50">
+            <div class="p-3 rounded-sm shadow-card text-left leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+              <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" :style="lastAIResult.error ? 'color: var(--group-red);' : 'color: var(--accent);'">
+                <span class="flex items-center gap-1.5 min-w-0">
+                  <svg v-if="!lastAIResult.error" class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3.25 3.25a.75.75 0 001.06-1.06L10.75 10.44V5z" clip-rule="evenodd" />
+                  </svg>
+                  <svg v-else class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
+                  </svg>
+                  <span class="truncate">{{ lastAIResult.actionTitle || 'Last AI Operation' }}</span>
+                </span>
+                <span class="text-[9px] opacity-60 font-normal shrink-0" style="color: var(--text-tertiary);">{{ formatTimeAgo(lastAIResult.timestamp) }}</span>
+              </div>
+
+              <div class="flex flex-col gap-1.5 text-[10px]">
+                <div v-if="lastAIResult.error" class="text-[10.5px] font-medium whitespace-pre-wrap mt-0.5" style="color: var(--group-red);">
+                  {{ lastAIResult.error }}
+                </div>
+                <template v-else>
+                  <div class="flex items-center justify-between" style="color: var(--text-secondary);">
+                    <span>Tabs Processed:</span>
+                    <span class="font-semibold tabular-nums" style="color: var(--text-primary);">{{ lastAIResult.tabsProcessed }} tabs</span>
+                  </div>
+                  <div v-if="lastAIResult.groupsBefore !== undefined && lastAIResult.groupsAfter !== undefined" class="flex items-center justify-between" style="color: var(--text-secondary);">
+                    <span>Group Count:</span>
+                    <span class="font-semibold tabular-nums" style="color: var(--text-primary);">{{ lastAIResult.groupsBefore }} → {{ lastAIResult.groupsAfter }} groups</span>
+                  </div>
+
+                  <div v-if="lastAIResult.createdGroupNames && lastAIResult.createdGroupNames.length > 0" class="mt-1 pt-1.5 border-t" style="border-color: var(--border);">
+                    <div class="text-[9px] uppercase font-bold tracking-wider mb-1" style="color: var(--text-tertiary);">Groups Created / Categorized</div>
+                    <div class="flex flex-wrap gap-1">
+                      <span 
+                        v-for="gName in lastAIResult.createdGroupNames" 
+                        :key="gName"
+                        class="px-1.5 py-0.5 rounded-sm text-[9.5px] font-medium"
+                        style="background: var(--hover); color: var(--text-primary); border: 0.5px solid var(--border);"
+                      >
+                        {{ gName }}
+                      </span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </span>
+
+        <!-- Active AI Model Status Chip (When AI is configured and idle) -->
+        <span v-else-if="isAIConfigured" class="relative group shrink-0">
+          <button 
+            @click="currentView = 'settings'"
+            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm flex items-center gap-1.5 cursor-pointer shadow-xs transition-all hover:opacity-90"
+            style="color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border);"
+            title="AI Configured: Click to open Settings"
+          >
+            <svg class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.949 5.684a1 1 0 00-1.898 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.898l2.051.684a1 1 0 01.633.632l.683 2.051a1 1 0 001.898 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.898l-2.051-.684a1 1 0 01-.633-.632L6.95 5.684z" />
+            </svg>
+            <span class="truncate max-w-[130px]">AI: {{ activeModel }}</span>
+          </button>
+
+          <!-- AI Model Quick Info Popover -->
+          <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[240px] max-w-[calc(100vw-24px)] z-50">
+            <div class="p-2.5 rounded-sm shadow-card text-left leading-relaxed transition-all duration-200 flex flex-col gap-1.5 text-[10px]" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+              <div class="font-semibold text-xs flex items-center justify-between" style="color: var(--accent);">
+                <span class="flex items-center gap-1">
+                  <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.949 5.684a1 1 0 00-1.898 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.898l2.051.684a1 1 0 01.633.632l.683 2.051a1 1 0 001.898 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.898l-2.051-.684a1 1 0 01-.633-.632L6.95 5.684z" />
+                  </svg>
+                  <span>AI Configured</span>
+                </span>
+                <span class="text-[9px] uppercase px-1.5 py-0.2 rounded-xs font-semibold" style="background: var(--hover); color: var(--text-secondary);">
+                  {{ aiSettings.provider }}
+                </span>
+              </div>
+              <div class="flex items-center justify-between" style="color: var(--text-secondary);">
+                <span>Active Model:</span>
+                <span class="font-semibold truncate ml-2" style="color: var(--text-primary);">{{ activeModel }}</span>
+              </div>
+              <div class="flex items-center justify-between" style="color: var(--text-secondary);">
+                <span>Provider:</span>
+                <span class="font-semibold capitalize" style="color: var(--text-primary);">{{ aiSettings.provider }}</span>
+              </div>
+              <div v-if="aiSettings.provider === 'openrouter' && aiSettings.openRouterOnlyFree" class="text-[9px] px-1.5 py-0.5 rounded-xs" style="background: rgba(52, 199, 89, 0.15); color: var(--group-green);">
+                Free Models Only Active
+              </div>
+              <button 
+                @click="currentView = 'settings'"
+                class="mt-1 w-full py-1 text-center font-medium rounded-sm hover:opacity-90 transition-opacity cursor-pointer text-[10px]"
+                style="background: var(--accent); color: #fff;"
+              >
+                Configure in Settings
+              </button>
             </div>
           </div>
         </span>
