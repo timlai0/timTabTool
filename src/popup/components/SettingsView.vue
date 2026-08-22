@@ -1059,7 +1059,7 @@ async function pasteConfig() {
                 <input
                   type="number"
                   v-model.number="settings.ai.batchSize"
-                  :placeholder="getAutoBatchSize(settings.ai.maxTokens).toString() + ' (Auto)'"
+                  :placeholder="getAutoBatchSize(settings.ai.maxTokens || currentModelDefaultMaxTokens).toString() + ' (Auto)'"
                   min="1"
                   max="1000"
                   class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
