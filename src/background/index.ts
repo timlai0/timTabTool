@@ -300,6 +300,9 @@ async function broadcastAIComplete(windowId: number, action: string) {
     }
 
     if (targetTab?.id && targetTab.url) {
+      const loaded = await ensureContentScriptLoaded(targetTab.id)
+      if (!loaded) return
+
       await chrome.tabs.sendMessage(targetTab.id, {
         action: 'AI_OPERATION_COMPLETE',
         payload: { commandAction: action }
@@ -338,6 +341,9 @@ async function broadcastAIFailed(windowId: number, action: string, errorMsg: str
     }
 
     if (targetTab?.id && targetTab.url) {
+      const loaded = await ensureContentScriptLoaded(targetTab.id)
+      if (!loaded) return
+
       await chrome.tabs.sendMessage(targetTab.id, {
         action: 'AI_OPERATION_FAILED',
         payload: { commandAction: action, error: errorMsg }

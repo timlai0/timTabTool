@@ -1041,7 +1041,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         chrome.runtime.sendMessage({
           action: 'GROUP_CLUSTER',
           payload: { tabIds, title }
-        })
+        }).catch(() => {})
         hide()
       }
     })
@@ -1804,7 +1804,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           chrome.runtime.sendMessage({
             action: 'CLOSE_TAB',
             payload: { tabId: result.tab.id }
-          })
+          }).catch(() => {})
           const idx = results.indexOf(result)
           if (idx !== -1) {
             results.splice(idx, 1)
@@ -1900,7 +1900,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
             chrome.runtime.sendMessage({
               action: 'CLOSE_TAB',
               payload: { tabId: result.tab.id }
-            })
+            }).catch(() => {})
             const idx = results.indexOf(result)
             if (idx !== -1) {
               results.splice(idx, 1)
@@ -2185,17 +2185,17 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       chrome.runtime.sendMessage({
         action: result.commandAction,
         payload: result.commandAction === 'CLEANUP_GROUPS' ? { minTabs: result.minTabs } : undefined
-      })
+      }).catch(() => {})
     } else if (result.isOpen && result.tab.id) {
       chrome.runtime.sendMessage({
         action: 'SWITCH_TAB',
         payload: { tabId: result.tab.id },
-      })
+      }).catch(() => {})
     } else {
       chrome.runtime.sendMessage({
         action: 'OPEN_URL',
         payload: { url: result.tab.url },
-      })
+      }).catch(() => {})
     }
     const isStandalone = window.location.protocol.includes('-extension:') && window.location.pathname.includes('search.html')
     const isNavigation = !(result.isCommand && result.commandAction)

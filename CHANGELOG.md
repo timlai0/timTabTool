@@ -17,6 +17,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Live Server-Sent Events (SSE) streaming of reasoning/thinking tokens (`delta.reasoning`, `delta.reasoning_content`) with real-time terminal display in the Popup Header popover and live thought ticker in Search Overlay progress toast.
 - `AIProgressUpdate` and `OperationStatusInfo` updated with `liveReasoning` and `reasoningSnippet` fields.
 - Background worker `getAIOverrides` and `GET_SETTINGS` updated to handle OpenRouter and merge `providerSettings`.
-- Stop & Apply (`STOP_AND_APPLY_OPERATION` / `applyCompleted`) capability for multi-batch grouping and classification operations, allowing early termination while preserving and applying groups from already-completed batches.
-- `Apply Done` / `Stop & Apply` UI buttons in Search Overlay progress toast and Popup Header active operations popover.
-- Selective tab ungrouping (`chrome.tabs.ungroup(orderedTabIds)`) during partial batch application, preserving existing group state and position for unprocessed tabs.

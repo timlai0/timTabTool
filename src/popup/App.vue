@@ -679,14 +679,14 @@ function handleRuntimeMessage(msg: any) {
       if (ops && typeof ops === 'object') {
         allActiveOperations.value = ops
       }
-    })
+    }).catch(() => {})
   } else if (msg?.action === 'AI_OPERATION_COMPLETE' || msg?.action === 'AI_OPERATION_FAILED') {
     chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' }).then((ops) => {
       if (ops && typeof ops === 'object') {
         allActiveOperations.value = ops
       }
-    })
-    loadAllPreviews()
+    }).catch(() => {})
+    loadAllPreviews().catch(() => {})
   }
 }
 
