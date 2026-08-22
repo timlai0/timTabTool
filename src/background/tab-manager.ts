@@ -1060,33 +1060,51 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
         const freeGroups = await groupTabsFreelyWithAI(unpinnedTabsWithTime, settings.ai, controller.signal, logger, (update: Partial<OperationStatusInfo>) => {
           updateOperationProgress(windowId, update)
         })
-        if (controller.signal.aborted) {
+        
+        const shouldApplyPartial = Boolean(applyCompletedOnCancelFlags.get(windowId) && freeGroups && freeGroups.length > 0)
+        applyCompletedOnCancelFlags.delete(windowId)
+
+        if (controller.signal.aborted && !shouldApplyPartial) {
           if (logger) await logger.markFailed(new Error('Operation aborted by user'))
           return
         }
 
-        // AI succeeded! We can now ungroup all tabs and apply AI groups safely
+        if (!freeGroups || freeGroups.length === 0) {
+          activeOperationsMap.delete(windowId)
+          operationStartTimestamps.delete(windowId)
+          return
+        }
+
+        const orderedTabIds = freeGroups.flatMap((g) => g.tabIds)
+        const isPartial = orderedTabIds.length < unpinnedTabs.length
+
+        // AI succeeded or partial batches applied!
         updateOperationProgress(windowId, {
           stage: 'applying',
-          statusText: `Applying ${freeGroups.length} AI groups in browser...`,
+          statusText: isPartial
+            ? `Applying ${freeGroups.length} groups across ${orderedTabIds.length} tabs from completed batches...`
+            : `Applying ${freeGroups.length} AI groups in browser...`,
           totalTabs: unpinnedTabs.length,
           processedTabs: 0,
           discoveredGroupNames: freeGroups.map(g => g.name),
         })
 
-        await ungroupAllTabs(windowId)
+        if (isPartial) {
+          // Selectively ungroup only the classified tabs so untouched tabs remain unchanged
+          await retryTabOperation(() => chrome.tabs.ungroup(orderedTabIds as [number, ...number[]])).catch(() => {})
+        } else {
+          await ungroupAllTabs(windowId)
+        }
 
         // Bulk move tabs into sorted order before grouping to prevent UI freezing
-        const orderedTabIds = freeGroups.flatMap((g) => g.tabIds)
         const pinnedCount = tabs.length - unpinnedTabs.length
-        if (orderedTabIds.length > 0) {
+        if (orderedTabIds.length > 0 && !isPartial) {
           await retryTabOperation(() => chrome.tabs.move(orderedTabIds, { index: pinnedCount }))
         }
 
         let appliedTabCount = 0
         for (let gi = 0; gi < freeGroups.length; gi++) {
           const group = freeGroups[gi]
-          if (controller.signal.aborted) return
           if (group.tabIds.length === 0) continue
           if (group.name === '_ungrouped_') continue // Leave tabs ungrouped instead of creating a literal "_ungrouped_" group
 
@@ -1120,7 +1138,9 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
         
         updateOperationProgress(windowId, {
           stage: 'completed',
-          statusText: `Organized ${unpinnedTabs.length} tabs into ${freeGroups.length} groups`,
+          statusText: isPartial
+            ? `Stopped. Applied ${freeGroups.length} groups across ${orderedTabIds.length} tabs.`
+            : `Organized ${unpinnedTabs.length} tabs into ${freeGroups.length} groups`,
           processedTabs: unpinnedTabs.length,
           totalTabs: unpinnedTabs.length,
         })
@@ -1374,14 +1394,27 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
       throw classifyErr
     }
 
-    if (controller.signal.aborted) {
+    const shouldApplyPartial = Boolean(applyCompletedOnCancelFlags.get(windowId) && classifications && classifications.length > 0)
+    applyCompletedOnCancelFlags.delete(windowId)
+
+    if (controller.signal.aborted && !shouldApplyPartial) {
       if (logger) await logger.markFailed(new Error('Operation aborted'))
       return
     }
 
+    if (!classifications || classifications.length === 0) {
+      activeOperationsMap.delete(windowId)
+      operationStartTimestamps.delete(windowId)
+      return
+    }
+
+    const isPartial = classifications.length < newTabs.length
+
     updateOperationProgress(windowId, {
       stage: 'applying',
-      statusText: 'Applying classifications to browser tabs...',
+      statusText: isPartial 
+        ? `Applying classifications across ${classifications.length} tabs from completed batches...`
+        : 'Applying classifications to browser tabs...',
       totalTabs: newTabs.length,
       processedTabs: 0,
     })
@@ -1923,16 +1956,25 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
 
 
 
+const applyCompletedOnCancelFlags = new Map<number, boolean>()
+
 /**
  * Cancel any running AI-enhanced grouping or classification for this window.
+ * @param {number} windowId
+ * @param {boolean} [applyCompleted=false] - Whether to apply already-completed batches before terminating.
  */
-export function cancelActiveOperation(windowId: number): void {
+export function cancelActiveOperation(windowId: number, applyCompleted = false): void {
+  if (applyCompleted) {
+    applyCompletedOnCancelFlags.set(windowId, true)
+  }
   const controller = activeAbortControllers.get(windowId)
   if (controller) {
     controller.abort()
     activeAbortControllers.delete(windowId)
   }
-  activeOperationsMap.delete(windowId)
+  if (!applyCompleted) {
+    activeOperationsMap.delete(windowId)
+  }
 }
 
 /**

@@ -290,6 +290,13 @@ Only output the JSON array, no other text.`
     const allResults: AIGroupResult[] = []
     const combinedExistingNames = [...initialExistingGroupNames]
     for (let i = 0; i < tabs.length; i += batchSize) {
+      if (this.signal?.aborted) {
+        if (allResults.length > 0) {
+          return allResults
+        }
+        throw new Error('Operation aborted by user')
+      }
+
       const batchNum = Math.floor(i / batchSize) + 1
       const tabStart = i + 1
       const tabEnd = Math.min(i + batchSize, tabs.length)
@@ -307,18 +314,25 @@ Only output the JSON array, no other text.`
         discoveredGroupNames: allResults.map(r => r.name),
       })
 
-      const batchResults = await this.groupTabsBatch(currentBatchTabs, i, combinedExistingNames, false, batchNum, reportProgress)
-      
-      // Merge batch results into allResults based on case-insensitive group name
-      for (const group of batchResults) {
-        const lowerName = group.name.trim().toLowerCase()
-        const existing = allResults.find((r) => r.name.trim().toLowerCase() === lowerName)
-        if (existing) {
-          existing.tabIndices.push(...group.tabIndices)
-        } else {
-          allResults.push(group)
-          combinedExistingNames.push(group.name)
+      try {
+        const batchResults = await this.groupTabsBatch(currentBatchTabs, i, combinedExistingNames, false, batchNum, reportProgress)
+        
+        // Merge batch results into allResults based on case-insensitive group name
+        for (const group of batchResults) {
+          const lowerName = group.name.trim().toLowerCase()
+          const existing = allResults.find((r) => r.name.trim().toLowerCase() === lowerName)
+          if (existing) {
+            existing.tabIndices.push(...group.tabIndices)
+          } else {
+            allResults.push(group)
+            combinedExistingNames.push(group.name)
+          }
         }
+      } catch (err) {
+        if (this.signal?.aborted && allResults.length > 0) {
+          return allResults
+        }
+        throw err
       }
 
       reportProgress({
@@ -587,6 +601,13 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
     const combinedExistingNames = [...existingGroupNames]
 
     for (let i = 0; i < tabs.length; i += batchSize) {
+      if (this.signal?.aborted) {
+        if (allResults.length > 0) {
+          return allResults
+        }
+        throw new Error('Operation aborted by user')
+      }
+
       const batchNum = Math.floor(i / batchSize) + 1
       const tabStart = i + 1
       const tabEnd = Math.min(i + batchSize, tabs.length)
@@ -604,16 +625,23 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
         discoveredGroupNames: combinedExistingNames,
       })
 
-      const batchResults = await this.classifyNewTabsBatch(currentBatch, i, combinedExistingNames, stripTitles, reportProgress)
-      
-      for (const item of batchResults) {
-        allResults.push(item)
-        if (item.group === 'NEW' && item.newGroupName) {
-          const newNameStr = item.newGroupName
-          if (!combinedExistingNames.some(n => n.toLowerCase() === newNameStr.toLowerCase())) {
-            combinedExistingNames.push(item.newGroupName)
+      try {
+        const batchResults = await this.classifyNewTabsBatch(currentBatch, i, combinedExistingNames, stripTitles, reportProgress)
+        
+        for (const item of batchResults) {
+          allResults.push(item)
+          if (item.group === 'NEW' && item.newGroupName) {
+            const newNameStr = item.newGroupName
+            if (!combinedExistingNames.some(n => n.toLowerCase() === newNameStr.toLowerCase())) {
+              combinedExistingNames.push(item.newGroupName)
+            }
           }
         }
+      } catch (err) {
+        if (this.signal?.aborted && allResults.length > 0) {
+          return allResults
+        }
+        throw err
       }
 
       reportProgress({

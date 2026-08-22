@@ -849,5 +849,105 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(finalReasoning).toContain('Thinking about quantum tabs')
     expect(finalReasoning).toContain('grouping by topic.')
   })
+
+  it('returns partial aggregated results if aborted during later batches in groupTabsFreely', async () => {
+    const abortController = new AbortController()
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openai',
+      apiKey: 'sk-test',
+      model: 'gpt-4o-mini',
+      batchSize: 100,
+    }
+    const client = new AIClient(config, abortController.signal)
+
+    let callCount = 0
+    const mockFetch = vi.fn().mockImplementation(() => {
+      callCount++
+      if (callCount === 1) {
+        // Batch 1 succeeds with all 100 tabs assigned to Dev
+        const allBatch1Indices = Array.from({ length: 100 }, (_, i) => i + 1)
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{ message: { content: JSON.stringify([{ name: 'Dev', color: 'blue', tabIndices: allBatch1Indices }]) } }],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        )
+      } else {
+        // Batch 2 triggers abort
+        abortController.abort()
+        const abortError = new Error('The operation was aborted.')
+        abortError.name = 'AbortError'
+        return Promise.reject(abortError)
+      }
+    })
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    // Pass 150 tabs with batchSize = 100 to force 2 batches
+    const tabs = Array.from({ length: 150 }, (_, i) => ({
+      url: `https://example.com/${i}`,
+      title: `Tab ${i}`,
+    }))
+
+    const groups = await client.groupTabsFreely(tabs)
+
+    expect(groups.length).toBe(1)
+    expect(groups[0].name).toBe('Dev')
+    expect(callCount).toBe(2)
+  })
+
+  it('returns partial aggregated results if aborted during later batches in classifyNewTabsIntoGroups', async () => {
+    const abortController = new AbortController()
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openai',
+      apiKey: 'sk-test',
+      model: 'gpt-4o-mini',
+      batchSize: 100,
+    }
+    const client = new AIClient(config, abortController.signal)
+
+    let callCount = 0
+    const mockFetch = vi.fn().mockImplementation(() => {
+      callCount++
+      if (callCount === 1) {
+        // Batch 1 succeeds
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{ message: { content: JSON.stringify([{ index: 1, group: 'Work' }]) } }],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        )
+      } else {
+        // Batch 2 triggers abort
+        abortController.abort()
+        const abortError = new Error('The operation was aborted.')
+        abortError.name = 'AbortError'
+        return Promise.reject(abortError)
+      }
+    })
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const unassignedTabs = Array.from({ length: 150 }, (_, i) => ({
+      url: `https://work.com/${i}`,
+      title: `Work Tab ${i}`,
+    }))
+    const existingGroupNames = ['Work']
+
+    const assignments = await client.classifyNewTabsIntoGroups(
+      unassignedTabs,
+      existingGroupNames
+    )
+
+    expect(assignments.length).toBe(1)
+    expect(assignments[0].group).toBe('Work')
+    expect(callCount).toBe(2)
+  })
 })
 

@@ -15,11 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-provider settings memory: switching providers preserves each provider's API keys, endpoints, models, token limits, and batch sizes in `providerSettings`.
 - Reasoning Effort dropdown setting (`auto`, `minimal`, `low`, `medium`, `high`, `max`) to control deliberation depth and reduce latency for thinking / chain-of-thought models (e.g. `stealth/ox-alpha`, `o3-mini`, `o1`).
 - Live Server-Sent Events (SSE) streaming of reasoning/thinking tokens (`delta.reasoning`, `delta.reasoning_content`) with real-time terminal display in the Popup Header popover and live thought ticker in Search Overlay progress toast.
-- Architecture Decision Records `docs/adr/0001-openrouter-and-per-provider-settings.md`, `docs/adr/0002-reasoning-effort-configuration.md`, and `docs/adr/0003-live-reasoning-streaming.md`.
-- Unit test suite for OpenRouter API requests, model fetching, cost estimations, provider state persistence, reasoning effort parameter injection, and live SSE reasoning streams.
-
-### Changed
-- `AIConfig` interface updated to include `AIProvider` union, `openRouterOnlyFree`, `reasoningEffort`, and `providerSettings` snapshot dictionary.
 - `AIProgressUpdate` and `OperationStatusInfo` updated with `liveReasoning` and `reasoningSnippet` fields.
-- Search overlay model switcher and provider detection updated to support OpenRouter models.
 - Background worker `getAIOverrides` and `GET_SETTINGS` updated to handle OpenRouter and merge `providerSettings`.
+- Stop & Apply (`STOP_AND_APPLY_OPERATION` / `applyCompleted`) capability for multi-batch grouping and classification operations, allowing early termination while preserving and applying groups from already-completed batches.
+- `Apply Done` / `Stop & Apply` UI buttons in Search Overlay progress toast and Popup Header active operations popover.
+- Selective tab ungrouping (`chrome.tabs.ungroup(orderedTabIds)`) during partial batch application, preserving existing group state and position for unprocessed tabs.

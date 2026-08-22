@@ -909,7 +909,14 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
 
     case 'CANCEL_OPERATION': {
       const windowId = await resolveWindowId(message.payload)
-      cancelActiveOperation(windowId)
+      const applyCompleted = Boolean((message.payload as { applyCompleted?: boolean } | undefined)?.applyCompleted)
+      cancelActiveOperation(windowId, applyCompleted)
+      return { ok: true }
+    }
+
+    case 'STOP_AND_APPLY_OPERATION': {
+      const windowId = await resolveWindowId(message.payload)
+      cancelActiveOperation(windowId, true)
       return { ok: true }
     }
 

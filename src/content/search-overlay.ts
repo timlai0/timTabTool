@@ -77,6 +77,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let progressStatus: HTMLSpanElement | null = null
   let progressPercent: HTMLSpanElement | null = null
   let progressCloseBtn: HTMLButtonElement | null = null
+  let progressStopApplyBtn: HTMLButtonElement | null = null
   let progressHideBtn: HTMLButtonElement | null = null
   let progressFill: HTMLDivElement | null = null
   let progressDetail: HTMLDivElement | null = null
@@ -252,6 +253,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         detail += ` • Discovered: [${sample}${extra}]`
       }
       progressDetail.textContent = detail
+    }
+    if (progressStopApplyBtn) {
+      const canApplyPartial = isAIOperating && (aiBatchCurrent > 1 || aiDiscoveredGroups.length > 0)
+      progressStopApplyBtn.style.display = canApplyPartial ? 'inline-flex' : 'none'
     }
   }
 
@@ -951,6 +956,22 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       resetAIProgressState()
     })
 
+    progressStopApplyBtn = document.createElement('button')
+    progressStopApplyBtn.className = 'atm-progress-stop-apply-btn'
+    progressStopApplyBtn.style.display = 'none'
+    progressStopApplyBtn.textContent = 'Stop & Apply'
+    progressStopApplyBtn.title = 'Stop further AI querying and apply completed batches'
+    progressStopApplyBtn.addEventListener('click', async () => {
+      if (isAIOperating) {
+        try {
+          await chrome.runtime.sendMessage({ action: 'CANCEL_OPERATION', payload: { applyCompleted: true } })
+        } catch (err) {
+          console.error('[timTabTool] Failed to send STOP_AND_APPLY:', err)
+        }
+      }
+      resetAIProgressState()
+    })
+
     progressHideBtn = document.createElement('button')
     progressHideBtn.className = 'atm-progress-hide-btn'
     progressHideBtn.style.display = 'none'
@@ -962,6 +983,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     progressHeaderRight.appendChild(progressHideBtn)
     progressHeaderRight.appendChild(progressPercent)
+    progressHeaderRight.appendChild(progressStopApplyBtn)
     progressHeaderRight.appendChild(progressCloseBtn)
 
     progressHeader.appendChild(progressStatus)
@@ -1294,6 +1316,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       progressDetail.style.color = ''
     }
     if (progressCloseBtn) progressCloseBtn.style.display = 'none'
+    if (progressStopApplyBtn) progressStopApplyBtn.style.display = 'none'
     if (progressHideBtn) progressHideBtn.style.display = 'none'
   }
 
@@ -2345,6 +2368,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         if (progressCloseBtn) {
           progressCloseBtn.style.display = 'none'
         }
+        if (progressStopApplyBtn) {
+          progressStopApplyBtn.style.display = 'none'
+        }
 
         if (aiProgressTimeout) clearTimeout(aiProgressTimeout)
         aiProgressTimeout = setTimeout(() => {
@@ -2386,6 +2412,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           progressCloseBtn.textContent = 'Dismiss'
           progressCloseBtn.style.color = 'var(--group-red, #FF3B30)'
           progressCloseBtn.style.display = 'block'
+        }
+        if (progressStopApplyBtn) {
+          progressStopApplyBtn.style.display = 'none'
         }
         if (progressHideBtn) {
           progressHideBtn.style.display = 'none'

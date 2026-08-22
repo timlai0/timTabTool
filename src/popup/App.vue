@@ -852,6 +852,14 @@ async function handleCancelClassify(windowId: number) {
   }
 }
 
+async function handleStopAndApply(windowId: number) {
+  try {
+    await chrome.runtime.sendMessage({ action: 'CANCEL_OPERATION', payload: { windowId, applyCompleted: true } })
+  } catch (err) {
+    console.error('Failed to stop and apply operation:', err)
+  }
+}
+
 async function handleClassifyNew(windowId: number, shiftKey = false) {
   classifyingWindowId.value = windowId
   allActiveOperations.value = {
@@ -1344,6 +1352,14 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                         title="Extend timeout by +5 minutes"
                       >
                         +5m
+                      </button>
+                      <button 
+                        v-if="op.batchCurrent && op.batchCurrent > 1"
+                        @click.stop="handleStopAndApply(op.windowId)" 
+                        class="text-amber-500 hover:underline font-semibold cursor-pointer"
+                        title="Stop further AI querying and apply completed batches"
+                      >
+                        Apply Done
                       </button>
                       <button 
                         @click.stop="op.type === 'group' ? handleCancelGroup(op.windowId) : handleCancelClassify(op.windowId)" 
