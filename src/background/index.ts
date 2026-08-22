@@ -501,6 +501,10 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
       overrides.bypassSafeguards = (p as any).bypassSafeguards
     }
 
+    if (typeof (p as any).openRouterOnlyFree === 'boolean') {
+      overrides.openRouterOnlyFree = (p as any).openRouterOnlyFree
+    }
+
     if (typeof p.shiftKey === 'boolean') {
       overrides.shiftKey = p.shiftKey
     }

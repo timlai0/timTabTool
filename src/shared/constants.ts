@@ -75,11 +75,12 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     mergePrompt: DEFAULT_MERGE_PROMPT,
     maxRetries: 2,
     alwaysLogAIOperations: true,
+    openRouterOnlyFree: false,
     providerSettings: {
       openai: { apiKey: '', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini', maxTokens: 16384, batchSize: 20 },
       claude: { apiKey: '', endpoint: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-20241022', maxTokens: 8192, batchSize: 10 },
       gemini: { apiKey: '', endpoint: 'https://generativelanguage.googleapis.com', model: 'gemini-2.5-flash', maxTokens: 65536, batchSize: 30 },
-      openrouter: { apiKey: '', endpoint: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini', maxTokens: 16384, batchSize: 20 },
+      openrouter: { apiKey: '', endpoint: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini', maxTokens: 16384, batchSize: 20, onlyFreeModels: false },
       custom: { apiKey: '', endpoint: '', model: 'gpt-4o-mini', maxTokens: 16384, batchSize: 20 },
     },
   },
@@ -153,6 +154,16 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   'meta-llama/llama-3.3-70b-instruct': { input: 0.12, output: 0.30 },
   'qwen/qwen-2.5-72b-instruct': { input: 0.35, output: 0.40 },
   'mistralai/mistral-small-3': { input: 0.10, output: 0.30 },
+
+  // OpenRouter Free Models
+  'stealth/ox-alpha': { input: 0, output: 0 },
+  'meta-llama/llama-3.3-70b-instruct:free': { input: 0, output: 0 },
+  'deepseek/deepseek-r1:free': { input: 0, output: 0 },
+  'deepseek/deepseek-chat:free': { input: 0, output: 0 },
+  'google/gemini-2.0-flash-exp:free': { input: 0, output: 0 },
+  'google/gemini-2.0-flash-thinking-exp:free': { input: 0, output: 0 },
+  'qwen/qwen-2.5-coder-32b-instruct:free': { input: 0, output: 0 },
+  'mistralai/mistral-small-24b-instruct-2501:free': { input: 0, output: 0 },
 }
 
 export const PROVIDER_DEFAULTS: Record<string, { input: number; output: number }> = {
@@ -194,6 +205,17 @@ export const PREDEFINED_MODELS: Record<string, { id: string, name: string, compl
     { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', complexity: 'Low', costFactor: '2%', maxTokens: '4K' },
   ],
   openrouter: [
+    // Free models on OpenRouter
+    { id: 'stealth/ox-alpha', name: 'Stealth: OX Alpha (Free)', complexity: 'High', costFactor: 'Free', maxTokens: '32K' },
+    { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B (Free)', complexity: 'Medium', costFactor: 'Free', maxTokens: '8K' },
+    { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek: R1 (Free)', complexity: 'High', costFactor: 'Free', maxTokens: '8K' },
+    { id: 'deepseek/deepseek-chat:free', name: 'DeepSeek: V3 (Free)', complexity: 'Low', costFactor: 'Free', maxTokens: '8K' },
+    { id: 'google/gemini-2.0-flash-exp:free', name: 'Google: Gemini 2.0 Flash (Free)', complexity: 'Medium', costFactor: 'Free', maxTokens: '8K' },
+    { id: 'google/gemini-2.0-flash-thinking-exp:free', name: 'Google: Gemini 2.0 Flash Thinking (Free)', complexity: 'High', costFactor: 'Free', maxTokens: '8K' },
+    { id: 'qwen/qwen-2.5-coder-32b-instruct:free', name: 'Qwen: Qwen 2.5 Coder 32B (Free)', complexity: 'Medium', costFactor: 'Free', maxTokens: '8K' },
+    { id: 'mistralai/mistral-small-24b-instruct-2501:free', name: 'Mistral: Mistral Small 24B (Free)', complexity: 'Low', costFactor: 'Free', maxTokens: '8K' },
+
+    // Standard popular models
     { id: 'openai/gpt-4o-mini', name: 'OpenAI: GPT-4o Mini', complexity: 'Low', costFactor: '6%', maxTokens: '16K' },
     { id: 'openai/gpt-4o', name: 'OpenAI: GPT-4o', complexity: 'High', costFactor: '100%', maxTokens: '16K' },
     { id: 'anthropic/claude-3.7-sonnet', name: 'Anthropic: Claude 3.7 Sonnet', complexity: 'High', costFactor: '100%', maxTokens: '16K' },

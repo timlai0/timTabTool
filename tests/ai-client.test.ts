@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { AIClient, fetchGoogleModels, fetchOpenRouterModels, getGoogleModelPricing } from '../src/shared/ai-client'
+import { AIClient, fetchGoogleModels, fetchOpenRouterModels, getGoogleModelPricing, isFreeModel } from '../src/shared/ai-client'
 import type { AIConfig, AIProgressUpdate } from '../src/shared/types'
 
 describe('getGoogleModelPricing', () => {
@@ -592,6 +592,92 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(estimate.requests).toBe(1)
     expect(estimate.tokens).toBeGreaterThan(0)
     expect(estimate.costStr).not.toBe('')
+  })
+
+  it('correctly identifies free models with isFreeModel', () => {
+    expect(isFreeModel('stealth/ox-alpha')).toBe(true)
+    expect(isFreeModel('meta-llama/llama-3.3-70b-instruct:free')).toBe(true)
+    expect(isFreeModel('deepseek/deepseek-r1:free')).toBe(true)
+    expect(isFreeModel('google/gemini-2.0-flash-exp:free')).toBe(true)
+    expect(isFreeModel('custom-model', { costFactor: 'Free' })).toBe(true)
+    expect(isFreeModel('custom-model-2', { inputCost: 0, outputCost: 0 })).toBe(true)
+
+    expect(isFreeModel('openai/gpt-4o')).toBe(false)
+    expect(isFreeModel('anthropic/claude-3.7-sonnet')).toBe(false)
+  })
+
+  it('filters to only free models when onlyFree is enabled in fetchOpenRouterModels', async () => {
+    const mockApiResponse = {
+      data: [
+        {
+          id: 'stealth/ox-alpha',
+          name: 'Stealth: OX Alpha',
+          pricing: { prompt: '0', completion: '0' },
+          top_provider: { max_completion_tokens: 32768 }
+        },
+        {
+          id: 'meta-llama/llama-3.3-70b-instruct:free',
+          name: 'Meta: Llama 3.3 70B (Free)',
+          pricing: { prompt: '0', completion: '0' },
+          top_provider: { max_completion_tokens: 8192 }
+        },
+        {
+          id: 'openai/gpt-4o',
+          name: 'OpenAI: GPT-4o',
+          pricing: { prompt: '0.0000025', completion: '0.00001' },
+          top_provider: { max_completion_tokens: 16384 }
+        }
+      ]
+    }
+
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify(mockApiResponse), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    ))
+
+    const allModels = await fetchOpenRouterModels('test-key', undefined, false)
+    expect(allModels.length).toBe(3)
+
+    const freeModels = await fetchOpenRouterModels('test-key', undefined, true)
+    expect(freeModels.length).toBe(2)
+    expect(freeModels.some(m => m.id === 'stealth/ox-alpha')).toBe(true)
+    expect(freeModels.some(m => m.id === 'meta-llama/llama-3.3-70b-instruct:free')).toBe(true)
+    expect(freeModels.some(m => m.id === 'openai/gpt-4o')).toBe(false)
+  })
+
+  it('rejects paid models when openRouterOnlyFree is enabled in AIClient', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'openai/gpt-4o',
+      openRouterOnlyFree: true,
+    }
+    const client = new AIClient(config)
+
+    const result = await client.testConnection()
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('not permitted when OpenRouter free models mode is enabled')
+  })
+
+  it('permits free models when openRouterOnlyFree is enabled in AIClient', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'stealth/ox-alpha',
+      openRouterOnlyFree: true,
+    }
+    const client = new AIClient(config)
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: 'OK' } }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    ))
+
+    const result = await client.testConnection()
+    expect(result.ok).toBe(true)
   })
 })
 

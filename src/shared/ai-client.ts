@@ -1025,6 +1025,13 @@ Only output the JSON object.`
     ]
 
     const endpoint = `${this.getBaseUrl()}/chat/completions`
+    const model = this.config.model || this.defaultModel
+
+    if (this.config.provider === 'openrouter' && this.config.openRouterOnlyFree) {
+      if (!isFreeModel(model)) {
+        throw new Error(`Model "${model}" is not permitted when OpenRouter free models mode is enabled. Please select a free model (e.g. stealth/ox-alpha or a :free model).`)
+      }
+    }
 
     while (continuations <= maxContinuations) {
       const startTime = Date.now()
@@ -1590,12 +1597,29 @@ export async function fetchGoogleModels(apiKey: string, endpoint?: string): Prom
 }
 
 /**
+ * Checks if a model is free based on ID, pricing, and metadata.
+ * @param {string} [modelId] - Model ID string.
+ * @param {object} [modelObj] - Optional model metadata object.
+ * @returns {boolean} True if the model is free.
+ */
+export function isFreeModel(modelId?: string, modelObj?: { costFactor?: string; costDetails?: string; inputCost?: number; outputCost?: number }): boolean {
+  if (!modelId) return false
+  if (modelId === 'stealth/ox-alpha' || modelId.endsWith(':free')) return true
+  if (modelObj?.costFactor === 'Free' || modelObj?.costDetails === 'Free') return true
+  if (modelObj?.inputCost === 0 && modelObj?.outputCost === 0) return true
+  const pricing = MODEL_PRICING[modelId]
+  if (pricing && pricing.input === 0 && pricing.output === 0) return true
+  return false
+}
+
+/**
  * Fetches the available models from OpenRouter API.
  * @param {string} [apiKey] - Optional API key for OpenRouter.
  * @param {string} [endpoint] - Optional endpoint override.
+ * @param {boolean} [onlyFree] - Whether to return only free models.
  * @returns {Promise<GoogleModelItem[]>} Array of models with token limits and pricing.
  */
-export async function fetchOpenRouterModels(apiKey?: string, endpoint?: string): Promise<GoogleModelItem[]> {
+export async function fetchOpenRouterModels(apiKey?: string, endpoint?: string, onlyFree = false): Promise<GoogleModelItem[]> {
   const baseUrl = endpoint?.trim() || DEFAULT_ENDPOINTS.openrouter
   const cleanBase = baseUrl.replace(/\/$/, '')
   const url = `${cleanBase}/models`
@@ -1624,7 +1648,7 @@ export async function fetchOpenRouterModels(apiKey?: string, endpoint?: string):
     throw new Error('Invalid response structure from OpenRouter API: missing "data" array.')
   }
 
-  const results: GoogleModelItem[] = data.data.map((m: any) => {
+  let results: GoogleModelItem[] = data.data.map((m: any) => {
     const id = m.id || ''
     const displayName = m.name || id
     const pricingPrompt = parseFloat(m.pricing?.prompt || '0')
@@ -1668,6 +1692,10 @@ export async function fetchOpenRouterModels(apiKey?: string, endpoint?: string):
       rawMaxOutputTokens: outputLimitTokens,
     }
   })
+
+  if (onlyFree) {
+    results = results.filter(m => isFreeModel(m.id, m))
+  }
 
   results.sort((a, b) => a.name.localeCompare(b.name))
   return results

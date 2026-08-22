@@ -4,7 +4,7 @@ import { getMessage } from '../../shared/i18n'
 import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS, MODEL_PRICING, PROVIDER_DEFAULTS } from '../../shared/constants'
 import { getAutoBatchSize, parseMaxTokensToNumber, formatTimeAgo } from '../../shared/utils'
 import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse, AIProvider } from '../../shared/types'
-import { AIClient, SYSTEM_PROMPT, fetchGoogleModels, fetchOpenRouterModels } from '../../shared/ai-client'
+import { AIClient, SYSTEM_PROMPT, fetchGoogleModels, fetchOpenRouterModels, isFreeModel } from '../../shared/ai-client'
 import { APP_VERSION, BUILD_NUMBER, BUILD_HASH, BUILD_TIME } from '../../shared/version'
 
 const props = defineProps<{
@@ -158,14 +158,17 @@ async function handleFetchOpenRouterModels(): Promise<void> {
   fetchOpenRouterMessage.value = null
   fetchOpenRouterError.value = null
   try {
-    const models = await fetchOpenRouterModels(settings.value.ai.apiKey, settings.value.ai.endpoint)
+    const onlyFree = !!settings.value.ai.openRouterOnlyFree
+    const models = await fetchOpenRouterModels(settings.value.ai.apiKey, settings.value.ai.endpoint, onlyFree)
     if (!settings.value.ai.customModels) {
       settings.value.ai.customModels = {}
     }
     settings.value.ai.customModels.openrouter = models
-    fetchOpenRouterMessage.value = `Loaded ${models.length} live models from OpenRouter!`
+    fetchOpenRouterMessage.value = `Loaded ${models.length} live ${onlyFree ? 'free ' : ''}models from OpenRouter!`
     if (!settings.value.ai.model && models.length > 0) {
       settings.value.ai.model = models[0].id
+    } else if (onlyFree && !isFreeModel(settings.value.ai.model)) {
+      settings.value.ai.model = models[0]?.id || 'stealth/ox-alpha'
     }
     autoFillModelParams(settings.value.ai.model, models)
     await saveSettings()
@@ -178,13 +181,19 @@ async function handleFetchOpenRouterModels(): Promise<void> {
 
 const currentProviderModels = computed(() => {
   const provider = settings.value.ai.provider
+  let list: any[] = []
   if (provider === 'gemini' && settings.value.ai.customModels?.gemini?.length) {
-    return settings.value.ai.customModels.gemini
+    list = settings.value.ai.customModels.gemini
+  } else if (provider === 'openrouter' && settings.value.ai.customModels?.openrouter?.length) {
+    list = settings.value.ai.customModels.openrouter
+  } else {
+    list = PREDEFINED_MODELS[provider] || []
   }
-  if (provider === 'openrouter' && settings.value.ai.customModels?.openrouter?.length) {
-    return settings.value.ai.customModels.openrouter
+
+  if (provider === 'openrouter' && settings.value.ai.openRouterOnlyFree) {
+    return list.filter((m: any) => isFreeModel(m.id, m))
   }
-  return PREDEFINED_MODELS[provider] || []
+  return list
 })
 
 const isPredefinedModel = computed(() => {
@@ -224,6 +233,9 @@ const modelSelectValue = computed({
 })
 
 const modelPlaceholder = computed(() => {
+  if (settings.value.ai.provider === 'openrouter' && settings.value.ai.openRouterOnlyFree) {
+    return 'stealth/ox-alpha'
+  }
   return DEFAULT_MODELS[settings.value.ai.provider] || 'gpt-4o-mini'
 })
 
@@ -245,6 +257,7 @@ function syncActiveToProviderSettings(provider: AIProvider): void {
     model: settings.value.ai.model,
     batchSize: settings.value.ai.batchSize,
     maxTokens: settings.value.ai.maxTokens,
+    onlyFreeModels: provider === 'openrouter' ? !!settings.value.ai.openRouterOnlyFree : undefined,
   }
 }
 
@@ -268,6 +281,9 @@ function loadProviderSettings(newProvider: AIProvider, oldProvider?: AIProvider)
     settings.value.ai.model = saved.model ?? (DEFAULT_MODELS[newProvider] || '')
     settings.value.ai.maxTokens = saved.maxTokens ?? (newProvider === 'gemini' ? 65536 : (newProvider === 'claude' ? 8192 : 16384))
     settings.value.ai.batchSize = saved.batchSize ?? getAutoBatchSize(settings.value.ai.maxTokens)
+    if (newProvider === 'openrouter') {
+      settings.value.ai.openRouterOnlyFree = !!saved.onlyFreeModels
+    }
   } else {
     const defEndpoint = DEFAULT_ENDPOINTS[newProvider] || ''
     const defModel = DEFAULT_MODELS[newProvider] || ''
@@ -277,6 +293,9 @@ function loadProviderSettings(newProvider: AIProvider, oldProvider?: AIProvider)
     settings.value.ai.model = defModel
     settings.value.ai.maxTokens = defTokens
     settings.value.ai.batchSize = getAutoBatchSize(defTokens)
+    if (newProvider === 'openrouter') {
+      settings.value.ai.openRouterOnlyFree = false
+    }
     syncActiveToProviderSettings(newProvider)
   }
 
@@ -289,6 +308,16 @@ function loadProviderSettings(newProvider: AIProvider, oldProvider?: AIProvider)
 watch(() => settings.value.ai.provider, (newProvider, oldProvider) => {
   if (!oldProvider || newProvider === oldProvider) return
   loadProviderSettings(newProvider, oldProvider)
+})
+
+watch(() => settings.value.ai.openRouterOnlyFree, (onlyFree) => {
+  if (settings.value.ai.provider === 'openrouter' && onlyFree) {
+    if (!isFreeModel(settings.value.ai.model)) {
+      const freeList = currentProviderModels.value
+      settings.value.ai.model = freeList[0]?.id || 'stealth/ox-alpha'
+      autoFillModelParams(settings.value.ai.model)
+    }
+  }
 })
 
 onMounted(async () => {
@@ -816,6 +845,23 @@ async function pasteConfig() {
                 <input
                   type="checkbox"
                   v-model="settings.ai.sendRandomOrder"
+                  class="sr-only peer"
+                />
+                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+              </div>
+            </label>
+
+            <!-- Only Allow Free Models toggle (OpenRouter only) -->
+            <label v-if="settings.ai.provider === 'openrouter'" class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
+              <div class="flex-1">
+                <span class="text-xs block font-medium" style="color: var(--text-primary);">Only Allow Free Models</span>
+                <span class="text-[10.5px] block" style="color: var(--text-secondary);">Filter model list and API usage to free OpenRouter models (e.g. stealth/ox-alpha, :free)</span>
+              </div>
+              <div class="relative shrink-0">
+                <input
+                  type="checkbox"
+                  v-model="settings.ai.openRouterOnlyFree"
                   class="sr-only peer"
                 />
                 <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>

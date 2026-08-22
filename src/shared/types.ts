@@ -101,6 +101,7 @@ export interface ProviderSettings {
   model?: string
   batchSize?: number
   maxTokens?: number
+  onlyFreeModels?: boolean
   customModels?: { id: string; name: string; complexity: string; costFactor: string; maxTokens: string }[]
 }
 
@@ -127,6 +128,7 @@ export interface AIConfig {
   maxRetries?: number
   bypassSafeguards?: boolean
   alwaysLogAIOperations?: boolean
+  openRouterOnlyFree?: boolean
   customModels?: Record<string, { id: string; name: string; complexity: string; costFactor: string; maxTokens: string }[]>
   providerSettings?: Partial<Record<AIProvider, ProviderSettings>>
 }
