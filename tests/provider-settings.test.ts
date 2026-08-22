@@ -18,6 +18,7 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
       batchSize: settings.ai.batchSize,
       maxTokens: settings.ai.maxTokens,
       onlyFreeModels: provider === 'openrouter' ? !!settings.ai.openRouterOnlyFree : undefined,
+      reasoningEffort: settings.ai.reasoningEffort,
     }
   }
 
@@ -36,6 +37,7 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
       settings.ai.model = saved.model ?? (DEFAULT_MODELS[newProvider] || '')
       settings.ai.maxTokens = saved.maxTokens ?? (newProvider === 'gemini' ? 65536 : (newProvider === 'claude' ? 8192 : 16384))
       settings.ai.batchSize = saved.batchSize ?? 20
+      settings.ai.reasoningEffort = saved.reasoningEffort ?? 'auto'
       if (newProvider === 'openrouter') {
         settings.ai.openRouterOnlyFree = !!saved.onlyFreeModels
       }
@@ -48,6 +50,7 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
       settings.ai.model = defModel
       settings.ai.maxTokens = defTokens
       settings.ai.batchSize = 20
+      settings.ai.reasoningEffort = 'auto'
       if (newProvider === 'openrouter') {
         settings.ai.openRouterOnlyFree = false
       }
@@ -76,12 +79,13 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
     expect(settings.ai.model).toBe('openai/gpt-4o-mini')
     expect(settings.ai.openRouterOnlyFree).toBe(false)
 
-    // 3. Configure OpenRouter with free models only
+    // 3. Configure OpenRouter with free models only and low reasoning effort
     settings.ai.apiKey = 'sk-or-v1-test-key'
     settings.ai.model = 'stealth/ox-alpha'
     settings.ai.maxTokens = 32768
     settings.ai.batchSize = 15
     settings.ai.openRouterOnlyFree = true
+    settings.ai.reasoningEffort = 'low'
     syncActiveToProviderSettings(settings, 'openrouter')
 
     // 4. Switch to Gemini
@@ -105,7 +109,7 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
     expect(settings.ai.maxTokens).toBe(16384)
     expect(settings.ai.batchSize).toBe(25)
 
-    // 7. Switch back to OpenRouter and verify OpenRouter settings including openRouterOnlyFree are intact
+    // 7. Switch back to OpenRouter and verify OpenRouter settings including openRouterOnlyFree and reasoningEffort are intact
     loadProviderSettings(settings, 'openrouter', 'openai')
     expect(settings.ai.provider).toBe('openrouter')
     expect(settings.ai.apiKey).toBe('sk-or-v1-test-key')
@@ -114,6 +118,7 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
     expect(settings.ai.maxTokens).toBe(32768)
     expect(settings.ai.batchSize).toBe(15)
     expect(settings.ai.openRouterOnlyFree).toBe(true)
+    expect(settings.ai.reasoningEffort).toBe('low')
 
     // 8. Switch back to Gemini and verify Gemini settings are intact
     loadProviderSettings(settings, 'gemini', 'openrouter')

@@ -505,6 +505,13 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
       overrides.openRouterOnlyFree = (p as any).openRouterOnlyFree
     }
 
+    if (typeof (p as any).reasoningEffort === 'string') {
+      const effort = (p as any).reasoningEffort
+      if (['auto', 'minimal', 'low', 'medium', 'high', 'max'].includes(effort)) {
+        overrides.reasoningEffort = effort
+      }
+    }
+
     if (typeof p.shiftKey === 'boolean') {
       overrides.shiftKey = p.shiftKey
     }

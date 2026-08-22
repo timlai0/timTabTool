@@ -280,6 +280,7 @@ function syncActiveToProviderSettings(provider: AIProvider): void {
     batchSize: settings.value.ai.batchSize,
     maxTokens: settings.value.ai.maxTokens,
     onlyFreeModels: provider === 'openrouter' ? !!settings.value.ai.openRouterOnlyFree : undefined,
+    reasoningEffort: settings.value.ai.reasoningEffort,
   }
 }
 
@@ -303,6 +304,7 @@ function loadProviderSettings(newProvider: AIProvider, oldProvider?: AIProvider)
     settings.value.ai.model = saved.model ?? (DEFAULT_MODELS[newProvider] || '')
     settings.value.ai.maxTokens = saved.maxTokens ?? (newProvider === 'gemini' ? 65536 : (newProvider === 'claude' ? 8192 : 16384))
     settings.value.ai.batchSize = saved.batchSize ?? getAutoBatchSize(settings.value.ai.maxTokens)
+    settings.value.ai.reasoningEffort = saved.reasoningEffort ?? 'auto'
     if (newProvider === 'openrouter') {
       settings.value.ai.openRouterOnlyFree = !!saved.onlyFreeModels
     }
@@ -317,6 +319,7 @@ function loadProviderSettings(newProvider: AIProvider, oldProvider?: AIProvider)
     settings.value.ai.model = defModel
     settings.value.ai.maxTokens = defTokens
     settings.value.ai.batchSize = getAutoBatchSize(defTokens)
+    settings.value.ai.reasoningEffort = 'auto'
     if (newProvider === 'openrouter') {
       settings.value.ai.openRouterOnlyFree = false
     }
@@ -1098,6 +1101,29 @@ async function pasteConfig() {
                   class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
                   style="background: var(--bg-secondary); color: var(--text-primary);"
                 />
+              </div>
+
+              <!-- Reasoning Effort (Thinking & CoT Models) -->
+              <div v-if="settings.ai.provider === 'openrouter' || settings.ai.provider === 'openai'" class="px-3 py-2 setting-row">
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                    Reasoning Effort
+                    <span style="color: var(--text-tertiary);">(Thinking Models)</span>
+                  </label>
+                  <span class="text-[9px] opacity-70" style="color: var(--text-tertiary);">Deliberation depth</span>
+                </div>
+                <select
+                  v-model="settings.ai.reasoningEffort"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 cursor-pointer"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                >
+                  <option value="auto">Auto (Model Default)</option>
+                  <option value="minimal">Minimal (Fastest)</option>
+                  <option value="low">Low (Fast)</option>
+                  <option value="medium">Medium (Balanced)</option>
+                  <option value="high">High (Deep)</option>
+                  <option value="max">Max (Maximum)</option>
+                </select>
               </div>
 
               <!-- Test connection -->

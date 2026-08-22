@@ -716,5 +716,89 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(groups[0].name).toBe('Research')
     expect(groups[0].tabIndices).toEqual([1, 2])
   })
+
+  it('injects reasoning effort into OpenRouter request body when configured', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'stealth/ox-alpha',
+      reasoningEffort: 'low',
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: 'OK' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await client.testConnection()
+    expect(capturedBody).toBeDefined()
+    expect(capturedBody.reasoning).toEqual({ effort: 'low' })
+    expect(capturedBody.reasoning_effort).toBeUndefined()
+  })
+
+  it('injects reasoning_effort into OpenAI request body when configured', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openai',
+      apiKey: 'sk-test',
+      model: 'o3-mini',
+      reasoningEffort: 'high',
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: 'OK' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await client.testConnection()
+    expect(capturedBody).toBeDefined()
+    expect(capturedBody.reasoning_effort).toBe('high')
+    expect(capturedBody.reasoning).toBeUndefined()
+  })
+
+  it('omits reasoning effort parameters when reasoningEffort is auto or unset', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'stealth/ox-alpha',
+      reasoningEffort: 'auto',
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: 'OK' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await client.testConnection()
+    expect(capturedBody).toBeDefined()
+    expect(capturedBody.reasoning).toBeUndefined()
+    expect(capturedBody.reasoning_effort).toBeUndefined()
+  })
 })
 

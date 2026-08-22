@@ -1048,6 +1048,14 @@ Only output the JSON object.`
           temperature: 0,
           max_tokens: this.config.maxTokens || 16384,
           ...(jsonMode && { response_format: { type: 'json_object' } }),
+          ...(this.config.provider === 'openrouter' && this.config.reasoningEffort && this.config.reasoningEffort !== 'auto' && {
+            reasoning: {
+              effort: this.config.reasoningEffort
+            }
+          }),
+          ...(this.config.provider === 'openai' && this.config.reasoningEffort && this.config.reasoningEffort !== 'auto' && {
+            reasoning_effort: this.config.reasoningEffort
+          }),
         }),
         signal: this.signal,
       })

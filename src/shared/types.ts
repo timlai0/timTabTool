@@ -93,6 +93,11 @@ export interface SearchResult {
 export type AIProvider = 'openai' | 'claude' | 'gemini' | 'openrouter' | 'custom'
 
 /**
+ * @type {ReasoningEffort}
+ */
+export type ReasoningEffort = 'auto' | 'minimal' | 'low' | 'medium' | 'high' | 'max'
+
+/**
  * @interface ProviderSettings
  */
 export interface ProviderSettings {
@@ -102,6 +107,7 @@ export interface ProviderSettings {
   batchSize?: number
   maxTokens?: number
   onlyFreeModels?: boolean
+  reasoningEffort?: ReasoningEffort
   customModels?: { id: string; name: string; complexity: string; costFactor: string; maxTokens: string }[]
 }
 
@@ -129,6 +135,7 @@ export interface AIConfig {
   bypassSafeguards?: boolean
   alwaysLogAIOperations?: boolean
   openRouterOnlyFree?: boolean
+  reasoningEffort?: ReasoningEffort
   customModels?: Record<string, { id: string; name: string; complexity: string; costFactor: string; maxTokens: string }[]>
   providerSettings?: Partial<Record<AIProvider, ProviderSettings>>
 }

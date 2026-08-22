@@ -1517,11 +1517,6 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   </div>
                 </div>
               </div>
-
-              <!-- Divider if both exist -->
-              <div v-if="exactDuplicatesCount > 0 && possibleDuplicatesCount > 0" class="border-t my-0.5" style="border-color: var(--border);" />
-
-              <!-- Possible Duplicates Section -->
               <div v-if="possibleDuplicatesCount > 0">
                 <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" style="color: var(--accent);">
                   <span>Possible Dupes ({{ possibleDuplicatesCount }})</span>
