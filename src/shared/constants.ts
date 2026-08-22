@@ -206,7 +206,7 @@ export const PREDEFINED_MODELS: Record<string, { id: string, name: string, compl
   ],
   openrouter: [
     // Free models on OpenRouter
-    { id: 'stealth/ox-alpha', name: 'Stealth: OX Alpha (Free)', complexity: 'High', costFactor: 'Free', maxTokens: '32K' },
+    { id: 'stealth/ox-alpha', name: 'Stealth: OX Alpha (Free)', complexity: 'High', costFactor: 'Free', maxTokens: '128K' },
     { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B (Free)', complexity: 'Medium', costFactor: 'Free', maxTokens: '8K' },
     { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek: R1 (Free)', complexity: 'High', costFactor: 'Free', maxTokens: '8K' },
     { id: 'deepseek/deepseek-chat:free', name: 'DeepSeek: V3 (Free)', complexity: 'Low', costFactor: 'Free', maxTokens: '8K' },

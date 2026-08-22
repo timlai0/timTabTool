@@ -107,12 +107,20 @@ const fetchOpenRouterError = ref<string | null>(null)
  */
 function autoFillModelParams(modelId: string | undefined, customList?: any[]): void {
   const list = customList || currentProviderModels.value || []
-  const targetId = modelId || settings.value.ai.model || (list[0]?.id ?? '')
+  const targetId = modelId || settings.value.ai.model || (settings.value.ai.provider === 'openrouter' && settings.value.ai.openRouterOnlyFree ? 'stealth/ox-alpha' : (DEFAULT_MODELS[settings.value.ai.provider] || (list[0]?.id ?? '')))
   if (!targetId) return
 
   const selected = list.find((m: any) => m.id === targetId)
   if (selected) {
     const tokens = (selected as any).rawMaxOutputTokens || parseMaxTokensToNumber(selected.maxTokens)
+    settings.value.ai.maxTokens = tokens
+    settings.value.ai.batchSize = getAutoBatchSize(tokens)
+  } else {
+    const provider = settings.value.ai.provider
+    let tokens = 16384
+    if (provider === 'gemini') tokens = 65536
+    else if (provider === 'claude') tokens = 8192
+    else if (targetId === 'stealth/ox-alpha') tokens = 131072
     settings.value.ai.maxTokens = tokens
     settings.value.ai.batchSize = getAutoBatchSize(tokens)
   }
@@ -239,6 +247,20 @@ const modelPlaceholder = computed(() => {
   return DEFAULT_MODELS[settings.value.ai.provider] || 'gpt-4o-mini'
 })
 
+const currentModelDefaultMaxTokens = computed(() => {
+  const provider = settings.value.ai.provider
+  const targetId = settings.value.ai.model || (provider === 'openrouter' && settings.value.ai.openRouterOnlyFree ? 'stealth/ox-alpha' : (DEFAULT_MODELS[provider] || ''))
+  const models = currentProviderModels.value || []
+  const found = models.find((m: any) => m.id === targetId)
+  if (found) {
+    return (found as any).rawMaxOutputTokens || parseMaxTokensToNumber(found.maxTokens)
+  }
+  if (provider === 'gemini') return 65536
+  if (provider === 'claude') return 8192
+  if (provider === 'openrouter' && (targetId === 'stealth/ox-alpha' || settings.value.ai.openRouterOnlyFree)) return 131072
+  return 16384
+})
+
 const endpointPlaceholder = computed(() =>
   DEFAULT_ENDPOINTS[settings.value.ai.provider] || 'https://api.example.com/v1'
 )
@@ -286,8 +308,10 @@ function loadProviderSettings(newProvider: AIProvider, oldProvider?: AIProvider)
     }
   } else {
     const defEndpoint = DEFAULT_ENDPOINTS[newProvider] || ''
-    const defModel = DEFAULT_MODELS[newProvider] || ''
-    const defTokens = newProvider === 'gemini' ? 65536 : (newProvider === 'claude' ? 8192 : 16384)
+    const defModel = (newProvider === 'openrouter' && settings.value.ai.openRouterOnlyFree) ? 'stealth/ox-alpha' : (DEFAULT_MODELS[newProvider] || '')
+    const predefined = PREDEFINED_MODELS[newProvider] || []
+    const foundModel = predefined.find(m => m.id === defModel)
+    const defTokens = foundModel ? parseMaxTokensToNumber(foundModel.maxTokens) : (newProvider === 'gemini' ? 65536 : (newProvider === 'claude' ? 8192 : 16384))
     settings.value.ai.apiKey = ''
     settings.value.ai.endpoint = defEndpoint
     settings.value.ai.model = defModel
@@ -317,6 +341,12 @@ watch(() => settings.value.ai.openRouterOnlyFree, (onlyFree) => {
       settings.value.ai.model = freeList[0]?.id || 'stealth/ox-alpha'
       autoFillModelParams(settings.value.ai.model)
     }
+  }
+})
+
+watch(() => settings.value.ai.model, (newModel) => {
+  if (newModel) {
+    autoFillModelParams(newModel)
   }
 })
 
@@ -1046,9 +1076,9 @@ async function pasteConfig() {
                 <input
                   type="number"
                   v-model.number="settings.ai.maxTokens"
-                  placeholder="16384"
+                  :placeholder="currentModelDefaultMaxTokens.toString()"
                   min="1"
-                  max="65536"
+                  max="1048576"
                   class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
                   style="background: var(--bg-secondary); color: var(--text-primary);"
                 />

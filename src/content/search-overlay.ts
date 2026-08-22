@@ -2017,7 +2017,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       let maxTokens = 16384
       if (modelId.includes('/')) {
         provider = 'openrouter'
-        maxTokens = 16384
+        maxTokens = modelId === 'stealth/ox-alpha' ? 131072 : 16384
       } else if (modelId.startsWith('gemini') || modelId.startsWith('gemma')) {
         provider = 'gemini'
         maxTokens = 65536

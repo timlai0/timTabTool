@@ -1676,7 +1676,7 @@ export async function fetchOpenRouterModels(apiKey?: string, endpoint?: string, 
       costDetails = `$${inputCost}/$${outputCost} per 1M`
     }
 
-    const outputLimitTokens = m.top_provider?.max_completion_tokens || 16384
+    const outputLimitTokens = m.top_provider?.max_completion_tokens || m.per_request_limits?.completion_tokens || (m.context_length && m.context_length <= 131072 ? m.context_length : 16384)
     const outputLimit = Math.round(outputLimitTokens / 1024)
     const maxTokens = `${outputLimit > 0 ? outputLimit : 16}K`
 
