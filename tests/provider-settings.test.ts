@@ -121,4 +121,64 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
     expect(settings.ai.apiKey).toBe('AIza-gemini-key')
     expect(settings.ai.model).toBe('gemini-3.5-flash')
   })
+
+  it('cycles through all 5 providers preserving independent configurations', () => {
+    const settings = createTestSettings()
+
+    // 1. Custom provider
+    loadProviderSettings(settings, 'custom')
+    settings.ai.apiKey = 'custom-key'
+    settings.ai.endpoint = 'http://localhost:11434/v1'
+    settings.ai.model = 'llama3.2'
+    settings.ai.maxTokens = 4096
+    settings.ai.batchSize = 10
+    syncActiveToProviderSettings(settings, 'custom')
+
+    // 2. Claude provider
+    loadProviderSettings(settings, 'claude', 'custom')
+    settings.ai.apiKey = 'sk-ant-claude-key'
+    settings.ai.model = 'claude-3-7-sonnet-20250219'
+    settings.ai.maxTokens = 8192
+    settings.ai.batchSize = 8
+    syncActiveToProviderSettings(settings, 'claude')
+
+    // 3. OpenAI provider
+    loadProviderSettings(settings, 'openai', 'claude')
+    settings.ai.apiKey = 'sk-openai-key'
+    settings.ai.model = 'gpt-4o'
+    syncActiveToProviderSettings(settings, 'openai')
+
+    // 4. Gemini provider
+    loadProviderSettings(settings, 'gemini', 'openai')
+    settings.ai.apiKey = 'AIza-gemini-key'
+    settings.ai.model = 'gemini-3.5-flash'
+    syncActiveToProviderSettings(settings, 'gemini')
+
+    // 5. OpenRouter provider
+    loadProviderSettings(settings, 'openrouter', 'gemini')
+    settings.ai.apiKey = 'sk-or-key'
+    settings.ai.model = 'stealth/ox-alpha'
+    settings.ai.openRouterOnlyFree = true
+    syncActiveToProviderSettings(settings, 'openrouter')
+
+    // Verify Custom
+    loadProviderSettings(settings, 'custom', 'openrouter')
+    expect(settings.ai.apiKey).toBe('custom-key')
+    expect(settings.ai.endpoint).toBe('http://localhost:11434/v1')
+    expect(settings.ai.model).toBe('llama3.2')
+    expect(settings.ai.maxTokens).toBe(4096)
+    expect(settings.ai.batchSize).toBe(10)
+
+    // Verify Claude
+    loadProviderSettings(settings, 'claude', 'custom')
+    expect(settings.ai.apiKey).toBe('sk-ant-claude-key')
+    expect(settings.ai.model).toBe('claude-3-7-sonnet-20250219')
+    expect(settings.ai.maxTokens).toBe(8192)
+
+    // Verify OpenRouter
+    loadProviderSettings(settings, 'openrouter', 'claude')
+    expect(settings.ai.apiKey).toBe('sk-or-key')
+    expect(settings.ai.model).toBe('stealth/ox-alpha')
+    expect(settings.ai.openRouterOnlyFree).toBe(true)
+  })
 })

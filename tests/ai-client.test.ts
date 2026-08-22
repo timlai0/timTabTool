@@ -679,5 +679,42 @@ describe('OpenRouter Provider & Model Fetching', () => {
     const result = await client.testConnection()
     expect(result.ok).toBe(true)
   })
+
+  it('performs tab grouping successfully with OpenRouter', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'stealth/ox-alpha',
+      openRouterOnlyFree: true,
+    }
+    const client = new AIClient(config)
+
+    const mockResponse = {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify([
+              { name: 'Research', color: 'blue', tabIndices: [1, 2] }
+            ])
+          }
+        }
+      ]
+    }
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(mockResponse), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    ))
+
+    const tabs = [
+      { url: 'https://arxiv.org/abs/1234', title: 'Paper 1' },
+      { url: 'https://arxiv.org/abs/5678', title: 'Paper 2' },
+    ]
+
+    const groups = await client.groupTabsFreely(tabs)
+    expect(groups.length).toBe(1)
+    expect(groups[0].name).toBe('Research')
+    expect(groups[0].tabIndices).toEqual([1, 2])
+  })
 })
 
