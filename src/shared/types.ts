@@ -372,6 +372,7 @@ export type OperationStage =
   | 'idle'
   | 'preparing'
   | 'querying'
+  | 'evaluating'
   | 'retrying'
   | 'parsing'
   | 'applying'
@@ -403,6 +404,8 @@ export interface AIProgressUpdate {
   totalTabs?: number
   processedTabs?: number
   discoveredGroupNames?: string[]
+  liveReasoning?: string
+  reasoningSnippet?: string
   retry?: OperationRetryInfo
 }
 
@@ -429,6 +432,8 @@ export interface OperationStatusInfo {
   model?: string
   provider?: string
   discoveredGroupNames?: string[]
+  liveReasoning?: string
+  reasoningSnippet?: string
   retry?: OperationRetryInfo
   tokenEstimate?: {
     tokens: number

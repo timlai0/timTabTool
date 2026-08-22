@@ -95,6 +95,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let aiStatusText = 'Processing...'
   let aiModel = ''
   let aiDiscoveredGroups: string[] = []
+  let aiLiveReasoning = ''
+  let aiReasoningSnippet = ''
   let aiRetryText = ''
   let aiProgressTicker: ReturnType<typeof setInterval> | null = null
 
@@ -134,6 +136,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     aiStatusText = initialStatus
     aiModel = ''
     aiDiscoveredGroups = []
+    aiLiveReasoning = ''
+    aiReasoningSnippet = ''
     aiRetryText = ''
 
     if (aiProgressTicker) {
@@ -164,6 +168,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     aiBatchCurrent = 0
     aiBatchTotal = 0
     aiDiscoveredGroups = []
+    aiLiveReasoning = ''
+    aiReasoningSnippet = ''
     aiRetryText = ''
     aiModel = ''
   }
@@ -235,6 +241,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       let detail = `${aiStatusText} • Est. time: ${etaString}`
       if (aiRetryText) {
         detail = `${aiRetryText} • ${detail}`
+      }
+      if (aiReasoningSnippet || aiLiveReasoning) {
+        const thought = aiReasoningSnippet || (aiLiveReasoning.length > 70 ? '...' + aiLiveReasoning.slice(-70).trim() : aiLiveReasoning.trim())
+        detail += ` • Thinking: "${thought.replace(/\s+/g, ' ')}"`
       }
       if (aiDiscoveredGroups.length > 0) {
         const sample = aiDiscoveredGroups.slice(0, 3).join(', ')
@@ -2287,6 +2297,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         }
         if (status.discoveredGroupNames && Array.isArray(status.discoveredGroupNames)) {
           aiDiscoveredGroups = status.discoveredGroupNames
+        }
+        if (status.liveReasoning) {
+          aiLiveReasoning = status.liveReasoning
+        }
+        if (status.reasoningSnippet) {
+          aiReasoningSnippet = status.reasoningSnippet
         }
         if (status.retry) {
           aiRetryText = `Rate limit / retry in ${(status.retry.delayMs / 1000).toFixed(0)}s (Attempt ${status.retry.attempt}/${status.retry.maxRetries})`

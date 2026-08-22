@@ -800,5 +800,54 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(capturedBody.reasoning).toBeUndefined()
     expect(capturedBody.reasoning_effort).toBeUndefined()
   })
+
+  it('streams live reasoning and emits progress updates via SSE', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'stealth/ox-alpha',
+    }
+    const client = new AIClient(config)
+
+    const encoder = new TextEncoder()
+    const sseChunks = [
+      'data: {"choices":[{"delta":{"reasoning":"Thinking about quantum tabs..."},"finish_reason":null}]}\n\n',
+      'data: {"choices":[{"delta":{"reasoning":" grouping by topic."},"finish_reason":null}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"[{\\"name\\":\\"Quantum\\",\\"color\\":\\"blue\\",\\"tabIndices\\":[1]}]"},"finish_reason":"stop"}]}\n\n',
+      'data: [DONE]\n\n',
+    ]
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of sseChunks) {
+          controller.enqueue(encoder.encode(chunk))
+        }
+        controller.close()
+      }
+    })
+
+    const mockResponse = new Response(stream, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse))
+
+    const progressUpdates: any[] = []
+    const tabs = [{ url: 'https://quantum.org', title: 'Quantum Computing' }]
+
+    const groups = await client.groupTabsFreely(tabs, undefined, (update: AIProgressUpdate) => {
+      progressUpdates.push(update)
+    })
+
+    expect(groups.length).toBe(1)
+    expect(groups[0].name).toBe('Quantum')
+    const reasoningUpdates = progressUpdates.filter(u => u.liveReasoning)
+    expect(reasoningUpdates.length).toBeGreaterThan(0)
+    const finalReasoning = reasoningUpdates[reasoningUpdates.length - 1].liveReasoning
+    expect(finalReasoning).toContain('Thinking about quantum tabs')
+    expect(finalReasoning).toContain('grouping by topic.')
+  })
 })
 

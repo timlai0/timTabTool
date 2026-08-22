@@ -432,7 +432,7 @@ JSON format: [{"name":"...","color":"...","tabIndices":[1,2]}]`
     }
 
     try {
-      const response = await this.chat(prompt, true, batchIndex, onRetry)
+      const response = await this.chat(prompt, true, batchIndex, onRetry, onProgress)
       return this.parseFreeGroupResponse(response, offset + tabs.length, offset + 1)
     } catch (err) {
       const msg = (err as Error).message
@@ -687,7 +687,7 @@ Only output the JSON array.`
     }
 
     try {
-      const response = await this.chat(prompt, true, 1, onRetry)
+      const response = await this.chat(prompt, true, 1, onRetry, onProgress)
 
       const extracted = extractJsonSubstring(response, 'array')
       if (!extracted.startsWith('[')) return this.fallbackAllToNew(tabs, offset)
@@ -976,7 +976,8 @@ Only output the JSON object.`
     userMessage: string,
     jsonMode?: boolean,
     batchIndex = 1,
-    onRetry?: (info: OperationRetryInfo) => void
+    onRetry?: (info: OperationRetryInfo) => void,
+    onProgress?: (update: AIProgressUpdate) => void
   ): Promise<string> {
     // Logic: Delegate request to OpenAI, Claude, or Gemini
     return this.executeWithRetry(async () => {
@@ -991,7 +992,7 @@ Only output the JSON object.`
       }
 
       // OpenAI / Custom (OpenAI-compatible)
-      return this.chatOpenAI(userMessage, jsonMode, batchIndex)
+      return this.chatOpenAI(userMessage, jsonMode, batchIndex, onProgress)
     }, onRetry)
   }
 
@@ -1011,13 +1012,20 @@ Only output the JSON object.`
    * @param {string} userMessage
    * @param {boolean} [jsonMode]
    * @param {number} [batchIndex]
+   * @param {Function} [onProgress]
    * @returns {Promise<string>}
    */
-  private async chatOpenAI(userMessage: string, jsonMode?: boolean, batchIndex = 1): Promise<string> {
+  private async chatOpenAI(
+    userMessage: string,
+    jsonMode?: boolean,
+    batchIndex = 1,
+    onProgress?: (update: AIProgressUpdate) => void
+  ): Promise<string> {
     // loop through items to handle max token continuations
     const maxContinuations = 3
     let continuations = 0
     let accumulatedContent = ''
+    let accumulatedReasoning = ''
     
     const messages = [
       { role: 'system', content: this.systemPrompt },
@@ -1047,6 +1055,7 @@ Only output the JSON object.`
           messages,
           temperature: 0,
           max_tokens: this.config.maxTokens || 16384,
+          ...(onProgress && { stream: true }),
           ...(jsonMode && { response_format: { type: 'json_object' } }),
           ...(this.config.provider === 'openrouter' && this.config.reasoningEffort && this.config.reasoningEffort !== 'auto' && {
             reasoning: {
@@ -1073,17 +1082,99 @@ Only output the JSON object.`
         throw new Error(`API error ${response.status}: ${err}`)
       }
 
-      const data = await response.json()
-      const choice = data.choices?.[0]
-      const text = choice?.message?.content || ''
-      accumulatedContent += text
+      let text = ''
+      let finishReason: string | undefined
 
-      if (this.logger) {
-        this.logger.logRawResponse(batchIndex, response.status, duration, text, data)
+      // Check if response is SSE stream
+      const contentType = response.headers?.get?.('content-type') || ''
+      const isSSE = contentType.includes('text/event-stream')
+      const hasStreamReader = Boolean(response.body && typeof (response.body as any).getReader === 'function')
+
+      if (isSSE && hasStreamReader) {
+        const reader = (response.body as ReadableStream<Uint8Array>).getReader()
+        const decoder = new TextDecoder('utf-8')
+        let buffer = ''
+        let lastProgressEmit = 0
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed || trimmed.startsWith(':')) continue
+            if (trimmed === 'data: [DONE]') continue
+            if (trimmed.startsWith('data: ')) {
+              try {
+                const json = JSON.parse(trimmed.slice(6))
+                const choice = json.choices?.[0]
+                if (!choice) continue
+
+                if (choice.finish_reason) {
+                  finishReason = choice.finish_reason
+                }
+
+                const delta = choice.delta
+                if (delta?.content) {
+                  text += delta.content
+                }
+
+                const rDelta = delta?.reasoning || delta?.reasoning_content || delta?.thought || ''
+                if (rDelta) {
+                  accumulatedReasoning += rDelta
+                  const now = Date.now()
+                  if (onProgress && now - lastProgressEmit > 120) {
+                    lastProgressEmit = now
+                    onProgress({
+                      stage: 'evaluating',
+                      liveReasoning: accumulatedReasoning,
+                      reasoningSnippet: rDelta.trim() ? rDelta.trim() : undefined,
+                    })
+                  }
+                }
+              } catch {
+                // partial SSE payload, ignored
+              }
+            }
+          }
+        }
+        // Final live reasoning flush
+        if (onProgress && accumulatedReasoning) {
+          onProgress({
+            stage: 'evaluating',
+            liveReasoning: accumulatedReasoning,
+          })
+        }
+        if (this.logger) {
+          this.logger.logRawResponse(batchIndex, response.status, duration, text, { accumulatedReasoning })
+        }
+      } else {
+        // Fallback for non-streaming or test mocks
+        const data = await response.json()
+        const choice = data.choices?.[0]
+        text = choice?.message?.content || ''
+        finishReason = choice?.finish_reason
+        const reasoning = choice?.message?.reasoning || choice?.message?.reasoning_content
+        if (reasoning) {
+          accumulatedReasoning = reasoning
+          if (onProgress) {
+            onProgress({
+              stage: 'evaluating',
+              liveReasoning: reasoning,
+            })
+          }
+        }
+        if (this.logger) {
+          this.logger.logRawResponse(batchIndex, response.status, duration, text, data)
+        }
       }
 
-      if (choice) {
-        const finishReason = choice.finish_reason
+      accumulatedContent += text
+
+      if (finishReason) {
         if (finishReason === 'length') {
           if (continuations >= maxContinuations) {
             break
@@ -1092,7 +1183,7 @@ Only output the JSON object.`
           messages.push({ role: 'assistant', content: text })
           messages.push({ role: 'user', content: 'Continue exactly from where you left off. Do not repeat previous text.' })
           continue
-        } else if (finishReason && finishReason !== 'stop' && finishReason !== 'tool_calls') {
+        } else if (finishReason !== 'stop' && finishReason !== 'tool_calls') {
           throw new Error(`AI response failed: ${finishReason}`)
         }
       }

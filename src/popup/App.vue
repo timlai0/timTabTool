@@ -523,6 +523,8 @@ const activeAIOperationsList = computed(() => {
     model?: string
     provider?: string
     discoveredGroupNames?: string[]
+    liveReasoning?: string
+    reasoningSnippet?: string
     retry?: { attempt: number; maxRetries: number; delayMs: number; reason: string }
     tokenEstimate?: { tokens: number; costStr: string }
     timeoutRemainingSec?: number
@@ -571,6 +573,8 @@ const activeAIOperationsList = computed(() => {
         model: opStatus.model || activeModel.value,
         provider: opStatus.provider || aiSettings.value.provider,
         discoveredGroupNames: opStatus.discoveredGroupNames,
+        liveReasoning: opStatus.liveReasoning,
+        reasoningSnippet: opStatus.reasoningSnippet,
         retry: opStatus.retry,
         tokenEstimate: opStatus.tokenEstimate,
         timeoutRemainingSec: opStatus.timeoutRemainingSec,
@@ -1309,6 +1313,22 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                     <span v-if="op.discoveredGroupNames.length > 4" class="text-[8.5px] self-center opacity-70">
                       +{{ op.discoveredGroupNames.length - 4 }} more
                     </span>
+                  </div>
+
+                  <!-- Live Model Thinking Stream -->
+                  <div v-if="op.liveReasoning" class="pt-1 flex flex-col gap-1">
+                    <details class="group/reasoning text-[9px]">
+                      <summary class="cursor-pointer font-medium flex items-center justify-between hover:underline select-none" style="color: var(--accent);">
+                        <span class="flex items-center gap-1.5">
+                          <span class="w-1.5 h-1.5 rounded-full animate-ping" style="background: var(--accent);" />
+                          <span class="font-semibold">Live Model Thinking</span>
+                        </span>
+                        <span class="text-[8px] opacity-70 group-open/reasoning:hidden" style="color: var(--text-tertiary);">View Thought Stream</span>
+                      </summary>
+                      <div class="mt-1 p-1.5 rounded-xs font-mono text-[8.5px] leading-relaxed max-h-[110px] overflow-y-auto whitespace-pre-wrap select-text scrollbar-thin border border-black/5 dark:border-white/5" style="background: var(--bg-primary); color: var(--text-secondary);">
+                        {{ op.liveReasoning }}
+                      </div>
+                    </details>
                   </div>
 
                   <!-- Elapsed & ETA & Controls -->
