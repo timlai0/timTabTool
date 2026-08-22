@@ -1043,7 +1043,7 @@ Only output the JSON object.`
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify({
-          model: this.config.model || this.defaultModel,
+          model,
           messages,
           temperature: 0,
           max_tokens: this.config.maxTokens || 16384,
