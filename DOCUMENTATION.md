@@ -34,9 +34,9 @@ This document serves as the master index for the architecture, namespaces, and c
 ### Shared Utilities & Data Types (`src/shared/`)
 
 * **`src/shared/ai-client.ts`**
-  * **Namespace:** `AIClient`
+  * **Namespace:** `AIClient`, `fetchGoogleModels`, `fetchOpenRouterModels`, `getGoogleModelPricing`
   * **Dependencies:** `./types`, `./ai-logger`, `./constants`, `./utils`
-  * **Responsibilities:** Provides a unified interface for interacting with LLM providers. Handles token estimations, safeguards against runaway billing, robust retry mechanisms, prompt formatting, and JSON response repair. Exposes business logic for clustering (`groupTabsFreely`), classifying (`classifyTabs`, `classifyNewTabsIntoGroups`), and merging (`decideMergeGroup`) browser tabs.
+  * **Responsibilities:** Provides a unified interface for interacting with LLM providers (OpenAI, Claude, Gemini, OpenRouter, Custom). Handles token estimations, safeguards against runaway billing, robust retry mechanisms, prompt formatting, JSON response repair, and live model discovery. Exposes business logic for clustering (`groupTabsFreely`), classifying (`classifyTabs`, `classifyNewTabsIntoGroups`), and merging (`decideMergeGroup`) browser tabs.
 * **`src/shared/ai-logger.ts`**
   * **Namespace:** `AILogger`
   * **Dependencies:** `./types`, `./constants`
@@ -44,7 +44,7 @@ This document serves as the master index for the architecture, namespaces, and c
 * **`src/shared/constants.ts`**
   * **Namespace:** Global constants
   * **Dependencies:** `./types`
-  * **Responsibilities:** Defines all global, static configurations including group definitions, AI system prompts, LLM pricing data, and default settings.
+  * **Responsibilities:** Defines all global, static configurations including group definitions, AI system prompts, LLM pricing data, default endpoints, predefined model catalogs, and default settings with per-provider memory.
 * **`src/shared/i18n.ts`**
   * **Namespace:** `i18n`
   * **Dependencies:** None
@@ -60,7 +60,7 @@ This document serves as the master index for the architecture, namespaces, and c
 * **`src/shared/types.ts`**
   * **Namespace:** TypeScript Interfaces & Types
   * **Dependencies:** None
-  * **Responsibilities:** Central repository for data schemas across the extension.
+  * **Responsibilities:** Central repository for data schemas across the extension, including `AIProvider` and `ProviderSettings`.
 * **`src/shared/utils.ts`**
   * **Namespace:** Shared Utility Functions
   * **Dependencies:** None
@@ -87,7 +87,7 @@ This document serves as the master index for the architecture, namespaces, and c
 * **`src/popup/components/SettingsView.vue`**
   * **Namespace:** `Popup::Components::SettingsView`
   * **Dependencies:** `AIClient`, `utils`, Chrome storage API
-  * **Responsibilities:** Manages AI configuration settings (provider, API keys, models, system prompts). Includes logic to fetch and autocomplete live models.
+  * **Responsibilities:** Manages AI configuration settings (provider, API keys, models, system prompts). Features per-provider state preservation across provider switches and live model retrieval for Gemini and OpenRouter.
 * **`src/popup/components/TabItem.vue`**
   * **Namespace:** `Popup::Components::TabItem`
   * **Dependencies:** `utils`

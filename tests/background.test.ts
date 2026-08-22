@@ -70,6 +70,12 @@ describe('getAIOverrides', () => {
     expect(result).toEqual({ model: 'gpt-4o', provider: 'openai' })
   })
 
+  it('extracts openrouter provider from payload', () => {
+    const payload = { model: 'deepseek/deepseek-chat', provider: 'openrouter' }
+    const result = getAIOverrides(payload)
+    expect(result).toEqual({ model: 'deepseek/deepseek-chat', provider: 'openrouter' })
+  })
+
   it('ignores invalid providers', () => {
     const payload = { model: 'some-model', provider: 'invalid-provider' }
     const result = getAIOverrides(payload)

@@ -478,7 +478,7 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
     
     if (typeof p.provider === 'string') {
       const providerStr = p.provider
-      if (providerStr === "openai" || providerStr === "claude" || providerStr === "gemini" || providerStr === "custom") {
+      if (providerStr === "openai" || providerStr === "claude" || providerStr === "gemini" || providerStr === "openrouter" || providerStr === "custom") {
         overrides.provider = providerStr
       }
     }
@@ -997,7 +997,14 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       return { 
         ...DEFAULT_SETTINGS, 
         ...saved,
-        ai: { ...DEFAULT_SETTINGS.ai, ...saved?.ai },
+        ai: { 
+          ...DEFAULT_SETTINGS.ai, 
+          ...saved?.ai,
+          providerSettings: {
+            ...DEFAULT_SETTINGS.ai.providerSettings,
+            ...saved?.ai?.providerSettings,
+          },
+        },
       }
     }
 

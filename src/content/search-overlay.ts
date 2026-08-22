@@ -624,7 +624,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       const possibleModel = parts[1]
       if (possibleModel && (MODEL_PRICING as any)[possibleModel] !== undefined) {
         model = possibleModel
-        if (model.startsWith('gemini') || model.startsWith('gemma')) {
+        if (model.includes('/')) {
+          provider = 'openrouter'
+        } else if (model.startsWith('gemini') || model.startsWith('gemma')) {
           provider = 'gemini'
         } else if (model.startsWith('gpt')) {
           provider = 'openai'
@@ -2011,9 +2013,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       }
 
       // Step 2: Update model and provider
-      let provider = 'gemini'
+      let provider = settings.ai.provider || 'gemini'
       let maxTokens = 16384
-      if (modelId.startsWith('gemini') || modelId.startsWith('gemma')) {
+      if (modelId.includes('/')) {
+        provider = 'openrouter'
+        maxTokens = 16384
+      } else if (modelId.startsWith('gemini') || modelId.startsWith('gemma')) {
         provider = 'gemini'
         maxTokens = 65536
       } else if (modelId.startsWith('gpt')) {

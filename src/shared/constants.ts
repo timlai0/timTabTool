@@ -75,6 +75,13 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     mergePrompt: DEFAULT_MERGE_PROMPT,
     maxRetries: 2,
     alwaysLogAIOperations: true,
+    providerSettings: {
+      openai: { apiKey: '', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini', maxTokens: 16384, batchSize: 20 },
+      claude: { apiKey: '', endpoint: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-20241022', maxTokens: 8192, batchSize: 10 },
+      gemini: { apiKey: '', endpoint: 'https://generativelanguage.googleapis.com', model: 'gemini-2.5-flash', maxTokens: 65536, batchSize: 30 },
+      openrouter: { apiKey: '', endpoint: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini', maxTokens: 16384, batchSize: 20 },
+      custom: { apiKey: '', endpoint: '', model: 'gpt-4o-mini', maxTokens: 16384, batchSize: 20 },
+    },
   },
   language: 'auto',
   groupOnStartup: false,
@@ -132,12 +139,27 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   'claude-3-5-haiku-20241022': { input: 0.80, output: 4.00 },
   'claude-3-opus-20240229': { input: 15.00, output: 75.00 },
   'claude-3-haiku-20240307': { input: 0.25, output: 1.25 },
+
+  // OpenRouter & Multi-Provider Models
+  'openai/gpt-4o-mini': { input: 0.15, output: 0.60 },
+  'openai/gpt-4o': { input: 2.50, output: 10.00 },
+  'anthropic/claude-3.7-sonnet': { input: 3.00, output: 15.00 },
+  'anthropic/claude-3.5-sonnet': { input: 3.00, output: 15.00 },
+  'anthropic/claude-3.5-haiku': { input: 0.80, output: 4.00 },
+  'google/gemini-2.5-flash': { input: 0.30, output: 2.50 },
+  'google/gemini-2.5-pro': { input: 1.25, output: 10.00 },
+  'deepseek/deepseek-chat': { input: 0.14, output: 0.28 },
+  'deepseek/deepseek-r1': { input: 0.55, output: 2.19 },
+  'meta-llama/llama-3.3-70b-instruct': { input: 0.12, output: 0.30 },
+  'qwen/qwen-2.5-72b-instruct': { input: 0.35, output: 0.40 },
+  'mistralai/mistral-small-3': { input: 0.10, output: 0.30 },
 }
 
 export const PROVIDER_DEFAULTS: Record<string, { input: number; output: number }> = {
   openai: { input: 0.15, output: 0.60 },
   claude: { input: 3.00, output: 15.00 },
   gemini: { input: 0.30, output: 2.50 },
+  openrouter: { input: 0.15, output: 0.60 },
   custom: { input: 0.15, output: 0.60 },
 }
 
@@ -170,6 +192,19 @@ export const PREDEFINED_MODELS: Record<string, { id: string, name: string, compl
     { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', complexity: 'Low', costFactor: '10%', maxTokens: '8K' },
     { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', complexity: 'High', costFactor: '100%', maxTokens: '4K' },
     { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', complexity: 'Low', costFactor: '2%', maxTokens: '4K' },
+  ],
+  openrouter: [
+    { id: 'openai/gpt-4o-mini', name: 'OpenAI: GPT-4o Mini', complexity: 'Low', costFactor: '6%', maxTokens: '16K' },
+    { id: 'openai/gpt-4o', name: 'OpenAI: GPT-4o', complexity: 'High', costFactor: '100%', maxTokens: '16K' },
+    { id: 'anthropic/claude-3.7-sonnet', name: 'Anthropic: Claude 3.7 Sonnet', complexity: 'High', costFactor: '100%', maxTokens: '16K' },
+    { id: 'anthropic/claude-3.5-haiku', name: 'Anthropic: Claude 3.5 Haiku', complexity: 'Low', costFactor: '10%', maxTokens: '8K' },
+    { id: 'google/gemini-2.5-flash', name: 'Google: Gemini 2.5 Flash', complexity: 'Medium', costFactor: '15%', maxTokens: '65K' },
+    { id: 'google/gemini-2.5-pro', name: 'Google: Gemini 2.5 Pro', complexity: 'High', costFactor: '62%', maxTokens: '65K' },
+    { id: 'deepseek/deepseek-chat', name: 'DeepSeek: DeepSeek V3', complexity: 'Low', costFactor: '5%', maxTokens: '8K' },
+    { id: 'deepseek/deepseek-r1', name: 'DeepSeek: DeepSeek R1', complexity: 'High', costFactor: '20%', maxTokens: '8K' },
+    { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Meta: Llama 3.3 70B', complexity: 'Medium', costFactor: '12%', maxTokens: '8K' },
+    { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen: Qwen 2.5 72B', complexity: 'Medium', costFactor: '15%', maxTokens: '8K' },
+    { id: 'mistralai/mistral-small-3', name: 'Mistral: Mistral Small 3', complexity: 'Low', costFactor: '5%', maxTokens: '8K' },
   ]
 }
 
@@ -179,6 +214,7 @@ export const DEFAULT_ENDPOINTS: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
   claude: 'https://api.anthropic.com',
   gemini: 'https://generativelanguage.googleapis.com',
+  openrouter: 'https://openrouter.ai/api/v1',
   custom: '',
 }
 
@@ -186,5 +222,6 @@ export const DEFAULT_MODELS: Record<string, string> = {
   openai: 'gpt-4o-mini',
   claude: 'claude-3-5-sonnet-20241022',
   gemini: 'gemini-2.5-flash',
+  openrouter: 'openai/gpt-4o-mini',
   custom: 'gpt-4o-mini',
 }

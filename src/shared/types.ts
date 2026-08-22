@@ -88,11 +88,28 @@ export interface SearchResult {
 }
 
 /**
+ * @type {AIProvider}
+ */
+export type AIProvider = 'openai' | 'claude' | 'gemini' | 'openrouter' | 'custom'
+
+/**
+ * @interface ProviderSettings
+ */
+export interface ProviderSettings {
+  apiKey?: string
+  endpoint?: string
+  model?: string
+  batchSize?: number
+  maxTokens?: number
+  customModels?: { id: string; name: string; complexity: string; costFactor: string; maxTokens: string }[]
+}
+
+/**
  * @interface AIConfig
  */
 export interface AIConfig {
   enabled: boolean
-  provider: 'openai' | 'claude' | 'gemini' | 'custom'
+  provider: AIProvider
   apiKey: string
   endpoint?: string
   model?: string
@@ -111,6 +128,7 @@ export interface AIConfig {
   bypassSafeguards?: boolean
   alwaysLogAIOperations?: boolean
   customModels?: Record<string, { id: string; name: string; complexity: string; costFactor: string; maxTokens: string }[]>
+  providerSettings?: Partial<Record<AIProvider, ProviderSettings>>
 }
 
 /**

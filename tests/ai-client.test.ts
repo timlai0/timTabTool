@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { AIClient, fetchGoogleModels, getGoogleModelPricing } from '../src/shared/ai-client'
+import { AIClient, fetchGoogleModels, fetchOpenRouterModels, getGoogleModelPricing } from '../src/shared/ai-client'
 import type { AIConfig, AIProgressUpdate } from '../src/shared/types'
 
 describe('getGoogleModelPricing', () => {
@@ -488,6 +488,110 @@ describe('AIClient Progress Tracking & Streaming', () => {
     expect(retryUpdate.retry).toBeDefined()
     expect(retryUpdate.retry.attempt).toBe(1)
     expect(retryUpdate.retry.maxRetries).toBe(2)
+  })
+})
+
+describe('OpenRouter Provider & Model Fetching', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('sends requests to OpenRouter with proper headers and endpoint', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'openai/gpt-4o-mini',
+    }
+    const client = new AIClient(config)
+
+    let capturedUrl = ''
+    let capturedHeaders: Record<string, string> = {}
+
+    const mockFetch = vi.fn().mockImplementation((url: string, init: RequestInit) => {
+      capturedUrl = url
+      capturedHeaders = (init.headers as Record<string, string>) || {}
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'OK' } }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const result = await client.testConnection()
+    expect(result.ok).toBe(true)
+    expect(capturedUrl).toBe('https://openrouter.ai/api/v1/chat/completions')
+    expect(capturedHeaders['Authorization']).toBe('Bearer sk-or-v1-test')
+    expect(capturedHeaders['HTTP-Referer']).toBe('https://tabpilot.app')
+    expect(capturedHeaders['X-Title']).toBe('timTabTool')
+  })
+
+  it('fetches live models from OpenRouter API and parses pricing', async () => {
+    const mockApiResponse = {
+      data: [
+        {
+          id: 'deepseek/deepseek-chat',
+          name: 'DeepSeek: DeepSeek V3',
+          pricing: {
+            prompt: '0.00000014',
+            completion: '0.00000028',
+          },
+          top_provider: {
+            max_completion_tokens: 8192,
+          }
+        },
+        {
+          id: 'anthropic/claude-3.7-sonnet',
+          name: 'Anthropic: Claude 3.7 Sonnet',
+          pricing: {
+            prompt: '0.000003',
+            completion: '0.000015',
+          },
+          top_provider: {
+            max_completion_tokens: 16384,
+          }
+        }
+      ]
+    }
+
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(mockApiResponse), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    )
+    vi.stubGlobal('fetch', mockFetch)
+
+    const models = await fetchOpenRouterModels('sk-or-v1-test')
+    expect(models.length).toBe(2)
+    const deepseek = models.find(m => m.id === 'deepseek/deepseek-chat')
+    expect(deepseek).toBeDefined()
+    expect(deepseek?.name).toBe('DeepSeek: DeepSeek V3')
+    expect(deepseek?.inputCost).toBeCloseTo(0.14)
+    expect(deepseek?.outputCost).toBeCloseTo(0.28)
+    expect(deepseek?.maxTokens).toBe('8K')
+
+    const claude = models.find(m => m.id === 'anthropic/claude-3.7-sonnet')
+    expect(claude).toBeDefined()
+    expect(claude?.inputCost).toBeCloseTo(3.0)
+    expect(claude?.outputCost).toBeCloseTo(15.0)
+    expect(claude?.maxTokens).toBe('16K')
+  })
+
+  it('estimates costs correctly for OpenRouter models', () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'openai/gpt-4o-mini',
+      batchSize: 20,
+    }
+
+    const estimate = AIClient.estimateCostAndTokens(config, 20, 'group')
+    expect(estimate.requests).toBe(1)
+    expect(estimate.tokens).toBeGreaterThan(0)
+    expect(estimate.costStr).not.toBe('')
   })
 })
 

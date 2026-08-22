@@ -1294,14 +1294,19 @@ Only output the JSON object.`
   }
 
   private getBaseUrl(): string {
-    return this.config.endpoint || DEFAULT_ENDPOINTS.openai
+    return this.config.endpoint || DEFAULT_ENDPOINTS[this.config.provider] || DEFAULT_ENDPOINTS.openai
   }
 
   private getHeaders(): Record<string, string> {
-    return {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${this.config.apiKey}`,
     }
+    if (this.config.provider === 'openrouter') {
+      headers['HTTP-Referer'] = 'https://tabpilot.app'
+      headers['X-Title'] = 'timTabTool'
+    }
+    return headers
   }
 }
 
@@ -1564,6 +1569,90 @@ export async function fetchGoogleModels(apiKey: string, endpoint?: string): Prom
     }
 
     const outputLimitTokens = m.outputTokenLimit || 16384
+    const outputLimit = Math.round(outputLimitTokens / 1024)
+    const maxTokens = `${outputLimit > 0 ? outputLimit : 16}K`
+
+    return {
+      id,
+      name: displayName,
+      complexity,
+      costFactor,
+      costDetails,
+      inputCost,
+      outputCost,
+      maxTokens,
+      rawMaxOutputTokens: outputLimitTokens,
+    }
+  })
+
+  results.sort((a, b) => a.name.localeCompare(b.name))
+  return results
+}
+
+/**
+ * Fetches the available models from OpenRouter API.
+ * @param {string} [apiKey] - Optional API key for OpenRouter.
+ * @param {string} [endpoint] - Optional endpoint override.
+ * @returns {Promise<GoogleModelItem[]>} Array of models with token limits and pricing.
+ */
+export async function fetchOpenRouterModels(apiKey?: string, endpoint?: string): Promise<GoogleModelItem[]> {
+  const baseUrl = endpoint?.trim() || DEFAULT_ENDPOINTS.openrouter
+  const cleanBase = baseUrl.replace(/\/$/, '')
+  const url = `${cleanBase}/models`
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (apiKey && apiKey.trim()) {
+    headers['Authorization'] = `Bearer ${apiKey.trim()}`
+  }
+
+  const res = await fetch(url, { headers })
+  if (!res.ok) {
+    let errText = ''
+    try {
+      const errJson = await res.json()
+      errText = errJson.error?.message || errJson.message || JSON.stringify(errJson)
+    } catch {
+      errText = await res.text().catch(() => res.statusText)
+    }
+    throw new Error(`OpenRouter API Error (${res.status}): ${errText || 'Failed to fetch models'}`)
+  }
+
+  const data = await res.json()
+  if (!data.data || !Array.isArray(data.data)) {
+    throw new Error('Invalid response structure from OpenRouter API: missing "data" array.')
+  }
+
+  const results: GoogleModelItem[] = data.data.map((m: any) => {
+    const id = m.id || ''
+    const displayName = m.name || id
+    const pricingPrompt = parseFloat(m.pricing?.prompt || '0')
+    const pricingCompletion = parseFloat(m.pricing?.completion || '0')
+
+    const inputCost = Math.round(pricingPrompt * 1000000 * 1000) / 1000
+    const outputCost = Math.round(pricingCompletion * 1000000 * 1000) / 1000
+
+    MODEL_PRICING[id] = { input: inputCost, output: outputCost }
+
+    let complexity = 'Medium'
+    if (inputCost >= 2.0 || id.includes('pro') || id.includes('r1') || id.includes('opus') || id.includes('sonnet')) {
+      complexity = 'High'
+    } else if (inputCost <= 0.25 || id.includes('mini') || id.includes('flash') || id.includes('haiku') || id.includes('small')) {
+      complexity = 'Low'
+    }
+
+    let costFactor = '25%'
+    let costDetails = ''
+    if (inputCost === 0 && outputCost === 0) {
+      costFactor = 'Free'
+      costDetails = 'Free'
+    } else {
+      costFactor = `$${inputCost.toFixed(3)}/1M in`
+      costDetails = `$${inputCost}/$${outputCost} per 1M`
+    }
+
+    const outputLimitTokens = m.top_provider?.max_completion_tokens || 16384
     const outputLimit = Math.round(outputLimitTokens / 1024)
     const maxTokens = `${outputLimit > 0 ? outputLimit : 16}K`
 

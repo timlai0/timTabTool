@@ -3,8 +3,8 @@ import { ref, computed, watch, onMounted, onUnmounted, toRaw } from 'vue'
 import { getMessage } from '../../shared/i18n'
 import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS, MODEL_PRICING, PROVIDER_DEFAULTS } from '../../shared/constants'
 import { getAutoBatchSize, parseMaxTokensToNumber, formatTimeAgo } from '../../shared/utils'
-import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse } from '../../shared/types'
-import { AIClient, SYSTEM_PROMPT, fetchGoogleModels } from '../../shared/ai-client'
+import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse, AIProvider } from '../../shared/types'
+import { AIClient, SYSTEM_PROMPT, fetchGoogleModels, fetchOpenRouterModels } from '../../shared/ai-client'
 import { APP_VERSION, BUILD_NUMBER, BUILD_HASH, BUILD_TIME } from '../../shared/version'
 
 const props = defineProps<{
@@ -96,6 +96,10 @@ const fetchingGoogleModels = ref(false)
 const fetchModelsMessage = ref<string | null>(null)
 const fetchModelsError = ref<string | null>(null)
 
+const fetchingOpenRouterModels = ref(false)
+const fetchOpenRouterMessage = ref<string | null>(null)
+const fetchOpenRouterError = ref<string | null>(null)
+
 /**
  * Autocompletes token parameters based on the selected AI model.
  * @param {string | undefined} modelId - The model ID.
@@ -145,18 +149,43 @@ async function handleFetchGoogleModels(): Promise<void> {
   }
 }
 
+/**
+ * Fetches the available models from the OpenRouter API.
+ * @returns {Promise<void>}
+ */
+async function handleFetchOpenRouterModels(): Promise<void> {
+  fetchingOpenRouterModels.value = true
+  fetchOpenRouterMessage.value = null
+  fetchOpenRouterError.value = null
+  try {
+    const models = await fetchOpenRouterModels(settings.value.ai.apiKey, settings.value.ai.endpoint)
+    if (!settings.value.ai.customModels) {
+      settings.value.ai.customModels = {}
+    }
+    settings.value.ai.customModels.openrouter = models
+    fetchOpenRouterMessage.value = `Loaded ${models.length} live models from OpenRouter!`
+    if (!settings.value.ai.model && models.length > 0) {
+      settings.value.ai.model = models[0].id
+    }
+    autoFillModelParams(settings.value.ai.model, models)
+    await saveSettings()
+  } catch (err) {
+    fetchOpenRouterError.value = (err as Error).message
+  } finally {
+    fetchingOpenRouterModels.value = false
+  }
+}
+
 const currentProviderModels = computed(() => {
   const provider = settings.value.ai.provider
   if (provider === 'gemini' && settings.value.ai.customModels?.gemini?.length) {
     return settings.value.ai.customModels.gemini
   }
+  if (provider === 'openrouter' && settings.value.ai.customModels?.openrouter?.length) {
+    return settings.value.ai.customModels.openrouter
+  }
   return PREDEFINED_MODELS[provider] || []
 })
-
-
-
-
-
 
 const isPredefinedModel = computed(() => {
   const models = currentProviderModels.value
@@ -202,18 +231,64 @@ const endpointPlaceholder = computed(() =>
   DEFAULT_ENDPOINTS[settings.value.ai.provider] || 'https://api.example.com/v1'
 )
 
+/**
+ * Synchronizes active AI fields into the providerSettings snapshot.
+ * @param {AIProvider} provider - The provider key to save into.
+ */
+function syncActiveToProviderSettings(provider: AIProvider): void {
+  if (!settings.value.ai.providerSettings) {
+    settings.value.ai.providerSettings = {}
+  }
+  settings.value.ai.providerSettings[provider] = {
+    apiKey: settings.value.ai.apiKey,
+    endpoint: settings.value.ai.endpoint,
+    model: settings.value.ai.model,
+    batchSize: settings.value.ai.batchSize,
+    maxTokens: settings.value.ai.maxTokens,
+  }
+}
+
+/**
+ * Loads provider settings from snapshot when switching providers.
+ * @param {AIProvider} newProvider - Target provider.
+ * @param {AIProvider} [oldProvider] - Previous provider to snapshot.
+ */
+function loadProviderSettings(newProvider: AIProvider, oldProvider?: AIProvider): void {
+  if (!settings.value.ai.providerSettings) {
+    settings.value.ai.providerSettings = {}
+  }
+  if (oldProvider) {
+    syncActiveToProviderSettings(oldProvider)
+  }
+
+  const saved = settings.value.ai.providerSettings[newProvider]
+  if (saved) {
+    settings.value.ai.apiKey = saved.apiKey ?? ''
+    settings.value.ai.endpoint = saved.endpoint ?? (DEFAULT_ENDPOINTS[newProvider] || '')
+    settings.value.ai.model = saved.model ?? (DEFAULT_MODELS[newProvider] || '')
+    settings.value.ai.maxTokens = saved.maxTokens ?? (newProvider === 'gemini' ? 65536 : (newProvider === 'claude' ? 8192 : 16384))
+    settings.value.ai.batchSize = saved.batchSize ?? getAutoBatchSize(settings.value.ai.maxTokens)
+  } else {
+    const defEndpoint = DEFAULT_ENDPOINTS[newProvider] || ''
+    const defModel = DEFAULT_MODELS[newProvider] || ''
+    const defTokens = newProvider === 'gemini' ? 65536 : (newProvider === 'claude' ? 8192 : 16384)
+    settings.value.ai.apiKey = ''
+    settings.value.ai.endpoint = defEndpoint
+    settings.value.ai.model = defModel
+    settings.value.ai.maxTokens = defTokens
+    settings.value.ai.batchSize = getAutoBatchSize(defTokens)
+    syncActiveToProviderSettings(newProvider)
+  }
+
+  const predefined = PREDEFINED_MODELS[newProvider] || []
+  const customList = settings.value.ai.customModels?.[newProvider] || []
+  const isKnown = predefined.some(m => m.id === settings.value.ai.model) || customList.some((m: any) => m.id === settings.value.ai.model)
+  isCustomSelected.value = !isKnown && !!settings.value.ai.model
+}
+
 watch(() => settings.value.ai.provider, (newProvider, oldProvider) => {
-  if (!oldProvider) return
-  const oldDefault = DEFAULT_ENDPOINTS[oldProvider]
-  const current = settings.value.ai.endpoint
-  if (!current || current === oldDefault) {
-    settings.value.ai.endpoint = DEFAULT_ENDPOINTS[newProvider] || ''
-  }
-  const oldPredefined = PREDEFINED_MODELS[oldProvider] || []
-  if (oldPredefined.some(m => m.id === settings.value.ai.model)) {
-    settings.value.ai.model = ''
-    isCustomSelected.value = false
-  }
+  if (!oldProvider || newProvider === oldProvider) return
+  loadProviderSettings(newProvider, oldProvider)
 })
 
 onMounted(async () => {
@@ -226,6 +301,10 @@ onMounted(async () => {
       ai: { ...DEFAULT_SETTINGS.ai, ...stored.ai }
     }
   }
+  if (!settings.value.ai.providerSettings) {
+    settings.value.ai.providerSettings = { ...DEFAULT_SETTINGS.ai.providerSettings }
+  }
+  syncActiveToProviderSettings(settings.value.ai.provider)
   if (!settings.value.ai.endpoint) {
     settings.value.ai.endpoint = DEFAULT_ENDPOINTS[settings.value.ai.provider] || ''
   }
@@ -540,6 +619,7 @@ async function saveSettings() {
   if (!settings.value.windowWidth || settings.value.windowWidth < 360) {
     settings.value.windowWidth = 360
   }
+  syncActiveToProviderSettings(settings.value.ai.provider)
   await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: toRaw(settings.value) })
   saved.value = true
   setTimeout(() => {
@@ -551,6 +631,7 @@ async function saveAndGoBack() {
   if (!settings.value.windowWidth || settings.value.windowWidth < 360) {
     settings.value.windowWidth = 360
   }
+  syncActiveToProviderSettings(settings.value.ai.provider)
   await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: toRaw(settings.value) })
   emit('back')
 }
@@ -559,6 +640,7 @@ async function testConnection() {
   testing.value = true
   testResult.value = null
   try {
+    syncActiveToProviderSettings(settings.value.ai.provider)
     const client = new AIClient(settings.value.ai)
     testResult.value = await client.testConnection()
   } catch (err) {
@@ -795,6 +877,30 @@ async function pasteConfig() {
                   {{ fetchModelsError }}
                 </div>
               </div>
+
+              <!-- Fetch OpenRouter Models Button -->
+              <div v-if="settings.ai.provider === 'openrouter'" class="mt-2">
+                <button
+                  type="button"
+                  @click="handleFetchOpenRouterModels"
+                  :disabled="fetchingOpenRouterModels"
+                  class="text-[10px] px-2.5 py-1 rounded-sm flex items-center gap-1.5 font-medium transition-all cursor-pointer"
+                  style="background: var(--accent-soft); color: var(--accent); border: 0.5px solid var(--border);"
+                  title="Fetch live model list from OpenRouter API"
+                >
+                  <span v-if="fetchingOpenRouterModels" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
+                  <svg v-else class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                  </svg>
+                  <span>{{ fetchingOpenRouterModels ? 'Fetching models...' : 'Fetch Live Models from OpenRouter' }}</span>
+                </button>
+                <div v-if="fetchOpenRouterMessage" class="mt-1.5 text-[10px] font-medium" style="color: var(--group-green);">
+                  {{ fetchOpenRouterMessage }}
+                </div>
+                <div v-if="fetchOpenRouterError" class="mt-1.5 text-[10px] font-medium" style="color: var(--group-red);">
+                  {{ fetchOpenRouterError }}
+                </div>
+              </div>
             </div>
 
             <!-- AI Provider & Connection Settings Toggle Header -->
@@ -839,6 +945,7 @@ async function pasteConfig() {
                   <option value="openai">OpenAI</option>
                   <option value="claude">Claude (Anthropic)</option>
                   <option value="gemini">Gemini (Google)</option>
+                  <option value="openrouter">OpenRouter</option>
                   <option value="custom">Custom (OpenAI-compatible)</option>
                 </select>
               </div>
@@ -849,7 +956,7 @@ async function pasteConfig() {
                 <input
                   type="text"
                   v-model="settings.ai.apiKey"
-                  placeholder="sk-... / AIza..."
+                  placeholder="sk-... / AIza... / sk-or-..."
                   class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
                   style="background: var(--bg-secondary); color: var(--text-primary);"
                 />
