@@ -1,8 +1,7 @@
 {
   "name": "timtabtool",
   "private": true,
-  "version": "1.1.31.185",
-  "description": "Smart tab organization, MCP bridge, AI grouping — the ultimate browser tool.",
+  "version": "1.2.0.3",
   "type": "module",
   "scripts": {
     "dev": "vite",

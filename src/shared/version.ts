@@ -1,12 +1,12 @@
 /**
  * @constant {string} APP_VERSION - The current application version.
  */
-export const APP_VERSION = '1.1.31'
+export const APP_VERSION = '1.2.0'
 
 /**
  * @constant {string} BUILD_NUMBER - The current build number.
  */
-export const BUILD_NUMBER = '185'
+export const BUILD_NUMBER = '3'
 
 /**
  * @constant {string} BUILD_HASH - The git commit hash of the build.
