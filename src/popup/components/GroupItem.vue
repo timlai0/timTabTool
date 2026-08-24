@@ -248,7 +248,7 @@ async function handleMergeGroup(event?: MouseEvent): Promise<void> {
     <template v-if="collapsed">
       <button
         class="w-full flex items-center gap-2.5 px-3.5 py-2 text-left group/row relative"
-        :class="{ 'active-group-highlight': isActiveGroup }"
+        :class="{ 'active-group-highlight': isActiveGroup, 'z-30': showSplitTooltip || showMergeTooltip }"
         :data-active-group-header="isActiveGroup ? 'true' : 'false'"
         @click="collapsed = false"
       >
@@ -401,7 +401,7 @@ async function handleMergeGroup(event?: MouseEvent): Promise<void> {
     <template v-else-if="mode === 'header'">
       <button
         class="w-full flex items-center gap-2.5 px-3.5 py-2 text-left group/row relative sticky-group-header"
-        :class="{ 'active-group-highlight': isActiveGroup }"
+        :class="{ 'active-group-highlight': isActiveGroup, '!z-30': showSplitTooltip || showMergeTooltip }"
         :data-active-group-header="isActiveGroup ? 'true' : 'false'"
         @click="collapsed = true"
       >
