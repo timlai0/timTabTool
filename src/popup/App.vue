@@ -8,9 +8,10 @@ import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInf
 import { APP_VERSION, BUILD_NUMBER, BUILD_STRING } from '../shared/version'
 import GroupList from './components/GroupList.vue'
 import SettingsView from './components/SettingsView.vue'
+import ChatView from './components/ChatView.vue'
 
 /** Current active view */
-const currentView = ref<'main' | 'settings'>('main')
+const currentView = ref<'main' | 'settings' | 'chat'>('main')
 
 /**
  * Checks if the application is running in the standalone search window.
@@ -1263,6 +1264,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
 <template>
   <SettingsView v-if="currentView === 'settings'" :is-standalone-search="isStandaloneSearch" @back="handleSettingsBack" />
+  <ChatView v-else-if="currentView === 'chat'" :all-windows="allWindows" :current-window-id="currentWindowId" @back="currentView = 'main'" />
 
   <div v-else :style="isStandaloneSearch ? { width: '380px', height: '100%', background: 'var(--bg-primary)' } : { width: Math.max(360, windowWidth) + 'px', height: Math.max(240, Math.min(600, windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->
@@ -1751,6 +1753,17 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           <!-- Moon icon (shown in light mode) -->
           <svg v-else class="w-[15px] h-[15px]" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M7.455 2.004a.75.75 0 01.26.77 7 7 0 009.958 7.967.75.75 0 011.067.853A8.5 8.5 0 116.647 1.921a.75.75 0 01.808.083z" clip-rule="evenodd" />
+          </svg>
+        </button>
+        <!-- Chat -->
+        <button
+          class="w-7 h-7 flex items-center justify-center rounded-sm"
+          style="color: var(--text-secondary);"
+          @click="currentView = 'chat'"
+          title="Window Chat"
+        >
+          <svg class="w-[15px] h-[15px]" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M10 2c-4.418 0-8 3.134-8 7 0 2.222 1.166 4.2 3 5.485V18l2.909-1.939c.677.167 1.385.253 2.091.253 4.418 0 8-3.134 8-7s-3.582-7-8-7z" clip-rule="evenodd" />
           </svg>
         </button>
         <!-- Settings -->
