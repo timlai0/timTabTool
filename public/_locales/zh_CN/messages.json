@@ -334,5 +334,9 @@
   "fastOverlayModeDesc": {
     "message": "延迟计算 AI 消耗指标，节流指针事件，使用高性能 DOM 批处理渲染搜索结果。",
     "description": "Description for Fast Overlay Mode"
+  },
+  "mergeAllWindowsIntoThis": {
+    "message": "将所有窗口合并至此窗口",
+    "description": "Button label in overflow menu to merge all other windows into this window"
   }
 }

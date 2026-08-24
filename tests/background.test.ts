@@ -489,4 +489,40 @@ describe('Action Badge Lifecycle and AI Operation Status', () => {
   })
 })
 
+describe('mergeAllWindows', () => {
+  let mergeAllWindows: any
+
+  beforeAll(async () => {
+    const mod = await import('../src/background/tab-manager')
+    mergeAllWindows = mod.mergeAllWindows
+  })
+
+  it('moves all tabs from other windows into the target window', async () => {
+    chrome.windows = {
+      getAll: vi.fn().mockResolvedValue([
+        { id: 1, type: 'normal' },
+        { id: 2, type: 'normal' },
+        { id: 3, type: 'normal' },
+      ]),
+    } as any
+
+    const tabsMoveMock = vi.fn().mockResolvedValue(undefined)
+    chrome.tabs.move = tabsMoveMock
+    chrome.tabs.query = vi.fn().mockImplementation(async (queryInfo: { windowId: number }) => {
+      if (queryInfo.windowId === 2) {
+        return [{ id: 201 }, { id: 202 }]
+      }
+      if (queryInfo.windowId === 3) {
+        return [{ id: 301 }]
+      }
+      return []
+    })
+
+    await mergeAllWindows(1)
+
+    expect(tabsMoveMock).toHaveBeenCalledWith([201, 202], { windowId: 1, index: -1 })
+    expect(tabsMoveMock).toHaveBeenCalledWith([301], { windowId: 1, index: -1 })
+  })
+})
+
 

@@ -46,6 +46,12 @@ const customWindowNames = ref<Record<number, string>>({})
 const editingWindowId = ref<number | null>(null)
 const errorWindowId = ref<number | null>(null)
 const lastAIResult = ref<LastAIResult | null>(null)
+const activeChatWindowId = ref<number | null>(null)
+
+function openWindowChat(windowId: number) {
+  activeChatWindowId.value = windowId
+  currentView.value = 'chat'
+}
 
 /**
  * Formats a timestamp into a human-readable "time ago" string.
@@ -151,6 +157,10 @@ function handleStorageChange(changes: { [key: string]: chrome.storage.StorageCha
 }
 
 onMounted(async () => {
+  const urlParams = new URLSearchParams(window.location.search)
+  if (urlParams.get('view') === 'chat') {
+    currentView.value = 'chat'
+  }
   chrome.storage.onChanged.addListener(handleStorageChange)
   const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
   const stored = data[STORAGE_KEYS.SETTINGS] as Partial<ExtensionSettings> | undefined
@@ -205,6 +215,8 @@ onMounted(async () => {
   currentWindowId.value = activeTab?.windowId ?? null
   await loadAllPreviews(true)
 
+  document.addEventListener('click', handleDocumentClick)
+
   // Logic: Scroll to the active group as soon as the popup is opened and rendered
   // Scroll to active group on initial load
   nextTick(() => {
@@ -218,6 +230,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('click', handleDocumentClick)
   chrome.storage.onChanged.removeListener(handleStorageChange)
   // Programming logic: clear any pending refresh timeouts
   if (refreshTimeout) {
@@ -954,6 +967,22 @@ function toggleMoreMenuPopover(windowId: number) {
   }
 }
 
+function isWindowActivePopover(windowId: number): boolean {
+  return (
+    activeMoreMenuWindowId.value === windowId ||
+    activeSortMenuWindowId.value === windowId ||
+    (hoveredActionWindowId.value === windowId && activeHoverAction.value !== null)
+  )
+}
+
+function handleDocumentClick(e: MouseEvent) {
+  const target = e.target as HTMLElement | null
+  if (!target?.closest('.popover-container')) {
+    activeMoreMenuWindowId.value = null
+    activeSortMenuWindowId.value = null
+  }
+}
+
 async function setWindowSort(windowId: number, mode: 'name' | 'size') {
   activeSortMenuWindowId.value = null
   if (windowGroupSort.value[windowId] === mode) {
@@ -1214,6 +1243,24 @@ async function moveTabsToCurrentWindow(sourceWindowId: number) {
   }
 }
 
+async function handleMergeAllWindows(targetWindowId: number) {
+  activeMoreMenuWindowId.value = null
+  // Logic: Merges all other windows into this target window
+  try {
+    const result = await chrome.runtime.sendMessage({
+      action: 'MERGE_WINDOWS',
+      payload: { windowId: targetWindowId },
+    })
+    if (result && !result.ok && result.error) {
+      showError(result.error)
+    }
+    await loadAllPreviews()
+  } catch (err) {
+    console.error('[timTabTool] Failed to merge windows:', err)
+    showError(getMessage('failed') + ': ' + (err as Error).message)
+  }
+}
+
 const windowTitlesHidden = ref<Record<number, boolean>>({})
 
 function isTitlesHidden(windowId: number): boolean {
@@ -1264,11 +1311,11 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
 <template>
   <SettingsView v-if="currentView === 'settings'" :is-standalone-search="isStandaloneSearch" @back="handleSettingsBack" />
-  <ChatView v-else-if="currentView === 'chat'" :all-windows="allWindows" :current-window-id="currentWindowId" @back="currentView = 'main'" />
+  <ChatView v-else-if="currentView === 'chat'" :all-windows="allWindows" :current-window-id="activeChatWindowId || currentWindowId" @back="currentView = 'main'" />
 
   <div v-else :style="isStandaloneSearch ? { width: '380px', height: '100%', background: 'var(--bg-primary)' } : { width: Math.max(360, windowWidth) + 'px', height: Math.max(240, Math.min(600, windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->
-    <header class="flex items-center justify-between px-4 py-3" style="box-shadow: 0 0.5px 0 var(--border);">
+    <header class="flex items-center justify-between px-4 py-3 relative z-40" style="box-shadow: 0 0.5px 0 var(--border);">
       <div class="flex items-center gap-2.5 flex-1 min-w-0 flex-wrap py-0.5">
         <img src="/icons/icon-32.png" alt="" class="w-5 h-5 shrink-0" />
         <div class="flex items-center gap-1.5 shrink-0" :title="BUILD_STRING">
@@ -1755,17 +1802,6 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             <path fill-rule="evenodd" d="M7.455 2.004a.75.75 0 01.26.77 7 7 0 009.958 7.967.75.75 0 011.067.853A8.5 8.5 0 116.647 1.921a.75.75 0 01.808.083z" clip-rule="evenodd" />
           </svg>
         </button>
-        <!-- Chat -->
-        <button
-          class="w-7 h-7 flex items-center justify-center rounded-sm"
-          style="color: var(--text-secondary);"
-          @click="currentView = 'chat'"
-          title="Window Chat"
-        >
-          <svg class="w-[15px] h-[15px]" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M10 2c-4.418 0-8 3.134-8 7 0 2.222 1.166 4.2 3 5.485V18l2.909-1.939c.677.167 1.385.253 2.091.253 4.418 0 8-3.134 8-7s-3.582-7-8-7z" clip-rule="evenodd" />
-          </svg>
-        </button>
         <!-- Settings -->
         <button
           class="w-7 h-7 flex items-center justify-center rounded-sm"
@@ -1841,9 +1877,14 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
         v-for="(w, idx) in allWindows"
         :key="w.windowId"
         class="rounded-none border-b"
+        :class="{ 'relative z-30': isWindowActivePopover(w.windowId) }"
         style="background: var(--bg-secondary); border-color: var(--border);"
       >
-        <div class="sticky top-0 z-20 flex flex-col shadow-sm" style="background: var(--bg-secondary); border-bottom: 1px solid var(--border);">
+        <div
+          class="sticky top-0 flex flex-col shadow-sm"
+          :class="isWindowActivePopover(w.windowId) ? 'z-30' : 'z-20'"
+          style="background: var(--bg-secondary); border-bottom: 1px solid var(--border);"
+        >
           <!-- Window section header (clickable to collapse/expand) -->
           <div
             class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none"
@@ -1964,7 +2005,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
                 <!-- Custom Prompt Icon Button -->
                 <button
-                  class="p-[5px] rounded-btn flex items-center justify-center transition-all shrink-0"
+                  class="p-[5px] rounded-btn flex items-center justify-center transition-all shrink-0 cursor-pointer"
                   :style="activePromptWindowId === w.windowId
                     ? { background: 'var(--accent)', color: '#ffffff' }
                     : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
@@ -1976,14 +2017,26 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   </svg>
                 </button>
 
+                <!-- Window Chat Icon Button -->
+                <button
+                  class="p-[5px] rounded-btn flex items-center justify-center transition-all shrink-0 cursor-pointer"
+                  style="color: var(--text-secondary); background: var(--hover);"
+                  @click="openWindowChat(w.windowId)"
+                  :title="'Window Chat (' + (w.windowId === currentWindowId ? 'Current window' : 'Window #' + w.windowId) + ')'"
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 2c-4.418 0-8 3.134-8 7 0 2.222 1.166 4.2 3 5.485V18l2.909-1.939c.677.167 1.385.253 2.091.253 4.418 0 8-3.134 8-7s-3.582-7-8-7z" clip-rule="evenodd" />
+                  </svg>
+                </button>
+
                 <!-- Sort Popover -->
-                <div class="relative inline-block shrink-0">
+                <div class="relative inline-block shrink-0 popover-container">
                   <button
                     class="p-[5px] rounded-btn flex items-center justify-center transition-all shrink-0"
                     :style="(activeSortMenuWindowId === w.windowId || (windowGroupSort[w.windowId] && windowGroupSort[w.windowId] !== 'default'))
                       ? { background: 'var(--accent)', color: '#ffffff' }
                       : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
-                    @click="toggleSortMenuPopover(w.windowId)"
+                    @click.stop="toggleSortMenuPopover(w.windowId)"
                     :title="getMessage('sort')"
                   >
                     <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -2050,13 +2103,13 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 </button>
 
                 <!-- Overflow Menu ⋯ Popover -->
-                <div class="relative inline-block shrink-0">
+                <div class="relative inline-block shrink-0 popover-container">
                   <button
                     class="p-[5px] rounded-btn flex items-center justify-center transition-colors shrink-0"
                     :style="activeMoreMenuWindowId === w.windowId
                       ? { background: 'var(--accent)', color: '#ffffff' }
                       : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
-                    @click="toggleMoreMenuPopover(w.windowId)"
+                    @click.stop="toggleMoreMenuPopover(w.windowId)"
                     title="More actions"
                   >
                     <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -2064,7 +2117,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                     </svg>
                   </button>
 
-                  <div v-if="activeMoreMenuWindowId === w.windowId" class="absolute right-0 top-full mt-1 w-44 p-1 rounded-sm shadow-card z-50 flex flex-col gap-0.5 text-left" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+                  <div v-if="activeMoreMenuWindowId === w.windowId" class="absolute right-0 top-full mt-1 w-52 p-1 rounded-sm shadow-card z-50 flex flex-col gap-0.5 text-left" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
                     <button
                       @click="handleUngroup(w.windowId)"
                       class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
@@ -2084,6 +2137,17 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                         <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.21-2.35.398a.75.75 0 00-.56.885l.135.539a.75.75 0 00.885.56 25.1 25.1 0 011.89-.37v10.55A2.75 2.75 0 008.75 19h2.5a2.75 2.75 0 002.75-2.75V5.727c.642.096 1.272.22 1.89.37a.75.75 0 00.885-.56l.135-.539a.75.75 0 00-.56-.885 26.6 26.6 0 00-2.35-.398V3.75A2.75 2.75 0 0011.25 1h-2.5zm1.25 1.5c.69 0 1.25.56 1.25 1.25v.266c-.83-.04-1.67-.04-2.5 0V3.75c0-.69.56-1.25 1.25-1.25z" clip-rule="evenodd" />
                       </svg>
                       <span>{{ getMessage('cleanupGroups') }}</span>
+                    </button>
+                    <button
+                      v-if="allWindows.length > 1"
+                      @click="handleMergeAllWindows(w.windowId)"
+                      class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
+                      style="color: var(--text-primary);"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M2 4.25A2.25 2.25 0 014.25 2h11.5A2.25 2.25 0 0118 4.25v8.5A2.25 2.25 0 0115.75 15h-3.105a3.501 3.501 0 01-5.29 0H4.25A2.25 2.25 0 012 12.75v-8.5zM4.25 3.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h3.105a.75.75 0 01.672.418 2.001 2.001 0 003.946 0 .75.75 0 01.672-.418h3.105a.75.75 0 00.75-.75v-8.5a.75.75 0 00-.75-.75H4.25z" clip-rule="evenodd" />
+                      </svg>
+                      <span>{{ getMessage('mergeAllWindowsIntoThis') }}</span>
                     </button>
 
                     <template v-if="w.hasGroups">

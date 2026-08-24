@@ -334,5 +334,9 @@
   "fastOverlayModeDesc": {
     "message": "Defers AI metric computations, throttles pointer tracking, and renders search results in high-performance DOM batches.",
     "description": "Description for Fast Overlay Mode"
+  },
+  "mergeAllWindowsIntoThis": {
+    "message": "Merge all windows into this one",
+    "description": "Button label in overflow menu to merge all other windows into this window"
   }
 }
