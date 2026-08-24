@@ -14,6 +14,11 @@ describe('getAIOverrides', () => {
       commands: {
         onCommand: { addListener: vi.fn() }
       },
+      action: {
+        setBadgeText: vi.fn().mockResolvedValue(undefined),
+        setBadgeBackgroundColor: vi.fn().mockResolvedValue(undefined),
+        setPopup: vi.fn().mockResolvedValue(undefined),
+      },
       tabs: {
         onCreated: { addListener: vi.fn() },
         onUpdated: { addListener: vi.fn() },
@@ -24,7 +29,9 @@ describe('getAIOverrides', () => {
         ungroup: vi.fn()
       },
       windows: {
-        onRemoved: { addListener: vi.fn() }
+        WINDOW_ID_NONE: -1,
+        onRemoved: { addListener: vi.fn() },
+        getLastFocused: vi.fn().mockResolvedValue({ id: 999 })
       },
       tabGroups: {
         onCreated: { addListener: vi.fn() },
@@ -275,4 +282,211 @@ describe('sortGroupsBySize', () => {
     }
   })
 })
+
+describe('resolveWindowId', () => {
+  let resolveWindowId: any
+
+  beforeAll(async () => {
+    const module = await import('../src/background/index')
+    resolveWindowId = module.resolveWindowId
+  })
+
+  it('extracts number directly from numeric payload', async () => {
+    const res = await resolveWindowId(42)
+    expect(res).toBe(42)
+  })
+
+  it('extracts windowId property from object payload', async () => {
+    const res = await resolveWindowId({ windowId: 105 })
+    expect(res).toBe(105)
+  })
+
+  it('falls back to last focused normal window when payload is missing or invalid', async () => {
+    const res = await resolveWindowId(undefined)
+    expect(res).toBe(999)
+  })
+})
+
+describe('closeDuplicateTabs & closePossibleDuplicateTabs', () => {
+  let closeDuplicateTabs: any
+  let closePossibleDuplicateTabs: any
+
+  beforeAll(async () => {
+    const managerModule = await import('../src/background/tab-manager')
+    closeDuplicateTabs = managerModule.closeDuplicateTabs
+    closePossibleDuplicateTabs = managerModule.closePossibleDuplicateTabs
+  })
+
+  it('closes exact duplicates when given a specific windowId', async () => {
+    const mockTabs = [
+      { id: 1, url: 'https://example.com/page', windowId: 1 },
+      { id: 2, url: 'https://example.com/page', windowId: 1 },
+      { id: 3, url: 'https://example.com/other', windowId: 1 }
+    ]
+
+    const tabsQueryMock = vi.fn().mockResolvedValue(mockTabs)
+    const tabsRemoveMock = vi.fn().mockResolvedValue(undefined)
+
+    const originalQuery = chrome.tabs.query
+    const originalRemove = chrome.tabs.remove
+    chrome.tabs.query = tabsQueryMock
+    chrome.tabs.remove = tabsRemoveMock
+
+    try {
+      await closeDuplicateTabs(1)
+      expect(tabsQueryMock).toHaveBeenCalledWith({ windowId: 1 })
+      expect(tabsRemoveMock).toHaveBeenCalledWith([2])
+    } finally {
+      chrome.tabs.query = originalQuery
+      chrome.tabs.remove = originalRemove
+    }
+  })
+
+  it('closes explicit tab IDs directly without querying', async () => {
+    const tabsRemoveMock = vi.fn().mockResolvedValue(undefined)
+    const originalRemove = chrome.tabs.remove
+    chrome.tabs.remove = tabsRemoveMock
+
+    try {
+      await closeDuplicateTabs(undefined, [10, 20])
+      expect(tabsRemoveMock).toHaveBeenCalledWith([10, 20])
+    } finally {
+      chrome.tabs.remove = originalRemove
+    }
+  })
+
+  it('closes possible duplicates keeping only the first variant tab', async () => {
+    const mockTabs = [
+      { id: 10, url: 'https://example.com/doc?utm_source=a', windowId: 2 },
+      { id: 11, url: 'https://example.com/doc?utm_source=b', windowId: 2 }
+    ]
+
+    const tabsQueryMock = vi.fn().mockResolvedValue(mockTabs)
+    const tabsRemoveMock = vi.fn().mockResolvedValue(undefined)
+
+    const originalQuery = chrome.tabs.query
+    const originalRemove = chrome.tabs.remove
+    chrome.tabs.query = tabsQueryMock
+    chrome.tabs.remove = tabsRemoveMock
+
+    try {
+      await closePossibleDuplicateTabs(2)
+      expect(tabsQueryMock).toHaveBeenCalledWith({ windowId: 2 })
+      expect(tabsRemoveMock).toHaveBeenCalledWith([11])
+    } finally {
+      chrome.tabs.query = originalQuery
+      chrome.tabs.remove = originalRemove
+    }
+  })
+})
+
+describe('Action Badge Lifecycle and AI Operation Status', () => {
+  let updateNewTabsBadge: any
+  let setAIBadge: any
+  let isAnyAIOperationRunning: any
+  let clearWindowCache: any
+  let cancelActiveOperation: any
+
+  beforeAll(async () => {
+    const managerModule = await import('../src/background/tab-manager')
+    updateNewTabsBadge = managerModule.updateNewTabsBadge
+    setAIBadge = managerModule.setAIBadge
+    isAnyAIOperationRunning = managerModule.isAnyAIOperationRunning
+    clearWindowCache = managerModule.clearWindowCache
+    cancelActiveOperation = managerModule.cancelActiveOperation
+  })
+
+  it('sets badge to "AI" with purple background when setAIBadge is called', async () => {
+    const setBadgeTextMock = vi.fn().mockResolvedValue(undefined)
+    const setBadgeBackgroundColorMock = vi.fn().mockResolvedValue(undefined)
+    chrome.action = {
+      setBadgeText: setBadgeTextMock,
+      setBadgeBackgroundColor: setBadgeBackgroundColorMock,
+      setPopup: vi.fn(),
+    } as any
+
+    await setAIBadge(1)
+    expect(isAnyAIOperationRunning()).toBe(true)
+    expect(setBadgeTextMock).toHaveBeenCalledWith({ text: 'AI' })
+    expect(setBadgeBackgroundColorMock).toHaveBeenCalledWith({ color: '#8B5CF6' })
+  })
+
+  it('reconciles and clears AI badge when no operations are running and no duplicates exist', async () => {
+    clearWindowCache(1)
+    expect(isAnyAIOperationRunning()).toBe(false)
+
+    const setBadgeTextMock = vi.fn().mockResolvedValue(undefined)
+    const setBadgeBackgroundColorMock = vi.fn().mockResolvedValue(undefined)
+    const tabsQueryMock = vi.fn().mockResolvedValue([
+      { id: 1, url: 'https://example.com/1', windowId: 1 },
+      { id: 2, url: 'https://example.com/2', windowId: 1 },
+    ])
+
+    chrome.action = {
+      setBadgeText: setBadgeTextMock,
+      setBadgeBackgroundColor: setBadgeBackgroundColorMock,
+      setPopup: vi.fn(),
+    } as any
+    chrome.tabs.query = tabsQueryMock
+
+    await updateNewTabsBadge(1)
+    expect(setBadgeTextMock).toHaveBeenCalledWith({ text: '' })
+  })
+
+  it('shows duplicate count in badge when duplicates exist and no AI operations are running', async () => {
+    clearWindowCache(1)
+    const setBadgeTextMock = vi.fn().mockResolvedValue(undefined)
+    const setBadgeBackgroundColorMock = vi.fn().mockResolvedValue(undefined)
+    const tabsQueryMock = vi.fn().mockResolvedValue([
+      { id: 1, url: 'https://example.com/dup', windowId: 1 },
+      { id: 2, url: 'https://example.com/dup', windowId: 1 },
+      { id: 3, url: 'https://example.com/dup', windowId: 1 },
+      { id: 4, url: 'https://example.com/unique', windowId: 1 },
+    ])
+
+    chrome.action = {
+      setBadgeText: setBadgeTextMock,
+      setBadgeBackgroundColor: setBadgeBackgroundColorMock,
+      setPopup: vi.fn(),
+    } as any
+    chrome.tabs.query = tabsQueryMock
+
+    await updateNewTabsBadge(1)
+    expect(setBadgeTextMock).toHaveBeenCalledWith({ text: '2' })
+    expect(setBadgeBackgroundColorMock).toHaveBeenCalledWith({ color: 'red' })
+  })
+
+  it('immediately cleans up active AI operation on cancelActiveOperation', async () => {
+    await setAIBadge(2)
+    expect(isAnyAIOperationRunning()).toBe(true)
+
+    const setBadgeTextMock = vi.fn().mockResolvedValue(undefined)
+    chrome.action = {
+      setBadgeText: setBadgeTextMock,
+      setBadgeBackgroundColor: vi.fn(),
+      setPopup: vi.fn(),
+    } as any
+    chrome.tabs.query = vi.fn().mockResolvedValue([])
+
+    cancelActiveOperation(2)
+    expect(isAnyAIOperationRunning()).toBe(false)
+  })
+
+  it('immediately cleans up active AI operation on clearWindowCache', async () => {
+    await setAIBadge(3)
+    expect(isAnyAIOperationRunning()).toBe(true)
+
+    const setBadgeTextMock = vi.fn().mockResolvedValue(undefined)
+    chrome.action = {
+      setBadgeText: setBadgeTextMock,
+      setBadgeBackgroundColor: vi.fn(),
+      setPopup: vi.fn(),
+    } as any
+    chrome.tabs.query = vi.fn().mockResolvedValue([])
+
+    clearWindowCache(3)
+    expect(isAnyAIOperationRunning()).toBe(false)
+  })
+})
+
 

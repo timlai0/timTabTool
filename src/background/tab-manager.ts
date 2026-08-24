@@ -26,6 +26,25 @@ const activeAbortControllers = new Map<number, AbortController>()
 const activeTimeoutIds = new Map<number, ReturnType<typeof setTimeout>>()
 const activeTimeoutLoggers = new Map<number, AILogger | undefined>()
 
+/** Tracks which windows currently have an active AI operation running. */
+const activeAIOperationWindows = new Set<number>()
+
+/**
+ * Check whether any AI operation is actively running across any window.
+ */
+export function isAnyAIOperationRunning(): boolean {
+  if (activeAIOperationWindows.size > 0) return true
+  for (const [windowId, controller] of activeAbortControllers.entries()) {
+    if (!controller.signal.aborted) {
+      const op = activeOperationsMap.get(windowId)
+      if (op && op.type !== null && op.stage !== 'completed' && op.stage !== 'failed') {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 const OPERATION_TIMEOUT_MS = 270_000 // 4.5 minutes
 
 const timeoutEndTimestamps = new Map<number, number>()
@@ -274,6 +293,7 @@ export function clearOperationError(windowId: number): void {
 }
 
 export function clearWindowCache(windowId: number): void {
+  activeAIOperationWindows.delete(windowId)
   previewCacheMap.delete(windowId)
   cacheIsAIGroupedMap.delete(windowId)
   titlesHiddenMap.delete(windowId)
@@ -295,6 +315,7 @@ export function clearWindowCache(windowId: number): void {
     controller.abort()
     activeAbortControllers.delete(windowId)
   }
+  updateNewTabsBadge().catch(console.error)
 }
 
 // --- Smart group title state ---
@@ -650,45 +671,102 @@ export async function autoGroupNewTab(tab: chrome.tabs.Tab): Promise<void> {
 }
 
 /**
- * Update the extension badge to show how many tabs are duplicates.
+ * Update the extension badge to show duplicate tabs or AI active status.
  */
-async function updateNewTabsBadge(windowId: number): Promise<void> {
-  const tabs = await chrome.tabs.query({ windowId })
-
-  const urlCounts = new Map<string, number>()
-  for (const t of tabs) {
-    if (t.url) {
-      urlCounts.set(t.url, (urlCounts.get(t.url) || 0) + 1)
-    }
+export async function updateNewTabsBadge(windowId?: number): Promise<void> {
+  if (isAnyAIOperationRunning()) {
+    await setAIBadge()
+    return
   }
 
-  let duplicateCount = 0
-  for (const count of urlCounts.values()) {
-    if (count > 1) {
-      duplicateCount += count - 1
-    }
+  if (typeof chrome === 'undefined' || !chrome.action || !chrome.tabs) {
+    return
   }
 
-  await chrome.action.setBadgeText({ text: duplicateCount > 0 ? String(duplicateCount) : '' })
-  await chrome.action.setBadgeBackgroundColor({ color: duplicateCount > 0 ? 'red' : '#6B7280' })
+  try {
+    let tabs: chrome.tabs.Tab[] = []
+    if (windowId !== undefined) {
+      try {
+        tabs = await chrome.tabs.query({ windowId })
+      } catch {
+        tabs = []
+      }
+    }
+
+    if (tabs.length === 0) {
+      try {
+        const activeTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+        if (activeTabs.length > 0 && activeTabs[0].windowId !== undefined) {
+          tabs = await chrome.tabs.query({ windowId: activeTabs[0].windowId })
+        } else {
+          tabs = await chrome.tabs.query({})
+        }
+      } catch {
+        tabs = []
+      }
+    }
+
+    const urlCounts = new Map<string, number>()
+    for (const t of tabs) {
+      if (t.url) {
+        urlCounts.set(t.url, (urlCounts.get(t.url) || 0) + 1)
+      }
+    }
+
+    let duplicateCount = 0
+    for (const count of urlCounts.values()) {
+      if (count > 1) {
+        duplicateCount += count - 1
+      }
+    }
+
+    await chrome.action.setBadgeText({ text: duplicateCount > 0 ? String(duplicateCount) : '' })
+    await chrome.action.setBadgeBackgroundColor({ color: duplicateCount > 0 ? 'red' : '#6B7280' })
+  } catch (err) {
+    console.error('[timTabTool] Failed to update badge:', err)
+    try {
+      await chrome.action.setBadgeText({ text: '' })
+    } catch {
+      // Ignore
+    }
+  }
 }
 
 const badgeTimeoutsByWindow = new Map<number, ReturnType<typeof setTimeout>>()
-function debouncedUpdateNewTabsBadge(windowId: number): void {
-  const existing = badgeTimeoutsByWindow.get(windowId)
-  if (existing) clearTimeout(existing)
-  badgeTimeoutsByWindow.set(
-    windowId,
-    setTimeout(() => {
-      badgeTimeoutsByWindow.delete(windowId)
-      updateNewTabsBadge(windowId).catch(console.error)
+let globalBadgeTimeout: ReturnType<typeof setTimeout> | null = null
+
+export function debouncedUpdateNewTabsBadge(windowId?: number): void {
+  if (windowId !== undefined) {
+    const existing = badgeTimeoutsByWindow.get(windowId)
+    if (existing) clearTimeout(existing)
+    badgeTimeoutsByWindow.set(
+      windowId,
+      setTimeout(() => {
+        badgeTimeoutsByWindow.delete(windowId)
+        updateNewTabsBadge(windowId).catch(console.error)
+      }, CACHE_DEBOUNCE_MS)
+    )
+  } else {
+    if (globalBadgeTimeout) clearTimeout(globalBadgeTimeout)
+    globalBadgeTimeout = setTimeout(() => {
+      globalBadgeTimeout = null
+      updateNewTabsBadge().catch(console.error)
     }, CACHE_DEBOUNCE_MS)
-  )
+  }
 }
 
-async function setAIBadge(): Promise<void> {
-  await chrome.action.setBadgeText({ text: 'AI' })
-  await chrome.action.setBadgeBackgroundColor({ color: '#8B5CF6' })
+export async function setAIBadge(windowId?: number): Promise<void> {
+  if (windowId !== undefined) {
+    activeAIOperationWindows.add(windowId)
+  }
+  if (typeof chrome !== 'undefined' && chrome.action) {
+    try {
+      await chrome.action.setBadgeText({ text: 'AI' })
+      await chrome.action.setBadgeBackgroundColor({ color: '#8B5CF6' })
+    } catch {
+      // Ignore
+    }
+  }
 }
 
 /**
@@ -922,7 +1000,7 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
 
   if (forceRefresh && settings.ai.enabled && settings.ai.apiKey) {
     try {
-      await setAIBadge()
+      await setAIBadge(windowId)
       const tabsWithTime = tabs.map((t) => ({
         ...t,
         createdAt: t.id !== undefined ? tabCreatedTimesMap.get(t.id) ?? t.lastAccessed : t.lastAccessed,
@@ -945,7 +1023,8 @@ export async function getGroupsPreview(windowId: number, forceRefresh = false): 
       }
       cacheIsAIGroupedMap.set(windowId, false)
     } finally {
-      debouncedUpdateNewTabsBadge(windowId)
+      activeAIOperationWindows.delete(windowId)
+      await updateNewTabsBadge(windowId).catch(console.error)
     }
   } else {
     const fromChrome = await buildGroupsFromChrome(tabs)
@@ -1035,7 +1114,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
       }
 
       try {
-        await setAIBadge()
+        await setAIBadge(windowId)
         operationStartTimestamps.set(windowId, Date.now())
         const modelName = settings.ai.model || DEFAULT_MODELS[settings.ai.provider] || 'default'
         const est = AIClient.estimateCostAndTokens(settings.ai, unpinnedTabs.length, 'group')
@@ -1265,14 +1344,15 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
+    activeAIOperationWindows.delete(windowId)
     clearOperationTimeout(windowId)
-    debouncedUpdateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
     if (activeOperationsMap.get(windowId)?.type === 'group') {
       activeOperationsMap.delete(windowId)
     }
+    await updateNewTabsBadge(windowId).catch(console.error)
   }
 }
 
@@ -1356,7 +1436,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
       registerTimeoutLogger(windowId, logger)
     }
 
-    await setAIBadge()
+    await setAIBadge(windowId)
     operationStartTimestamps.set(windowId, Date.now())
     const modelName = settings.ai.model || DEFAULT_MODELS[settings.ai.provider] || 'default'
     const est = AIClient.estimateCostAndTokens(settings.ai, newTabs.length, 'classify', undefined, undefined, existingGroupNames)
@@ -1562,14 +1642,15 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
+    activeAIOperationWindows.delete(windowId)
     clearOperationTimeout(windowId)
-    debouncedUpdateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
     if (activeOperationsMap.get(windowId)?.type === 'classify') {
       activeOperationsMap.delete(windowId)
     }
+    await updateNewTabsBadge(windowId).catch(console.error)
   }
 }
 
@@ -1631,7 +1712,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
 
     const hideTitles = titlesHiddenMap.get(windowId) ?? false
 
-    await setAIBadge()
+    await setAIBadge(windowId)
     // Query AI for sub-grouping
     const tabInputs = tabs.map((t) => ({
       url: t.url || '',
@@ -1771,14 +1852,15 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
+    activeAIOperationWindows.delete(windowId)
     clearOperationTimeout(windowId)
-    debouncedUpdateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
-    if (activeOperationsMap.get(windowId)?.type === 'group') {
+    if (activeOperationsMap.get(windowId)?.type === 'split' || activeOperationsMap.get(windowId)?.type === 'group') {
       activeOperationsMap.delete(windowId)
     }
+    await updateNewTabsBadge(windowId).catch(console.error)
   }
 }
 
@@ -1898,7 +1980,7 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
       statusText: target === 'KEEP' ? 'Group will remain separate.' : `Merging tabs into "${target}"...`,
     })
     
-    await setAIBadge()
+    await setAIBadge(windowId)
     let mergeTarget
     try {
       mergeTarget = await client.decideMergeGroup(tabInputs, otherGroupNames)
@@ -1943,14 +2025,15 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
     activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
     throw err
   } finally {
+    activeAIOperationWindows.delete(windowId)
     clearOperationTimeout(windowId)
-    debouncedUpdateNewTabsBadge(windowId)
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
-    if (activeOperationsMap.get(windowId)?.type === 'group') {
+    if (activeOperationsMap.get(windowId)?.type === 'merge' || activeOperationsMap.get(windowId)?.type === 'group') {
       activeOperationsMap.delete(windowId)
     }
+    await updateNewTabsBadge(windowId).catch(console.error)
   }
 }
 
@@ -1964,6 +2047,7 @@ const applyCompletedOnCancelFlags = new Map<number, boolean>()
  * @param {boolean} [applyCompleted=false] - Whether to apply already-completed batches before terminating.
  */
 export function cancelActiveOperation(windowId: number, applyCompleted = false): void {
+  activeAIOperationWindows.delete(windowId)
   if (applyCompleted) {
     applyCompletedOnCancelFlags.set(windowId, true)
   }
@@ -1975,6 +2059,7 @@ export function cancelActiveOperation(windowId: number, applyCompleted = false):
   if (!applyCompleted) {
     activeOperationsMap.delete(windowId)
   }
+  updateNewTabsBadge(windowId).catch(console.error)
 }
 
 /**
@@ -2093,7 +2178,7 @@ export async function ungroupAllTabs(windowId: number): Promise<void> {
   if (tabIds.length > 0) {
     await retryTabOperation(() => chrome.tabs.ungroup(tabIds as [number, ...number[]]))
   }
-  await chrome.action.setBadgeText({ text: '' })
+  await updateNewTabsBadge(windowId).catch(console.error)
 }
 
 /**
@@ -2159,8 +2244,14 @@ export function handleTabGroupRemoved(groupId: number): void {
 
 // --- Window and Tab Management Utilities ---
 
-export async function closeDuplicateTabs(windowId: number): Promise<void> {
-  const tabs = await chrome.tabs.query({ windowId })
+export async function closeDuplicateTabs(windowId?: number, explicitTabIds?: number[]): Promise<void> {
+  if (Array.isArray(explicitTabIds) && explicitTabIds.length > 0) {
+    await chrome.tabs.remove(explicitTabIds)
+    for (const id of explicitTabIds) cacheRemoveTab(id)
+    return
+  }
+  const queryInfo: chrome.tabs.QueryInfo = (windowId !== undefined && windowId > 0 && windowId !== chrome.windows.WINDOW_ID_NONE) ? { windowId } : {}
+  const tabs = await chrome.tabs.query(queryInfo)
   const result = detectDuplicateTabs(tabs)
   const dupIds = result.exactDuplicates.map(t => t.id).filter((id): id is number => id !== undefined)
 
@@ -2170,8 +2261,14 @@ export async function closeDuplicateTabs(windowId: number): Promise<void> {
   }
 }
 
-export async function closePossibleDuplicateTabs(windowId: number): Promise<void> {
-  const tabs = await chrome.tabs.query({ windowId })
+export async function closePossibleDuplicateTabs(windowId?: number, explicitTabIds?: number[]): Promise<void> {
+  if (Array.isArray(explicitTabIds) && explicitTabIds.length > 0) {
+    await chrome.tabs.remove(explicitTabIds)
+    for (const id of explicitTabIds) cacheRemoveTab(id)
+    return
+  }
+  const queryInfo: chrome.tabs.QueryInfo = (windowId !== undefined && windowId > 0 && windowId !== chrome.windows.WINDOW_ID_NONE) ? { windowId } : {}
+  const tabs = await chrome.tabs.query(queryInfo)
   const result = detectDuplicateTabs(tabs)
   const dupIds: number[] = []
 
@@ -2190,7 +2287,7 @@ export async function closePossibleDuplicateTabs(windowId: number): Promise<void
 }
 
 export async function organizePossibleDuplicateGroups(targetWindowId?: number): Promise<void> {
-  const queryFilter = targetWindowId !== undefined ? { windowId: targetWindowId } : {}
+  const queryFilter: chrome.tabs.QueryInfo = (targetWindowId !== undefined && targetWindowId > 0 && targetWindowId !== chrome.windows.WINDOW_ID_NONE) ? { windowId: targetWindowId } : {}
   const tabs = await chrome.tabs.query(queryFilter)
   const result = detectDuplicateTabs(tabs)
 
@@ -2205,6 +2302,16 @@ export async function organizePossibleDuplicateGroups(targetWindowId?: number): 
 
     if (isTabGroupsSupported()) {
       try {
+        const clusterTabs = await chrome.tabs.query({})
+        const targetTab = clusterTabs.find(t => t.id === tabIds[0])
+        if (targetTab && targetTab.windowId) {
+          for (const tid of tabIds.slice(1)) {
+            const t = clusterTabs.find(x => x.id === tid)
+            if (t && t.windowId !== targetTab.windowId) {
+              await chrome.tabs.move(tid, { windowId: targetTab.windowId, index: -1 })
+            }
+          }
+        }
         const groupId = (await chrome.tabs.group({ tabIds: tabIds as [number, ...number[]] })) as unknown as number
         const groupTitle = `Dupes: ${cluster.domain || 'Cluster'}`
         const groupColor = colors[colorIdx % colors.length]

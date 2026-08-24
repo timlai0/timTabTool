@@ -46,6 +46,9 @@ import {
   isRestrictedUrl,
   recordTabCreatedTime,
   removeTabCreatedTime,
+  updateNewTabsBadge,
+  debouncedUpdateNewTabsBadge,
+  isAnyAIOperationRunning,
 } from './tab-manager'
 import { searchTabs } from './searcher'
 import { recordTabVisit, getHistoryEntries } from './storage'
@@ -60,13 +63,25 @@ const TAB_GROUP_ID_NONE = typeof chrome !== 'undefined' && typeof chrome.tabGrou
 
 console.log('[timTabTool] Service worker started')
 
+// Logic: Reconcile badge state and clear any orphaned AI badge on service worker startup
+updateNewTabsBadge().catch(console.error)
+
+if (typeof chrome !== 'undefined' && chrome.runtime?.onStartup) {
+  chrome.runtime.onStartup.addListener(() => {
+    updateNewTabsBadge().catch(console.error)
+  })
+}
+
 chrome.storage.local.get(STORAGE_KEYS.SETTINGS).then((data) => {
   const saved = (data[STORAGE_KEYS.SETTINGS] ?? {}) as Partial<ExtensionSettings>
-  chrome.action.setPopup({ popup: saved.useSearchPopup ? 'src/popup/search.html' : 'src/popup/index.html' })
+  if (chrome.action?.setPopup) {
+    chrome.action.setPopup({ popup: saved.useSearchPopup ? 'src/popup/search.html' : 'src/popup/index.html' })
+  }
 }).catch(console.error)
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[timTabTool] Extension installed')
+  updateNewTabsBadge().catch(console.error)
   // Programming logic: Create context menu items to open search (in-page and window)
   chrome.contextMenus.create({
     id: 'open-search-menu',
@@ -183,6 +198,9 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
 })
 
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  if (activeInfo.windowId !== undefined) {
+    debouncedUpdateNewTabsBadge(activeInfo.windowId)
+  }
   try {
     const tab = await chrome.tabs.get(activeInfo.tabId)
     if (tab.url && tab.title) {
@@ -192,6 +210,14 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     // Tab may have been removed
   }
 })
+
+if (typeof chrome !== 'undefined' && typeof chrome.windows !== 'undefined' && chrome.windows.onFocusChanged) {
+  chrome.windows.onFocusChanged.addListener((windowId) => {
+    if (windowId !== chrome.windows.WINDOW_ID_NONE) {
+      debouncedUpdateNewTabsBadge(windowId)
+    }
+  })
+}
 
 // --- Smart group title: toggle title on collapse/expand + cache rebuild ---
 // Logic: Register tab group listeners only if the API is available in the browser (not in Firefox)
@@ -236,7 +262,7 @@ async function ensureContentScriptLoaded(tabId: number): Promise<boolean> {
   // Inject content script if not loaded
   try {
     const manifest = chrome.runtime.getManifest()
-    const contentScriptFiles = manifest.content_scripts?.[0]?.js || []
+    const contentScriptFiles = manifest.content_scripts?.[0]?.js || ['content.js']
     if (contentScriptFiles.length > 0) {
       await chrome.scripting.executeScript({
         target: { tabId },
@@ -300,9 +326,6 @@ async function broadcastAIComplete(windowId: number, action: string) {
     }
 
     if (targetTab?.id && targetTab.url) {
-      const loaded = await ensureContentScriptLoaded(targetTab.id)
-      if (!loaded) return
-
       await chrome.tabs.sendMessage(targetTab.id, {
         action: 'AI_OPERATION_COMPLETE',
         payload: { commandAction: action }
@@ -341,9 +364,6 @@ async function broadcastAIFailed(windowId: number, action: string, errorMsg: str
     }
 
     if (targetTab?.id && targetTab.url) {
-      const loaded = await ensureContentScriptLoaded(targetTab.id)
-      if (!loaded) return
-
       await chrome.tabs.sendMessage(targetTab.id, {
         action: 'AI_OPERATION_FAILED',
         payload: { commandAction: action, error: errorMsg }
@@ -459,9 +479,16 @@ chrome.runtime.onMessage.addListener(
  * @param {unknown} payload - The message payload containing an optional windowId.
  * @returns {Promise<number>} The resolved window ID.
  */
-async function resolveWindowId(payload: unknown): Promise<number> {
-  const windowId = (payload as { windowId?: number })?.windowId
-  if (windowId !== undefined && Number.isInteger(windowId)) return windowId
+export async function resolveWindowId(payload: unknown): Promise<number> {
+  if (typeof payload === 'number' && Number.isInteger(payload) && payload > 0) {
+    return payload
+  }
+  if (payload && typeof payload === 'object') {
+    const wid = (payload as { windowId?: unknown }).windowId
+    if (typeof wid === 'number' && Number.isInteger(wid) && wid > 0) {
+      return wid
+    }
+  }
   // Logic: fallback to last focused normal window if no windowId provided
   const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null)
   return win?.id ?? chrome.windows.WINDOW_ID_NONE
@@ -509,6 +536,46 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
 
     if (typeof (p as any).openRouterOnlyFree === 'boolean') {
       overrides.openRouterOnlyFree = (p as any).openRouterOnlyFree
+    }
+
+    if (typeof (p as any).openRouterByokManual === 'boolean') {
+      overrides.openRouterByokManual = (p as any).openRouterByokManual
+    }
+
+    if (typeof (p as any).openRouterByokActive === 'boolean') {
+      overrides.openRouterByokActive = (p as any).openRouterByokActive
+    }
+
+    if ((p as any).openRouterKeyInfo && typeof (p as any).openRouterKeyInfo === 'object') {
+      overrides.openRouterKeyInfo = (p as any).openRouterKeyInfo
+    }
+
+    if (typeof (p as any).openrouterProvider === 'string') {
+      overrides.openrouterProvider = (p as any).openrouterProvider
+    }
+
+    if (typeof (p as any).openrouterAllowFallbacks === 'boolean') {
+      overrides.openrouterAllowFallbacks = (p as any).openrouterAllowFallbacks
+    }
+
+    if (typeof (p as any).openrouterSort === 'string') {
+      overrides.openrouterSort = (p as any).openrouterSort as any
+    }
+
+    if (typeof (p as any).openrouterDataCollection === 'string') {
+      overrides.openrouterDataCollection = (p as any).openrouterDataCollection as any
+    }
+
+    if (typeof (p as any).openrouterRequireParams === 'boolean') {
+      overrides.openrouterRequireParams = (p as any).openrouterRequireParams
+    }
+
+    if (typeof (p as any).openrouterIgnoreProviders === 'string') {
+      overrides.openrouterIgnoreProviders = (p as any).openrouterIgnoreProviders
+    }
+
+    if (typeof (p as any).openrouterFallbackModels === 'string') {
+      overrides.openrouterFallbackModels = (p as any).openrouterFallbackModels
     }
 
     if (typeof (p as any).reasoningEffort === 'string') {
@@ -817,14 +884,18 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     }
 
     case 'CLOSE_DUPLICATES': {
+      const payloadObj = message.payload && typeof message.payload === 'object' ? message.payload as Record<string, any> : null
+      const explicitTabIds = Array.isArray(payloadObj?.tabIds) ? payloadObj.tabIds : undefined
       const windowId = await resolveWindowId(message.payload)
-      await closeDuplicateTabs(windowId)
+      await closeDuplicateTabs(windowId, explicitTabIds)
       return { ok: true }
     }
 
     case 'CLOSE_POSSIBLE_DUPLICATES': {
+      const payloadObj = message.payload && typeof message.payload === 'object' ? message.payload as Record<string, any> : null
+      const explicitTabIds = Array.isArray(payloadObj?.tabIds) ? payloadObj.tabIds : undefined
       const windowId = await resolveWindowId(message.payload)
-      await closePossibleDuplicateTabs(windowId)
+      await closePossibleDuplicateTabs(windowId, explicitTabIds)
       return { ok: true }
     }
 
@@ -848,14 +919,26 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
           }
         }
 
-        const groupOptions: chrome.tabs.GroupOptions = { tabIds: tabIds as [number, ...number[]] }
-        if (targetGroupId !== undefined) {
-          groupOptions.groupId = targetGroupId
-        }
-
         try {
+          // Ensure all tabs are moved to the same window before grouping
+          const allTabs = await chrome.tabs.query({})
+          const firstTab = allTabs.find(t => t.id === tabIds[0])
+          if (firstTab && firstTab.windowId) {
+            for (const tid of tabIds.slice(1)) {
+              const t = allTabs.find(x => x.id === tid)
+              if (t && t.windowId !== firstTab.windowId) {
+                await chrome.tabs.move(tid, { windowId: firstTab.windowId, index: -1 })
+              }
+            }
+          }
+
+          const groupOptions: chrome.tabs.GroupOptions = { tabIds: tabIds as [number, ...number[]] }
+          if (targetGroupId !== undefined) {
+            groupOptions.groupId = targetGroupId
+          }
+
           const groupId = await chrome.tabs.group(groupOptions)
-          if (targetGroupId === undefined && title) {
+          if (targetGroupId === undefined && title && typeof chrome.tabGroups !== 'undefined') {
             await chrome.tabGroups.update(groupId, { title, color: 'orange' })
           }
         } catch (e) {

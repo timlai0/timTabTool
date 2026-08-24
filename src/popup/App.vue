@@ -334,14 +334,48 @@ const crossWindowDuplicateGroupsCount = computed(() => duplicateGroupAnalysis.va
 const crossWindowDuplicateGroupClusters = computed(() => duplicateGroupAnalysis.value.crossWindowDuplicateGroups)
 
 async function closeExactDuplicates() {
-  const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent()).id!
-  await chrome.runtime.sendMessage({ action: 'CLOSE_DUPLICATES', payload: currentWinId })
+  const ids = exactDuplicateTabs.value.map(t => t.id).filter((id): id is number => typeof id === 'number')
+  if (ids.length > 0) {
+    try {
+      await chrome.tabs.remove(ids)
+    } catch (err: any) {
+      const errMsg = err?.message || String(err)
+      if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
+        console.error('[timTabTool] Failed to close exact duplicate tabs directly:', err)
+      }
+      const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
+      await chrome.runtime.sendMessage({ action: 'CLOSE_DUPLICATES', payload: { windowId: currentWinId, tabIds: ids } })
+    }
+  } else {
+    const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
+    await chrome.runtime.sendMessage({ action: 'CLOSE_DUPLICATES', payload: { windowId: currentWinId } })
+  }
   await loadAllPreviews()
 }
 
 async function closePossibleDuplicates() {
-  const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent()).id!
-  await chrome.runtime.sendMessage({ action: 'CLOSE_POSSIBLE_DUPLICATES', payload: currentWinId })
+  const idsToClose: number[] = []
+  for (const cluster of possibleDuplicateClusters.value) {
+    for (let i = 1; i < cluster.tabs.length; i++) {
+      const id = cluster.tabs[i].id
+      if (id !== undefined) idsToClose.push(id)
+    }
+  }
+  if (idsToClose.length > 0) {
+    try {
+      await chrome.tabs.remove(idsToClose)
+    } catch (err: any) {
+      const errMsg = err?.message || String(err)
+      if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
+        console.error('[timTabTool] Failed to close possible duplicate tabs directly:', err)
+      }
+      const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
+      await chrome.runtime.sendMessage({ action: 'CLOSE_POSSIBLE_DUPLICATES', payload: { windowId: currentWinId, tabIds: idsToClose } })
+    }
+  } else {
+    const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
+    await chrome.runtime.sendMessage({ action: 'CLOSE_POSSIBLE_DUPLICATES', payload: { windowId: currentWinId } })
+  }
   await loadAllPreviews()
 }
 
@@ -387,8 +421,8 @@ async function focusTab(tabId: number, windowId: number) {
 }
 
 async function organizePossibleDuplicates() {
-  const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent()).id!
-  await chrome.runtime.sendMessage({ action: 'ORGANIZE_POSSIBLE_DUPLICATES', payload: currentWinId })
+  const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
+  await chrome.runtime.sendMessage({ action: 'ORGANIZE_POSSIBLE_DUPLICATES', payload: { windowId: currentWinId } })
   await loadAllPreviews()
 }
 
@@ -1325,15 +1359,20 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
                   <!-- Live Model Thinking Stream -->
                   <div v-if="op.liveReasoning" class="pt-1 flex flex-col gap-1">
-                    <details class="group/reasoning text-[9px]">
-                      <summary class="cursor-pointer font-medium flex items-center justify-between hover:underline select-none" style="color: var(--accent);">
+                    <details class="group/reasoning text-[9px]" open>
+                      <summary class="cursor-pointer font-medium flex items-center justify-between hover:underline select-none" style="color: var(--accent);" title="Click to collapse or expand thought stream">
                         <span class="flex items-center gap-1.5">
                           <span class="w-1.5 h-1.5 rounded-full animate-ping" style="background: var(--accent);" />
                           <span class="font-semibold">Live Model Thinking</span>
+                          <span class="text-[8px] opacity-60 font-normal">({{ op.liveReasoning.length }} chars)</span>
                         </span>
-                        <span class="text-[8px] opacity-70 group-open/reasoning:hidden" style="color: var(--text-tertiary);">View Thought Stream</span>
+                        <span class="text-[8px] opacity-70 group-open/reasoning:hidden" style="color: var(--text-tertiary);">Expand</span>
                       </summary>
-                      <div class="mt-1 p-1.5 rounded-xs font-mono text-[8.5px] leading-relaxed max-h-[110px] overflow-y-auto whitespace-pre-wrap select-text scrollbar-thin border border-black/5 dark:border-white/5" style="background: var(--bg-primary); color: var(--text-secondary);">
+                      <div 
+                        class="mt-1 p-1.5 rounded-xs font-mono text-[8.5px] leading-relaxed max-h-[120px] overflow-y-auto whitespace-pre-wrap select-text scrollbar-thin border border-black/5 dark:border-white/5" 
+                        style="background: var(--bg-primary); color: var(--text-secondary);"
+                        :title="'Full Model Thinking Stream:\n\n' + op.liveReasoning"
+                      >
                         {{ op.liveReasoning }}
                       </div>
                     </details>
@@ -1477,8 +1516,26 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 <span>Provider:</span>
                 <span class="font-semibold capitalize" style="color: var(--text-primary);">{{ aiSettings.provider }}</span>
               </div>
+              <div v-if="aiSettings.provider === 'openrouter' || aiSettings.provider === 'openai' || aiSettings.provider === 'gemini' || (aiSettings.reasoningEffort && aiSettings.reasoningEffort !== 'auto')" class="flex items-center justify-between" style="color: var(--text-secondary);">
+                <span>Reasoning:</span>
+                <span class="font-semibold capitalize" style="color: var(--text-primary);">{{ aiSettings.reasoningEffort || 'auto' }}</span>
+              </div>
+              <div class="flex items-center justify-between" style="color: var(--text-secondary);">
+                <span>Batch Size:</span>
+                <span class="font-semibold" style="color: var(--text-primary);">{{ aiSettings.batchSize ? `${aiSettings.batchSize} tabs` : `${getAutoBatchSize(aiSettings.maxTokens)} tabs (Auto)` }}</span>
+              </div>
+              <div v-if="aiSettings.provider === 'openrouter' && aiSettings.openrouterSort && aiSettings.openrouterSort !== 'auto'" class="flex items-center justify-between" style="color: var(--text-secondary);">
+                <span>Routing:</span>
+                <span class="font-semibold capitalize" style="color: var(--text-primary);">{{ aiSettings.openrouterSort }}</span>
+              </div>
               <div v-if="aiSettings.provider === 'openrouter' && aiSettings.openRouterOnlyFree" class="text-[9px] px-1.5 py-0.5 rounded-xs" style="background: rgba(52, 199, 89, 0.15); color: var(--group-green);">
                 Free Models Only Active
+              </div>
+              <div v-if="aiSettings.provider === 'openrouter' && (aiSettings.openRouterByokManual || aiSettings.openRouterByokActive || aiSettings.openRouterKeyInfo?.isByokActive)" class="text-[9px] px-1.5 py-0.5 rounded-xs font-medium" style="background: rgba(52, 199, 89, 0.15); color: var(--group-green);">
+                BYOK Direct Billing Active
+              </div>
+              <div v-if="aiSettings.provider === 'openrouter' && aiSettings.openrouterDataCollection === 'deny'" class="text-[9px] px-1.5 py-0.5 rounded-xs font-medium" style="background: rgba(0, 122, 255, 0.15); color: var(--accent);">
+                Zero Data Retention (Privacy)
               </div>
               <button 
                 @click="currentView = 'settings'"
