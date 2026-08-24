@@ -98,6 +98,40 @@ export type AIProvider = 'openai' | 'claude' | 'gemini' | 'openrouter' | 'custom
 export type ReasoningEffort = 'auto' | 'minimal' | 'low' | 'medium' | 'high' | 'max'
 
 /**
+ * @type {OpenRouterSort}
+ */
+export type OpenRouterSort = 'auto' | 'price' | 'throughput' | 'latency'
+
+/**
+ * @type {OpenRouterDataCollection}
+ */
+export type OpenRouterDataCollection = 'allow' | 'deny'
+
+/**
+ * @interface OpenRouterProviderItem
+ */
+export interface OpenRouterProviderItem {
+  slug: string
+  name: string
+}
+
+/**
+ * @interface OpenRouterKeyInfo
+ */
+export interface OpenRouterKeyInfo {
+  label?: string
+  usage?: number
+  limit?: number | null
+  isFreeTier?: boolean
+  byokUsage?: number
+  byokUsageDaily?: number
+  byokUsageWeekly?: number
+  byokUsageMonthly?: number
+  byokProviders?: string[]
+  isByokActive: boolean
+}
+
+/**
  * @interface ProviderSettings
  */
 export interface ProviderSettings {
@@ -108,7 +142,18 @@ export interface ProviderSettings {
   maxTokens?: number
   onlyFreeModels?: boolean
   reasoningEffort?: ReasoningEffort
+  openrouterProvider?: string
+  openrouterAllowFallbacks?: boolean
+  openrouterSort?: OpenRouterSort
+  openrouterDataCollection?: OpenRouterDataCollection
+  openrouterRequireParams?: boolean
+  openrouterIgnoreProviders?: string
+  openrouterFallbackModels?: string
+  openRouterByokManual?: boolean
+  openRouterByokActive?: boolean
+  openRouterKeyInfo?: OpenRouterKeyInfo
   customModels?: { id: string; name: string; complexity: string; costFactor: string; maxTokens: string }[]
+  customProviders?: OpenRouterProviderItem[]
 }
 
 /**
@@ -135,8 +180,19 @@ export interface AIConfig {
   bypassSafeguards?: boolean
   alwaysLogAIOperations?: boolean
   openRouterOnlyFree?: boolean
+  openrouterProvider?: string
+  openrouterAllowFallbacks?: boolean
+  openrouterSort?: OpenRouterSort
+  openrouterDataCollection?: OpenRouterDataCollection
+  openrouterRequireParams?: boolean
+  openrouterIgnoreProviders?: string
+  openrouterFallbackModels?: string
+  openRouterByokManual?: boolean
+  openRouterByokActive?: boolean
+  openRouterKeyInfo?: OpenRouterKeyInfo
   reasoningEffort?: ReasoningEffort
   customModels?: Record<string, { id: string; name: string; complexity: string; costFactor: string; maxTokens: string }[]>
+  customProviders?: Record<string, OpenRouterProviderItem[]>
   providerSettings?: Partial<Record<AIProvider, ProviderSettings>>
 }
 
@@ -168,6 +224,8 @@ export interface ExtensionSettings {
   sortNewTabs?: boolean
   mcpEnabled?: boolean
   mcpPort?: number
+  ecoMode?: boolean
+  fastOverlayMode?: boolean
 }
 
 /**
@@ -326,6 +384,8 @@ export interface AIOperationLogEntry {
     maxTokens?: number
     maxRetries?: number
     bypassSafeguards?: boolean
+    openrouterProvider?: string
+    openrouterAllowFallbacks?: boolean
   }
   tabsInput: Array<{
     index: number

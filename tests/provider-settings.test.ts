@@ -19,6 +19,13 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
       maxTokens: settings.ai.maxTokens,
       onlyFreeModels: provider === 'openrouter' ? !!settings.ai.openRouterOnlyFree : undefined,
       reasoningEffort: settings.ai.reasoningEffort,
+      openrouterProvider: provider === 'openrouter' ? settings.ai.openrouterProvider : undefined,
+      openrouterAllowFallbacks: provider === 'openrouter' ? (settings.ai.openrouterAllowFallbacks !== false) : undefined,
+      openrouterSort: provider === 'openrouter' ? settings.ai.openrouterSort : undefined,
+      openrouterDataCollection: provider === 'openrouter' ? settings.ai.openrouterDataCollection : undefined,
+      openrouterRequireParams: provider === 'openrouter' ? !!settings.ai.openrouterRequireParams : undefined,
+      openrouterIgnoreProviders: provider === 'openrouter' ? settings.ai.openrouterIgnoreProviders : undefined,
+      openrouterFallbackModels: provider === 'openrouter' ? settings.ai.openrouterFallbackModels : undefined,
     }
   }
 
@@ -40,6 +47,13 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
       settings.ai.reasoningEffort = saved.reasoningEffort ?? 'auto'
       if (newProvider === 'openrouter') {
         settings.ai.openRouterOnlyFree = !!saved.onlyFreeModels
+        settings.ai.openrouterProvider = saved.openrouterProvider ?? ''
+        settings.ai.openrouterAllowFallbacks = saved.openrouterAllowFallbacks !== false
+        settings.ai.openrouterSort = saved.openrouterSort ?? 'auto'
+        settings.ai.openrouterDataCollection = saved.openrouterDataCollection ?? 'allow'
+        settings.ai.openrouterRequireParams = !!saved.openrouterRequireParams
+        settings.ai.openrouterIgnoreProviders = saved.openrouterIgnoreProviders ?? ''
+        settings.ai.openrouterFallbackModels = saved.openrouterFallbackModels ?? ''
       }
     } else {
       const defEndpoint = DEFAULT_ENDPOINTS[newProvider] || ''
@@ -53,6 +67,13 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
       settings.ai.reasoningEffort = 'auto'
       if (newProvider === 'openrouter') {
         settings.ai.openRouterOnlyFree = false
+        settings.ai.openrouterProvider = ''
+        settings.ai.openrouterAllowFallbacks = true
+        settings.ai.openrouterSort = 'auto'
+        settings.ai.openrouterDataCollection = 'allow'
+        settings.ai.openrouterRequireParams = false
+        settings.ai.openrouterIgnoreProviders = ''
+        settings.ai.openrouterFallbackModels = ''
       }
       syncActiveToProviderSettings(settings, newProvider)
     }
@@ -79,12 +100,19 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
     expect(settings.ai.model).toBe('openai/gpt-4o-mini')
     expect(settings.ai.openRouterOnlyFree).toBe(false)
 
-    // 3. Configure OpenRouter with free models only and low reasoning effort
+    // 3. Configure OpenRouter with free models only, low reasoning effort, routing options, and google BYOK provider
     settings.ai.apiKey = 'sk-or-v1-test-key'
     settings.ai.model = 'stealth/ox-alpha'
     settings.ai.maxTokens = 32768
     settings.ai.batchSize = 15
     settings.ai.openRouterOnlyFree = true
+    settings.ai.openrouterProvider = 'google'
+    settings.ai.openrouterAllowFallbacks = false
+    settings.ai.openrouterSort = 'price'
+    settings.ai.openrouterDataCollection = 'deny'
+    settings.ai.openrouterRequireParams = true
+    settings.ai.openrouterIgnoreProviders = 'cloudflare,novita'
+    settings.ai.openrouterFallbackModels = 'openai/gpt-4o-mini, google/gemini-2.5-flash'
     settings.ai.reasoningEffort = 'low'
     syncActiveToProviderSettings(settings, 'openrouter')
 
@@ -98,6 +126,7 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
     // 5. Configure Gemini
     settings.ai.apiKey = 'AIza-gemini-key'
     settings.ai.model = 'gemini-3.5-flash'
+    settings.ai.reasoningEffort = 'medium'
     syncActiveToProviderSettings(settings, 'gemini')
 
     // 6. Switch back to OpenAI and verify all OpenAI settings are intact
@@ -109,7 +138,7 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
     expect(settings.ai.maxTokens).toBe(16384)
     expect(settings.ai.batchSize).toBe(25)
 
-    // 7. Switch back to OpenRouter and verify OpenRouter settings including openRouterOnlyFree and reasoningEffort are intact
+    // 7. Switch back to OpenRouter and verify all OpenRouter routing and policy settings are intact
     loadProviderSettings(settings, 'openrouter', 'openai')
     expect(settings.ai.provider).toBe('openrouter')
     expect(settings.ai.apiKey).toBe('sk-or-v1-test-key')
@@ -118,6 +147,13 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
     expect(settings.ai.maxTokens).toBe(32768)
     expect(settings.ai.batchSize).toBe(15)
     expect(settings.ai.openRouterOnlyFree).toBe(true)
+    expect(settings.ai.openrouterProvider).toBe('google')
+    expect(settings.ai.openrouterAllowFallbacks).toBe(false)
+    expect(settings.ai.openrouterSort).toBe('price')
+    expect(settings.ai.openrouterDataCollection).toBe('deny')
+    expect(settings.ai.openrouterRequireParams).toBe(true)
+    expect(settings.ai.openrouterIgnoreProviders).toBe('cloudflare,novita')
+    expect(settings.ai.openrouterFallbackModels).toBe('openai/gpt-4o-mini, google/gemini-2.5-flash')
     expect(settings.ai.reasoningEffort).toBe('low')
 
     // 8. Switch back to Gemini and verify Gemini settings are intact
@@ -125,6 +161,7 @@ describe('Per-Provider Settings Memory & Synchronization', () => {
     expect(settings.ai.provider).toBe('gemini')
     expect(settings.ai.apiKey).toBe('AIza-gemini-key')
     expect(settings.ai.model).toBe('gemini-3.5-flash')
+    expect(settings.ai.reasoningEffort).toBe('medium')
   })
 
   it('cycles through all 5 providers preserving independent configurations', () => {

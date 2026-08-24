@@ -34,7 +34,7 @@ This document serves as the master index for the architecture, namespaces, and c
 ### Shared Utilities & Data Types (`src/shared/`)
 
 * **`src/shared/ai-client.ts`**
-  * **Namespace:** `AIClient`, `fetchGoogleModels`, `fetchOpenRouterModels`, `getGoogleModelPricing`
+  * **Namespace:** `AIClient`, `fetchGoogleModels`, `fetchOpenRouterModels`, `fetchOpenRouterProviders`, `fetchOpenRouterKeyInfo`, `getGoogleModelPricing`
   * **Dependencies:** `./types`, `./ai-logger`, `./constants`, `./utils`
   * **Responsibilities:** Provides a unified interface for interacting with LLM providers (OpenAI, Claude, Gemini, OpenRouter, Custom). Handles token estimations, safeguards against runaway billing, robust retry mechanisms, prompt formatting, JSON response repair, and live model discovery. Exposes business logic for clustering (`groupTabsFreely`), classifying (`classifyTabs`, `classifyNewTabsIntoGroups`), and merging (`decideMergeGroup`) browser tabs.
 * **`src/shared/ai-logger.ts`**

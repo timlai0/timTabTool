@@ -1,4 +1,4 @@
-import type { GroupCategory, GroupDefinition, ExtensionSettings } from './types'
+import type { GroupCategory, GroupDefinition, ExtensionSettings, OpenRouterProviderItem } from './types'
 
 export const GROUP_DEFINITIONS: Record<GroupCategory, GroupDefinition> = {
   work: { color: 'blue', labelKey: 'groupWork' },
@@ -76,12 +76,19 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     maxRetries: 2,
     alwaysLogAIOperations: true,
     openRouterOnlyFree: false,
+    openrouterProvider: '',
+    openrouterAllowFallbacks: true,
+    openrouterSort: 'auto',
+    openrouterDataCollection: 'allow',
+    openrouterRequireParams: false,
+    openrouterIgnoreProviders: '',
+    openrouterFallbackModels: '',
     reasoningEffort: 'auto',
     providerSettings: {
       openai: { apiKey: '', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini', maxTokens: 16384, batchSize: 20, reasoningEffort: 'auto' },
       claude: { apiKey: '', endpoint: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-20241022', maxTokens: 8192, batchSize: 10 },
-      gemini: { apiKey: '', endpoint: 'https://generativelanguage.googleapis.com', model: 'gemini-2.5-flash', maxTokens: 65536, batchSize: 30 },
-      openrouter: { apiKey: '', endpoint: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini', maxTokens: 16384, batchSize: 20, onlyFreeModels: false, reasoningEffort: 'auto' },
+      gemini: { apiKey: '', endpoint: 'https://generativelanguage.googleapis.com', model: 'gemini-2.5-flash', maxTokens: 65536, batchSize: 30, reasoningEffort: 'auto' },
+      openrouter: { apiKey: '', endpoint: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini', maxTokens: 16384, batchSize: 20, onlyFreeModels: false, openrouterProvider: '', openrouterAllowFallbacks: true, openrouterSort: 'auto', openrouterDataCollection: 'allow', openrouterRequireParams: false, openrouterIgnoreProviders: '', openrouterFallbackModels: '', reasoningEffort: 'auto' },
       custom: { apiKey: '', endpoint: '', model: 'gpt-4o-mini', maxTokens: 16384, batchSize: 20 },
     },
   },
@@ -91,13 +98,15 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   groupIndicatorStyle: 'header',
   smartGroupTitle: true,
   theme: 'system',
-  windowWidth: 360,
+  windowWidth: 420,
   windowHeight: 600,
   showRuleGroupsWhenUngrouped: true,
   useSearchPopup: false,
   sortNewTabs: false,
   mcpEnabled: false,
   mcpPort: 8585,
+  ecoMode: true,
+  fastOverlayMode: true,
 }
 
 /**
@@ -207,7 +216,7 @@ export const PREDEFINED_MODELS: Record<string, { id: string, name: string, compl
   ],
   openrouter: [
     // Free models on OpenRouter
-    { id: 'stealth/ox-alpha', name: 'Stealth: OX Alpha (Free)', complexity: 'High', costFactor: 'Free', maxTokens: '128K' },
+    { id: 'stealth/ox-alpha', name: 'Stealth: OX Alpha (Free)', complexity: 'High', costFactor: 'Free', maxTokens: '32K' },
     { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B (Free)', complexity: 'Medium', costFactor: 'Free', maxTokens: '8K' },
     { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek: R1 (Free)', complexity: 'High', costFactor: 'Free', maxTokens: '8K' },
     { id: 'deepseek/deepseek-chat:free', name: 'DeepSeek: V3 (Free)', complexity: 'Low', costFactor: 'Free', maxTokens: '8K' },
@@ -232,6 +241,31 @@ export const PREDEFINED_MODELS: Record<string, { id: string, name: string, compl
 }
 
 export const MODEL_NAMES: Record<string, string> = Object.values(PREDEFINED_MODELS).flat().reduce((acc, curr) => ({ ...acc, [curr.id]: curr.name }), {} as Record<string, string>)
+
+export const OPENROUTER_PROVIDERS: OpenRouterProviderItem[] = [
+  { slug: 'google', name: 'Google' },
+  { slug: 'google-vertex', name: 'Google Vertex' },
+  { slug: 'nvidia', name: 'NVIDIA' },
+  { slug: 'groq', name: 'Groq' },
+  { slug: 'together', name: 'Together' },
+  { slug: 'deepinfra', name: 'DeepInfra' },
+  { slug: 'fireworks', name: 'Fireworks' },
+  { slug: 'anthropic', name: 'Anthropic' },
+  { slug: 'openai', name: 'OpenAI' },
+  { slug: 'mistral', name: 'Mistral' },
+  { slug: 'hyperbolic', name: 'Hyperbolic' },
+  { slug: 'lambda', name: 'Lambda' },
+  { slug: 'sambanova', name: 'SambaNova' },
+  { slug: 'chutes', name: 'Chutes' },
+  { slug: 'deepseek', name: 'DeepSeek' },
+  { slug: 'novita', name: 'Novita' },
+  { slug: 'lepton', name: 'Lepton' },
+  { slug: 'amazon-bedrock', name: 'Amazon Bedrock' },
+  { slug: 'azure', name: 'Azure' },
+  { slug: 'cloudflare', name: 'Cloudflare' },
+  { slug: 'cohere', name: 'Cohere' },
+  { slug: 'perplexity', name: 'Perplexity' },
+]
 
 export const DEFAULT_ENDPOINTS: Record<string, string> = {
   openai: 'https://api.openai.com/v1',

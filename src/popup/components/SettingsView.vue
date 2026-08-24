@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, toRaw } from 'vue'
 import { getMessage } from '../../shared/i18n'
-import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS, MODEL_PRICING, PROVIDER_DEFAULTS } from '../../shared/constants'
+import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS, MODEL_PRICING, PROVIDER_DEFAULTS, OPENROUTER_PROVIDERS } from '../../shared/constants'
 import { getAutoBatchSize, parseMaxTokensToNumber, formatTimeAgo } from '../../shared/utils'
-import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse, AIProvider } from '../../shared/types'
-import { AIClient, SYSTEM_PROMPT, fetchGoogleModels, fetchOpenRouterModels, isFreeModel } from '../../shared/ai-client'
+import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse, AIProvider, OpenRouterProviderItem } from '../../shared/types'
+import { AIClient, SYSTEM_PROMPT, fetchGoogleModels, fetchOpenRouterModels, fetchOpenRouterProviders, fetchOpenRouterKeyInfo, isFreeModel } from '../../shared/ai-client'
 import { APP_VERSION, BUILD_NUMBER, BUILD_HASH, BUILD_TIME } from '../../shared/version'
 
 const props = defineProps<{
@@ -100,6 +100,26 @@ const fetchingOpenRouterModels = ref(false)
 const fetchOpenRouterMessage = ref<string | null>(null)
 const fetchOpenRouterError = ref<string | null>(null)
 
+const fetchingOpenRouterProviders = ref(false)
+const fetchOpenRouterProvidersMessage = ref<string | null>(null)
+const fetchOpenRouterProvidersError = ref<string | null>(null)
+const isCustomOpenRouterProviderSelected = ref(false)
+
+const fetchingOpenRouterKeyInfo = ref(false)
+const fetchOpenRouterKeyInfoMessage = ref<string | null>(null)
+const fetchOpenRouterKeyInfoError = ref<string | null>(null)
+
+const openRouterModelSearchQuery = ref('')
+const openRouterCategoryFilter = ref<'all' | 'free' | 'thinking' | 'byok'>('all')
+
+function openExternalUrl(url: string): void {
+  if (typeof chrome !== 'undefined' && chrome.tabs?.create) {
+    chrome.tabs.create({ url })
+  } else {
+    window.open(url, '_blank')
+  }
+}
+
 /**
  * Autocompletes token parameters based on the selected AI model.
  * @param {string | undefined} modelId - The model ID.
@@ -112,7 +132,8 @@ function autoFillModelParams(modelId: string | undefined, customList?: any[]): v
 
   const selected = list.find((m: any) => m.id === targetId)
   if (selected) {
-    const tokens = (selected as any).rawMaxOutputTokens || parseMaxTokensToNumber(selected.maxTokens)
+    const rawTokens = (selected as any).rawMaxOutputTokens || parseMaxTokensToNumber(selected.maxTokens)
+    const tokens = Math.min(rawTokens, 65536)
     settings.value.ai.maxTokens = tokens
     settings.value.ai.batchSize = getAutoBatchSize(tokens)
   } else {
@@ -120,7 +141,7 @@ function autoFillModelParams(modelId: string | undefined, customList?: any[]): v
     let tokens = 16384
     if (provider === 'gemini') tokens = 65536
     else if (provider === 'claude') tokens = 8192
-    else if (targetId === 'stealth/ox-alpha') tokens = 131072
+    else if (targetId === 'stealth/ox-alpha') tokens = 32768
     settings.value.ai.maxTokens = tokens
     settings.value.ai.batchSize = getAutoBatchSize(tokens)
   }
@@ -179,6 +200,17 @@ async function handleFetchOpenRouterModels(): Promise<void> {
       settings.value.ai.model = models[0]?.id || 'stealth/ox-alpha'
     }
     autoFillModelParams(settings.value.ai.model, models)
+
+    if (settings.value.ai.apiKey) {
+      fetchOpenRouterKeyInfo(settings.value.ai.apiKey, settings.value.ai.endpoint)
+        .then(info => {
+          settings.value.ai.openRouterKeyInfo = info
+          settings.value.ai.openRouterByokActive = info.isByokActive
+          chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: toRaw(settings.value) }).catch(() => {})
+        })
+        .catch(() => {})
+    }
+
     await saveSettings()
   } catch (err) {
     fetchOpenRouterError.value = (err as Error).message
@@ -186,6 +218,140 @@ async function handleFetchOpenRouterModels(): Promise<void> {
     fetchingOpenRouterModels.value = false
   }
 }
+
+/**
+ * Fetches OpenRouter API key information, spending metrics, and BYOK status.
+ * @returns {Promise<void>}
+ */
+async function handleFetchOpenRouterKeyInfo(): Promise<void> {
+  if (!settings.value.ai.apiKey) {
+    fetchOpenRouterKeyInfoError.value = 'OpenRouter API Key is required.'
+    return
+  }
+  fetchingOpenRouterKeyInfo.value = true
+  fetchOpenRouterKeyInfoMessage.value = null
+  fetchOpenRouterKeyInfoError.value = null
+  try {
+    const info = await fetchOpenRouterKeyInfo(settings.value.ai.apiKey, settings.value.ai.endpoint)
+    settings.value.ai.openRouterKeyInfo = info
+    settings.value.ai.openRouterByokActive = info.isByokActive
+    if (info.isByokActive) {
+      fetchOpenRouterKeyInfoMessage.value = `BYOK Active (Usage: $${(info.byokUsage || 0).toFixed(2)}${info.byokProviders?.length ? ` · Upstream: ${info.byokProviders.join(', ')}` : ''})`
+    } else {
+      fetchOpenRouterKeyInfoMessage.value = `Key verified. Standard billing active${typeof info.usage === 'number' ? ` (Usage: $${info.usage.toFixed(2)})` : ''}.`
+    }
+    await saveSettings()
+  } catch (err) {
+    fetchOpenRouterKeyInfoError.value = (err as Error).message
+  } finally {
+    fetchingOpenRouterKeyInfo.value = false
+  }
+}
+
+const isOpenRouterByokActive = computed(() => {
+  if (settings.value.ai.provider !== 'openrouter') return false
+  return !!(settings.value.ai.openRouterByokManual || settings.value.ai.openRouterByokActive || settings.value.ai.openRouterKeyInfo?.isByokActive)
+})
+
+/**
+ * Evaluates whether a specific OpenRouter model runs via BYOK direct billing.
+ * @param {string} [modelId] - The model identifier.
+ * @returns {boolean} True if the model matches active BYOK credentials or routing.
+ */
+function isModelByok(modelId?: string): boolean {
+  if (!modelId || settings.value.ai.provider !== 'openrouter') return false
+  const manual = !!settings.value.ai.openRouterByokManual
+  const active = !!settings.value.ai.openRouterByokActive
+  const info = settings.value.ai.openRouterKeyInfo
+  if (!manual && !active && !info?.isByokActive) return false
+
+  const vendor = modelId.includes('/') ? modelId.split('/')[0].toLowerCase() : ''
+  const pinnedProvider = settings.value.ai.openrouterProvider?.toLowerCase().trim()
+
+  // 1. If provider routing is pinned to a vendor
+  if (pinnedProvider && pinnedProvider !== 'auto') {
+    return !vendor || vendor === pinnedProvider
+  }
+
+  // 2. If OpenRouter returned the list of configured BYOK credentials
+  if (info?.byokProviders && info.byokProviders.length > 0) {
+    return vendor ? info.byokProviders.includes(vendor) : true
+  }
+
+  // 3. If manual override or detected byok usage on key without granular provider list
+  if (manual || (info?.byokUsage && info.byokUsage > 0) || active) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Fetches the available providers from the OpenRouter API.
+ * @returns {Promise<void>}
+ */
+async function handleFetchOpenRouterProviders(): Promise<void> {
+  fetchingOpenRouterProviders.value = true
+  fetchOpenRouterProvidersMessage.value = null
+  fetchOpenRouterProvidersError.value = null
+  try {
+    const providers = await fetchOpenRouterProviders(settings.value.ai.apiKey, settings.value.ai.endpoint)
+    if (!settings.value.ai.customProviders) {
+      settings.value.ai.customProviders = {}
+    }
+    settings.value.ai.customProviders.openrouter = providers
+    fetchOpenRouterProvidersMessage.value = `Loaded ${providers.length} live providers from OpenRouter!`
+    await saveSettings()
+  } catch (err) {
+    fetchOpenRouterProvidersError.value = (err as Error).message
+  } finally {
+    fetchingOpenRouterProviders.value = false
+  }
+}
+
+const currentOpenRouterProviders = computed(() => {
+  const custom = settings.value.ai.customProviders?.openrouter || []
+  const combined = [...OPENROUTER_PROVIDERS]
+  for (const p of custom) {
+    if (!combined.some(existing => existing.slug.toLowerCase() === p.slug.toLowerCase())) {
+      combined.push(p)
+    }
+  }
+  return combined.sort((a, b) => a.name.localeCompare(b.name))
+})
+
+const isOpenRouterPredefinedProvider = computed(() => {
+  const providers = currentOpenRouterProviders.value
+  return (slug: string | undefined) => !!slug && providers.some(p => p.slug === slug)
+})
+
+const openRouterProviderSelectValue = computed({
+  get() {
+    if (isCustomOpenRouterProviderSelected.value) {
+      return 'custom'
+    }
+    const val = settings.value.ai.openrouterProvider
+    if (!val || val === 'auto') {
+      return ''
+    }
+    if (isOpenRouterPredefinedProvider.value(val)) {
+      return val
+    }
+    isCustomOpenRouterProviderSelected.value = true
+    return 'custom'
+  },
+  set(newValue) {
+    if (newValue === 'custom') {
+      isCustomOpenRouterProviderSelected.value = true
+      if (!settings.value.ai.openrouterProvider || isOpenRouterPredefinedProvider.value(settings.value.ai.openrouterProvider)) {
+        settings.value.ai.openrouterProvider = ''
+      }
+    } else {
+      isCustomOpenRouterProviderSelected.value = false
+      settings.value.ai.openrouterProvider = newValue
+    }
+  }
+})
 
 const currentProviderModels = computed(() => {
   const provider = settings.value.ai.provider
@@ -203,6 +369,36 @@ const currentProviderModels = computed(() => {
   }
   return list
 })
+
+const filteredProviderModels = computed(() => {
+  let list = currentProviderModels.value || []
+  if (settings.value.ai.provider === 'openrouter') {
+    if (openRouterCategoryFilter.value === 'free') {
+      list = list.filter((m: any) => isFreeModel(m.id, m))
+    } else if (openRouterCategoryFilter.value === 'thinking') {
+      list = list.filter((m: any) => {
+        const id = (m.id || '').toLowerCase()
+        return id.includes('r1') || id.includes('thinking') || id.includes('o1') || id.includes('o3') || id.includes('ox-alpha') || id.includes('qwq')
+      })
+    } else if (openRouterCategoryFilter.value === 'byok') {
+      list = list.filter((m: any) => isModelByok(m.id))
+    }
+    if (openRouterModelSearchQuery.value.trim()) {
+      const q = openRouterModelSearchQuery.value.toLowerCase().trim()
+      list = list.filter((m: any) =>
+        (m.id && m.id.toLowerCase().includes(q)) ||
+        (m.name && m.name.toLowerCase().includes(q))
+      )
+    }
+  }
+  return list
+})
+
+function applyOpenRouterPreset(modelId: string): void {
+  settings.value.ai.model = modelId
+  isCustomSelected.value = false
+  autoFillModelParams(modelId)
+}
 
 const isPredefinedModel = computed(() => {
   const models = currentProviderModels.value
@@ -253,11 +449,12 @@ const currentModelDefaultMaxTokens = computed(() => {
   const models = currentProviderModels.value || []
   const found = models.find((m: any) => m.id === targetId)
   if (found) {
-    return (found as any).rawMaxOutputTokens || parseMaxTokensToNumber(found.maxTokens)
+    const rawTokens = (found as any).rawMaxOutputTokens || parseMaxTokensToNumber(found.maxTokens)
+    return Math.min(rawTokens, 65536)
   }
   if (provider === 'gemini') return 65536
   if (provider === 'claude') return 8192
-  if (provider === 'openrouter' && (targetId === 'stealth/ox-alpha' || settings.value.ai.openRouterOnlyFree)) return 131072
+  if (provider === 'openrouter' && (targetId === 'stealth/ox-alpha' || settings.value.ai.openRouterOnlyFree)) return 32768
   return 16384
 })
 
@@ -281,6 +478,16 @@ function syncActiveToProviderSettings(provider: AIProvider): void {
     maxTokens: settings.value.ai.maxTokens,
     onlyFreeModels: provider === 'openrouter' ? !!settings.value.ai.openRouterOnlyFree : undefined,
     reasoningEffort: settings.value.ai.reasoningEffort,
+    openrouterProvider: provider === 'openrouter' ? settings.value.ai.openrouterProvider : undefined,
+    openrouterAllowFallbacks: provider === 'openrouter' ? (settings.value.ai.openrouterAllowFallbacks !== false) : undefined,
+    openrouterSort: provider === 'openrouter' ? settings.value.ai.openrouterSort : undefined,
+    openrouterDataCollection: provider === 'openrouter' ? settings.value.ai.openrouterDataCollection : undefined,
+    openrouterRequireParams: provider === 'openrouter' ? !!settings.value.ai.openrouterRequireParams : undefined,
+    openrouterIgnoreProviders: provider === 'openrouter' ? settings.value.ai.openrouterIgnoreProviders : undefined,
+    openrouterFallbackModels: provider === 'openrouter' ? settings.value.ai.openrouterFallbackModels : undefined,
+    openRouterByokManual: provider === 'openrouter' ? !!settings.value.ai.openRouterByokManual : undefined,
+    openRouterByokActive: provider === 'openrouter' ? !!settings.value.ai.openRouterByokActive : undefined,
+    openRouterKeyInfo: provider === 'openrouter' ? settings.value.ai.openRouterKeyInfo : undefined,
   }
 }
 
@@ -307,6 +514,16 @@ function loadProviderSettings(newProvider: AIProvider, oldProvider?: AIProvider)
     settings.value.ai.reasoningEffort = saved.reasoningEffort ?? 'auto'
     if (newProvider === 'openrouter') {
       settings.value.ai.openRouterOnlyFree = !!saved.onlyFreeModels
+      settings.value.ai.openrouterProvider = saved.openrouterProvider ?? ''
+      settings.value.ai.openrouterAllowFallbacks = saved.openrouterAllowFallbacks !== false
+      settings.value.ai.openrouterSort = saved.openrouterSort ?? 'auto'
+      settings.value.ai.openrouterDataCollection = saved.openrouterDataCollection ?? 'allow'
+      settings.value.ai.openrouterRequireParams = !!saved.openrouterRequireParams
+      settings.value.ai.openrouterIgnoreProviders = saved.openrouterIgnoreProviders ?? ''
+      settings.value.ai.openrouterFallbackModels = saved.openrouterFallbackModels ?? ''
+      settings.value.ai.openRouterByokManual = !!saved.openRouterByokManual
+      settings.value.ai.openRouterByokActive = !!saved.openRouterByokActive
+      settings.value.ai.openRouterKeyInfo = saved.openRouterKeyInfo
     }
   } else {
     const defEndpoint = DEFAULT_ENDPOINTS[newProvider] || ''
@@ -322,6 +539,16 @@ function loadProviderSettings(newProvider: AIProvider, oldProvider?: AIProvider)
     settings.value.ai.reasoningEffort = 'auto'
     if (newProvider === 'openrouter') {
       settings.value.ai.openRouterOnlyFree = false
+      settings.value.ai.openrouterProvider = ''
+      settings.value.ai.openrouterAllowFallbacks = true
+      settings.value.ai.openrouterSort = 'auto'
+      settings.value.ai.openrouterDataCollection = 'allow'
+      settings.value.ai.openrouterRequireParams = false
+      settings.value.ai.openrouterIgnoreProviders = ''
+      settings.value.ai.openrouterFallbackModels = ''
+      settings.value.ai.openRouterByokManual = false
+      settings.value.ai.openRouterByokActive = false
+      settings.value.ai.openRouterKeyInfo = undefined
     }
     syncActiveToProviderSettings(newProvider)
   }
@@ -330,6 +557,11 @@ function loadProviderSettings(newProvider: AIProvider, oldProvider?: AIProvider)
   const customList = settings.value.ai.customModels?.[newProvider] || []
   const isKnown = predefined.some(m => m.id === settings.value.ai.model) || customList.some((m: any) => m.id === settings.value.ai.model)
   isCustomSelected.value = !isKnown && !!settings.value.ai.model
+
+  if (newProvider === 'openrouter') {
+    const isKnownProvider = !settings.value.ai.openrouterProvider || currentOpenRouterProviders.value.some(p => p.slug === settings.value.ai.openrouterProvider)
+    isCustomOpenRouterProviderSelected.value = !isKnownProvider && !!settings.value.ai.openrouterProvider
+  }
 }
 
 watch(() => settings.value.ai.provider, (newProvider, oldProvider) => {
@@ -612,6 +844,8 @@ async function reuseLogAndGroup(log: AIOperationLogEntry) {
     if (log.configSnapshot.maxTokens) settings.value.ai.maxTokens = log.configSnapshot.maxTokens
     if (log.configSnapshot.maxRetries !== undefined) settings.value.ai.maxRetries = log.configSnapshot.maxRetries
     if (log.configSnapshot.bypassSafeguards !== undefined) settings.value.ai.bypassSafeguards = log.configSnapshot.bypassSafeguards
+    if (log.configSnapshot.openrouterProvider !== undefined) settings.value.ai.openrouterProvider = log.configSnapshot.openrouterProvider
+    if (log.configSnapshot.openrouterAllowFallbacks !== undefined) settings.value.ai.openrouterAllowFallbacks = log.configSnapshot.openrouterAllowFallbacks
   }
   
   if (log.prompts) {
@@ -678,8 +912,8 @@ function openShortcutSettings() {
 }
 
 async function saveSettings() {
-  if (!settings.value.windowWidth || settings.value.windowWidth < 360) {
-    settings.value.windowWidth = 360
+  if (!settings.value.windowWidth || settings.value.windowWidth < 380) {
+    settings.value.windowWidth = 420
   }
   syncActiveToProviderSettings(settings.value.ai.provider)
   await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: toRaw(settings.value) })
@@ -690,8 +924,8 @@ async function saveSettings() {
 }
 
 async function saveAndGoBack() {
-  if (!settings.value.windowWidth || settings.value.windowWidth < 360) {
-    settings.value.windowWidth = 360
+  if (!settings.value.windowWidth || settings.value.windowWidth < 380) {
+    settings.value.windowWidth = 420
   }
   syncActiveToProviderSettings(settings.value.ai.provider)
   await chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: toRaw(settings.value) })
@@ -705,6 +939,15 @@ async function testConnection() {
     syncActiveToProviderSettings(settings.value.ai.provider)
     const client = new AIClient(settings.value.ai)
     testResult.value = await client.testConnection()
+    if (testResult.value.ok && settings.value.ai.provider === 'openrouter' && settings.value.ai.apiKey) {
+      fetchOpenRouterKeyInfo(settings.value.ai.apiKey, settings.value.ai.endpoint)
+        .then(info => {
+          settings.value.ai.openRouterKeyInfo = info
+          settings.value.ai.openRouterByokActive = info.isByokActive
+          chrome.runtime.sendMessage({ action: 'SAVE_SETTINGS', payload: toRaw(settings.value) }).catch(() => {})
+        })
+        .catch(() => {})
+    }
   } catch (err) {
     testResult.value = { ok: false, error: (err as Error).message }
   } finally {
@@ -763,7 +1006,7 @@ async function pasteConfig() {
 </script>
 
 <template>
-  <div :style="props.isStandaloneSearch ? { width: '100%', height: '100%', background: 'var(--bg-primary)' } : { width: Math.max(360, settings.windowWidth) + 'px', height: Math.max(240, Math.min(600, settings.windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
+  <div :style="props.isStandaloneSearch ? { width: '100%', height: '100%', background: 'var(--bg-primary)' } : { width: Math.max(380, settings.windowWidth || 420) + 'px', height: Math.max(450, Math.min(600, settings.windowHeight || 600)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->
     <header class="flex items-center justify-between px-4 py-2.5" style="box-shadow: 0 0.5px 0 var(--border);">
       <div class="flex items-center gap-2.5">
@@ -857,33 +1100,36 @@ async function pasteConfig() {
               </div>
             </label>
 
-            <!-- Fallback to sort toggle -->
-            <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
-              <span class="text-xs flex-1" style="color: var(--text-primary);">{{ getMessage('fallbackToSort') }}</span>
-              <div class="relative">
-                <input
-                  type="checkbox"
-                  v-model="settings.ai.fallbackToSort"
-                  class="sr-only peer"
-                />
-                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
-                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
-              </div>
-            </label>
+            <!-- Fallback to sort & Send random order toggles (2 Columns) -->
+            <div class="grid grid-cols-2 setting-row">
+              <!-- Fallback to sort toggle -->
+              <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer border-r" style="border-color: var(--border);">
+                <span class="text-xs flex-1" style="color: var(--text-primary);">{{ getMessage('fallbackToSort') }}</span>
+                <div class="relative shrink-0">
+                  <input
+                    type="checkbox"
+                    v-model="settings.ai.fallbackToSort"
+                    class="sr-only peer"
+                  />
+                  <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                  <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+                </div>
+              </label>
 
-            <!-- Send random order toggle -->
-            <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
-              <span class="text-xs flex-1" style="color: var(--text-primary);">{{ getMessage('sendRandomOrder') }}</span>
-              <div class="relative">
-                <input
-                  type="checkbox"
-                  v-model="settings.ai.sendRandomOrder"
-                  class="sr-only peer"
-                />
-                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
-                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
-              </div>
-            </label>
+              <!-- Send random order toggle -->
+              <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer">
+                <span class="text-xs flex-1" style="color: var(--text-primary);">{{ getMessage('sendRandomOrder') }}</span>
+                <div class="relative shrink-0">
+                  <input
+                    type="checkbox"
+                    v-model="settings.ai.sendRandomOrder"
+                    class="sr-only peer"
+                  />
+                  <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                  <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+                </div>
+              </label>
+            </div>
 
             <!-- Only Allow Free Models toggle (OpenRouter only) -->
             <label v-if="settings.ai.provider === 'openrouter'" class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
@@ -902,36 +1148,181 @@ async function pasteConfig() {
               </div>
             </label>
 
-            <!-- Model Selector (Always visible when AI enabled) -->
+            <!-- Model & Reasoning Effort Selector (Always visible when AI enabled) -->
             <div class="px-3.5 py-2.5 setting-row">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider mb-1" style="color: var(--text-secondary);">
-                {{ getMessage('model') }}
-                <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-              </label>
-              <select
-                v-model="modelSelectValue"
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-                style="background: var(--bg-secondary); color: var(--text-primary);"
-              >
-                <option value="">Default ({{ modelPlaceholder }})</option>
-                <option 
-                  v-for="model in currentProviderModels" 
-                  :key="model.id" 
-                  :value="model.id"
-                >
-                  {{ model.name }} ({{ model.complexity }}, {{ (model as any).costDetails || model.costFactor }}, Max Output: {{ model.maxTokens }})
-                </option>
-                <option value="custom">Custom model name...</option>
-              </select>
-              <input
-                v-if="modelSelectValue === 'custom'"
-                v-focus
-                type="text"
-                v-model="settings.ai.model"
-                placeholder="Enter custom model name"
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2 mt-2"
-                style="background: var(--bg-secondary); color: var(--text-primary);"
-              />
+              <div :class="{ 'grid grid-cols-2 gap-3': settings.ai.provider === 'openrouter' || settings.ai.provider === 'openai' || settings.ai.provider === 'gemini' }">
+                <!-- Model Column -->
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-[10px] font-semibold uppercase tracking-wider" style="color: var(--text-secondary);">
+                      {{ getMessage('model') }}
+                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                    </label>
+                    <span v-if="settings.ai.provider === 'openrouter'" class="text-[9px] opacity-70" style="color: var(--text-tertiary);">
+                      {{ filteredProviderModels.length }} / {{ currentProviderModels.length }} models
+                    </span>
+                  </div>
+
+                  <!-- OpenRouter Model Category Filter & Live Search -->
+                  <div v-if="settings.ai.provider === 'openrouter'" class="mb-1.5 flex flex-col gap-1.5">
+                    <!-- Category Pills -->
+                    <div class="flex items-center gap-1 overflow-x-auto pb-0.5 scrollbar-none text-[9px]">
+                      <button
+                        type="button"
+                        @click="openRouterCategoryFilter = 'all'"
+                        class="px-1.5 py-0.5 rounded-xs font-medium cursor-pointer transition-colors"
+                        :style="openRouterCategoryFilter === 'all' ? 'background: var(--accent); color: #fff;' : 'background: var(--bg-secondary); color: var(--text-secondary);'"
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        @click="openRouterCategoryFilter = 'free'"
+                        class="px-1.5 py-0.5 rounded-xs font-medium cursor-pointer transition-colors"
+                        :style="openRouterCategoryFilter === 'free' ? 'background: var(--group-green); color: #fff;' : 'background: var(--bg-secondary); color: var(--text-secondary);'"
+                      >
+                        Free Only
+                      </button>
+                      <button
+                        type="button"
+                        @click="openRouterCategoryFilter = 'thinking'"
+                        class="px-1.5 py-0.5 rounded-xs font-medium cursor-pointer transition-colors"
+                        :style="openRouterCategoryFilter === 'thinking' ? 'background: var(--accent); color: #fff;' : 'background: var(--bg-secondary); color: var(--text-secondary);'"
+                      >
+                        Reasoning
+                      </button>
+                      <button
+                        v-if="isOpenRouterByokActive || settings.ai.openRouterKeyInfo?.byokProviders?.length"
+                        type="button"
+                        @click="openRouterCategoryFilter = 'byok'"
+                        class="px-1.5 py-0.5 rounded-xs font-medium cursor-pointer transition-colors"
+                        :style="openRouterCategoryFilter === 'byok' ? 'background: var(--group-green); color: #fff;' : 'background: var(--bg-secondary); color: var(--text-secondary);'"
+                      >
+                        BYOK Direct
+                      </button>
+                    </div>
+
+                    <!-- Search Input -->
+                    <div class="relative">
+                      <input
+                        type="text"
+                        v-model="openRouterModelSearchQuery"
+                        placeholder="Search models (e.g. claude, deepseek, 70b)..."
+                        class="w-full text-[10px] rounded-xs border-0 py-1 pl-6 pr-5"
+                        style="background: var(--bg-secondary); color: var(--text-primary);"
+                      />
+                      <svg class="w-3 h-3 absolute left-1.5 top-1/2 -translate-y-1/2 opacity-50" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd" />
+                      </svg>
+                      <button
+                        v-if="openRouterModelSearchQuery"
+                        type="button"
+                        @click="openRouterModelSearchQuery = ''"
+                        class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] opacity-60 hover:opacity-100 cursor-pointer"
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  </div>
+
+                  <select
+                    v-model="modelSelectValue"
+                    class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                    style="background: var(--bg-secondary); color: var(--text-primary);"
+                  >
+                    <option value="">Default ({{ modelPlaceholder }})</option>
+                    <option 
+                      v-for="model in filteredProviderModels" 
+                      :key="model.id" 
+                      :value="model.id"
+                    >
+                      {{ model.name }} ({{ isModelByok(model.id) ? 'BYOK Direct · ' : '' }}{{ model.complexity }}, {{ (model as any).costDetails || model.costFactor }}, Max Output: {{ model.maxTokens }})
+                    </option>
+                    <option value="custom">Custom model name...</option>
+                  </select>
+                  <input
+                    v-if="modelSelectValue === 'custom'"
+                    v-focus
+                    type="text"
+                    v-model="settings.ai.model"
+                    placeholder="Enter custom model name"
+                    class="w-full text-xs rounded-sm border-0 py-1.5 px-2 mt-2"
+                    style="background: var(--bg-secondary); color: var(--text-primary);"
+                  />
+
+                  <!-- OpenRouter Quick Model Presets -->
+                  <div v-if="settings.ai.provider === 'openrouter'" class="mt-1.5 flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      @click="applyOpenRouterPreset('stealth/ox-alpha')"
+                      class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity"
+                      :style="settings.ai.model === 'stealth/ox-alpha' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
+                      title="Free fast reasoning model"
+                    >
+                      ⚡ ox-alpha (Free)
+                    </button>
+                    <button
+                      type="button"
+                      @click="applyOpenRouterPreset('deepseek/deepseek-r1:free')"
+                      class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity"
+                      :style="settings.ai.model === 'deepseek/deepseek-r1:free' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
+                      title="Free DeepSeek R1 reasoning model"
+                    >
+                      🧠 DeepSeek R1 (Free)
+                    </button>
+                    <button
+                      type="button"
+                      @click="applyOpenRouterPreset('anthropic/claude-3.5-sonnet')"
+                      class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity"
+                      :style="settings.ai.model === 'anthropic/claude-3.5-sonnet' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
+                      title="Claude 3.5 Sonnet"
+                    >
+                      ⭐ Claude 3.5 Sonnet
+                    </button>
+                    <button
+                      type="button"
+                      @click="applyOpenRouterPreset('openai/gpt-4o-mini')"
+                      class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity"
+                      :style="settings.ai.model === 'openai/gpt-4o-mini' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
+                      title="GPT-4o Mini"
+                    >
+                      🚀 GPT-4o Mini
+                    </button>
+                    <button
+                      type="button"
+                      @click="applyOpenRouterPreset('google/gemini-2.5-flash')"
+                      class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity"
+                      :style="settings.ai.model === 'google/gemini-2.5-flash' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
+                      title="Gemini 2.5 Flash"
+                    >
+                      🔥 Gemini 2.5 Flash
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Reasoning Effort Column (Thinking & CoT Models) -->
+                <div v-if="settings.ai.provider === 'openrouter' || settings.ai.provider === 'openai' || settings.ai.provider === 'gemini'">
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-[10px] font-semibold uppercase tracking-wider" style="color: var(--text-secondary);">
+                      Reasoning Effort
+                      <span class="normal-case font-normal" style="color: var(--text-tertiary);">(Thinking Models)</span>
+                    </label>
+                    <span class="text-[9px] opacity-70" style="color: var(--text-tertiary);">Deliberation depth</span>
+                  </div>
+                  <select
+                    v-model="settings.ai.reasoningEffort"
+                    class="w-full text-xs rounded-sm border-0 py-1.5 px-2 cursor-pointer"
+                    style="background: var(--bg-secondary); color: var(--text-primary);"
+                  >
+                    <option value="auto">Auto (Model Default)</option>
+                    <option value="minimal">Minimal (Fastest)</option>
+                    <option value="low">Low (Fast)</option>
+                    <option value="medium">Medium (Balanced)</option>
+                    <option value="high">High (Deep)</option>
+                    <option value="max">Max (Maximum)</option>
+                  </select>
+                </div>
+              </div>
 
               <!-- Fetch Google Models Button -->
               <div v-if="settings.ai.provider === 'gemini'" class="mt-2">
@@ -957,27 +1348,137 @@ async function pasteConfig() {
                 </div>
               </div>
 
-              <!-- Fetch OpenRouter Models Button -->
-              <div v-if="settings.ai.provider === 'openrouter'" class="mt-2">
-                <button
-                  type="button"
-                  @click="handleFetchOpenRouterModels"
-                  :disabled="fetchingOpenRouterModels"
-                  class="text-[10px] px-2.5 py-1 rounded-sm flex items-center gap-1.5 font-medium transition-all cursor-pointer"
-                  style="background: var(--accent-soft); color: var(--accent); border: 0.5px solid var(--border);"
-                  title="Fetch live model list from OpenRouter API"
-                >
-                  <span v-if="fetchingOpenRouterModels" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
-                  <svg v-else class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
-                  </svg>
-                  <span>{{ fetchingOpenRouterModels ? 'Fetching models...' : 'Fetch Live Models from OpenRouter' }}</span>
-                </button>
-                <div v-if="fetchOpenRouterMessage" class="mt-1.5 text-[10px] font-medium" style="color: var(--group-green);">
+              <!-- Fetch OpenRouter Models & Check BYOK Status Buttons -->
+              <div v-if="settings.ai.provider === 'openrouter'" class="mt-2 flex flex-col gap-2">
+                <div class="flex items-center gap-2">
+                  <button
+                    type="button"
+                    @click="handleFetchOpenRouterModels"
+                    :disabled="fetchingOpenRouterModels"
+                    class="text-[10px] px-2.5 py-1 rounded-sm flex items-center gap-1.5 font-medium transition-all cursor-pointer"
+                    style="background: var(--accent-soft); color: var(--accent); border: 0.5px solid var(--border);"
+                    title="Fetch live model list from OpenRouter API"
+                  >
+                    <span v-if="fetchingOpenRouterModels" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
+                    <svg v-else class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                    </svg>
+                    <span>{{ fetchingOpenRouterModels ? 'Fetching models...' : 'Fetch Live Models' }}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    @click="handleFetchOpenRouterKeyInfo"
+                    :disabled="fetchingOpenRouterKeyInfo || !settings.ai.apiKey"
+                    class="text-[10px] px-2.5 py-1 rounded-sm flex items-center gap-1.5 font-medium transition-all cursor-pointer"
+                    style="background: var(--bg-secondary); color: var(--text-primary); border: 0.5px solid var(--border);"
+                    title="Query OpenRouter key metadata and check BYOK status"
+                  >
+                    <span v-if="fetchingOpenRouterKeyInfo" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
+                    <svg v-else class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clip-rule="evenodd" />
+                    </svg>
+                    <span>{{ fetchingOpenRouterKeyInfo ? 'Checking Key...' : 'Check Key / BYOK' }}</span>
+                  </button>
+                </div>
+
+                <div v-if="fetchOpenRouterMessage" class="text-[10px] font-medium" style="color: var(--group-green);">
                   {{ fetchOpenRouterMessage }}
                 </div>
-                <div v-if="fetchOpenRouterError" class="mt-1.5 text-[10px] font-medium" style="color: var(--group-red);">
+                <div v-if="fetchOpenRouterError" class="text-[10px] font-medium" style="color: var(--group-red);">
                   {{ fetchOpenRouterError }}
+                </div>
+                <div v-if="fetchOpenRouterKeyInfoMessage" class="text-[10px] font-medium" style="color: var(--group-green);">
+                  {{ fetchOpenRouterKeyInfoMessage }}
+                </div>
+                <div v-if="fetchOpenRouterKeyInfoError" class="text-[10px] font-medium" style="color: var(--group-red);">
+                  {{ fetchOpenRouterKeyInfoError }}
+                </div>
+
+                <!-- BYOK Status Card -->
+                <div v-if="settings.ai.openRouterKeyInfo || isOpenRouterByokActive" class="p-2.5 rounded-sm border flex flex-col gap-1.5" style="background: var(--bg-secondary); border-color: var(--border);">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-1.5 text-[11px] font-semibold" :style="{ color: isOpenRouterByokActive ? 'var(--group-green)' : 'var(--accent)' }">
+                      <span class="w-2 h-2 rounded-full" :style="{ background: isOpenRouterByokActive ? 'var(--group-green)' : 'var(--accent)' }"></span>
+                      {{ isOpenRouterByokActive ? 'BYOK Direct Billing Active' : 'Standard OpenRouter Billing' }}
+                    </div>
+                    <span v-if="settings.ai.openRouterKeyInfo?.label" class="text-[9px] px-1.5 py-0.5 rounded-xs font-mono" style="background: var(--hover); color: var(--text-secondary);">
+                      {{ settings.ai.openRouterKeyInfo.label }}
+                    </span>
+                  </div>
+
+                  <div class="text-[10px]" style="color: var(--text-secondary);">
+                    <template v-if="isOpenRouterByokActive">
+                      Requests for matching models route directly to upstream provider credentials with 0% platform token markup.
+                    </template>
+                    <template v-else>
+                      Standard OpenRouter token charges and rate limits apply.
+                    </template>
+                  </div>
+
+                  <!-- Selected model routing indicator -->
+                  <div v-if="settings.ai.model && isOpenRouterByokActive" class="text-[9.5px] font-medium flex items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 rounded-full" :style="{ background: isModelByok(settings.ai.model) ? 'var(--group-green)' : 'var(--text-tertiary)' }"></span>
+                    <span :style="{ color: isModelByok(settings.ai.model) ? 'var(--group-green)' : 'var(--text-secondary)' }">
+                      Selected: <strong>{{ settings.ai.model }}</strong> &rarr; {{ isModelByok(settings.ai.model) ? 'BYOK Direct Billing' : 'Standard Credits (No BYOK Key Detected)' }}
+                    </span>
+                  </div>
+
+                  <div v-if="settings.ai.openRouterKeyInfo" class="text-[9.5px] mt-0.5 pt-1 border-t flex flex-wrap gap-x-3 gap-y-1" style="border-color: var(--border); color: var(--text-tertiary);">
+                    <span v-if="typeof settings.ai.openRouterKeyInfo.byokUsage === 'number' && settings.ai.openRouterKeyInfo.byokUsage > 0">
+                      BYOK Usage: <strong style="color: var(--text-primary);">${{ settings.ai.openRouterKeyInfo.byokUsage.toFixed(4) }}</strong>
+                    </span>
+                    <span v-if="typeof settings.ai.openRouterKeyInfo.usage === 'number'">
+                      OpenRouter Credits: <strong style="color: var(--text-primary);">${{ settings.ai.openRouterKeyInfo.usage.toFixed(4) }}</strong>
+                    </span>
+                    <span v-if="settings.ai.openRouterKeyInfo.byokProviders?.length">
+                      Upstream: <strong style="color: var(--text-primary);">{{ settings.ai.openRouterKeyInfo.byokProviders.join(', ') }}</strong>
+                    </span>
+                  </div>
+
+                  <!-- Quick Action Links -->
+                  <div class="mt-1 pt-1.5 border-t flex flex-wrap gap-1.5" style="border-color: var(--border);">
+                    <button
+                      type="button"
+                      @click="openExternalUrl('https://openrouter.ai/settings/keys')"
+                      class="text-[9px] px-2 py-0.5 rounded-xs font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                      style="background: var(--hover); color: var(--text-primary); border: 0.5px solid var(--border);"
+                      title="Manage OpenRouter API Keys in browser"
+                    >
+                      <span>Keys Dashboard</span>
+                      <svg class="w-2.5 h-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4.25 5.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 00.75-.75v-4a.75.75 0 011.5 0v4A2.25 2.25 0 0112.75 17h-8.5A2.25 2.25 0 012 14.75v-8.5A2.25 2.25 0 014.25 4h4a.75.75 0 010 1.5h-4zm6.75-2a.75.75 0 01.75-.75h5.5c.414 0 .75.336.75.75v5.5a.75.75 0 01-1.5 0V4.56l-5.72 5.72a.75.75 0 11-1.06-1.06l5.72-5.72h-4.44a.75.75 0 01-.75-.75z" clip-rule="evenodd" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      @click="openExternalUrl('https://openrouter.ai/settings/integrations')"
+                      class="text-[9px] px-2 py-0.5 rounded-xs font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                      style="background: var(--hover); color: var(--text-primary); border: 0.5px solid var(--border);"
+                      title="Configure BYOK provider accounts on OpenRouter"
+                    >
+                      <span>BYOK Integrations</span>
+                      <svg class="w-2.5 h-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4.25 5.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 00.75-.75v-4a.75.75 0 011.5 0v4A2.25 2.25 0 0112.75 17h-8.5A2.25 2.25 0 014.25 4h4a.75.75 0 010 1.5h-4zm6.75-2a.75.75 0 01.75-.75h5.5c.414 0 .75.336.75.75v5.5a.75.75 0 01-1.5 0V4.56l-5.72 5.72a.75.75 0 11-1.06-1.06l5.72-5.72h-4.44a.75.75 0 01-.75-.75z" clip-rule="evenodd" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      @click="openExternalUrl('https://openrouter.ai/activity')"
+                      class="text-[9px] px-2 py-0.5 rounded-xs font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                      style="background: var(--hover); color: var(--text-primary); border: 0.5px solid var(--border);"
+                      title="View live OpenRouter generation logs and costs"
+                    >
+                      <span>Activity & Logs</span>
+                      <svg class="w-2.5 h-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4.25 5.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 00.75-.75v-4a.75.75 0 011.5 0v4A2.25 2.25 0 0112.75 17h-8.5A2.25 2.25 0 014.25 4h4a.75.75 0 010 1.5h-4zm6.75-2a.75.75 0 01.75-.75h5.5c.414 0 .75.336.75.75v5.5a.75.75 0 01-1.5 0V4.56l-5.72 5.72a.75.75 0 11-1.06-1.06l5.72-5.72h-4.44a.75.75 0 01-.75-.75z" clip-rule="evenodd" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  <div v-if="!isOpenRouterByokActive && !settings.ai.openRouterByokManual" class="text-[9px] mt-0.5 pt-1 border-t" style="border-color: var(--border); color: var(--text-tertiary);">
+                    Note: OpenRouter records BYOK usage metrics after your first API call. You can also enable "Assume BYOK Active" below.
+                  </div>
                 </div>
               </div>
             </div>
@@ -1013,35 +1514,38 @@ async function pasteConfig() {
 
             <!-- Collapsible Connection Settings Container -->
             <div v-show="connectionSettingsExpanded">
-              <!-- Provider -->
+              <!-- Provider & API Key (2 Columns) -->
               <div class="px-3 py-2 setting-row">
-                <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('provider') }}</label>
-                <select
-                  v-model="settings.ai.provider"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
-                >
-                  <option value="openai">OpenAI</option>
-                  <option value="claude">Claude (Anthropic)</option>
-                  <option value="gemini">Gemini (Google)</option>
-                  <option value="openrouter">OpenRouter</option>
-                  <option value="custom">Custom (OpenAI-compatible)</option>
-                </select>
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('provider') }}</label>
+                    <select
+                      v-model="settings.ai.provider"
+                      class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                      style="background: var(--bg-secondary); color: var(--text-primary);"
+                    >
+                      <option value="openai">OpenAI</option>
+                      <option value="claude">Claude (Anthropic)</option>
+                      <option value="gemini">Gemini (Google)</option>
+                      <option value="openrouter">OpenRouter</option>
+                      <option value="custom">Custom (OpenAI-compatible)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('apiKey') }}</label>
+                    <input
+                      type="text"
+                      v-model="settings.ai.apiKey"
+                      placeholder="sk-... / AIza... / sk-or-..."
+                      class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                      style="background: var(--bg-secondary); color: var(--text-primary);"
+                    />
+                  </div>
+                </div>
               </div>
 
-              <!-- API Key -->
-              <div class="px-3 py-2 setting-row">
-                <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('apiKey') }}</label>
-                <input
-                  type="text"
-                  v-model="settings.ai.apiKey"
-                  placeholder="sk-... / AIza... / sk-or-..."
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
-                />
-              </div>
-
-              <!-- Endpoint -->
+              <!-- Endpoint (Full Width) -->
               <div class="px-3 py-2 setting-row">
                 <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">{{ getMessage('endpoint') }}</label>
                 <input
@@ -1053,78 +1557,240 @@ async function pasteConfig() {
                 />
               </div>
 
-              <!-- Batch Size -->
+              <!-- Batch Size, Max Tokens & Max Retries (3 Columns) -->
               <div class="px-3 py-2 setting-row">
-                <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
-                  {{ getMessage('batchSize') || 'Batch Size' }}
-                  <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                </label>
-                <input
-                  type="number"
-                  v-model.number="settings.ai.batchSize"
-                  :placeholder="getAutoBatchSize(settings.ai.maxTokens || currentModelDefaultMaxTokens).toString() + ' (Auto)'"
-                  max="1000"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
-                />
+                <div class="grid grid-cols-3 gap-2.5">
+                  <!-- Batch Size -->
+                  <div>
+                    <label class="block text-[10px] font-medium mb-1 truncate" style="color: var(--text-secondary);">
+                      {{ getMessage('batchSize') || 'Batch Size' }}
+                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                    </label>
+                    <input
+                      type="number"
+                      v-model.number="settings.ai.batchSize"
+                      :placeholder="getAutoBatchSize(settings.ai.maxTokens || currentModelDefaultMaxTokens).toString() + ' (Auto)'"
+                      max="1000"
+                      class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                      style="background: var(--bg-secondary); color: var(--text-primary);"
+                    />
+                  </div>
+
+                  <!-- Max Tokens -->
+                  <div>
+                    <label class="block text-[10px] font-medium mb-1 truncate" style="color: var(--text-secondary);">
+                      Max Output Tokens
+                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                    </label>
+                    <input
+                      type="number"
+                      v-model.number="settings.ai.maxTokens"
+                      :placeholder="currentModelDefaultMaxTokens.toString()"
+                      min="1"
+                      max="1048576"
+                      class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                      style="background: var(--bg-secondary); color: var(--text-primary);"
+                    />
+                  </div>
+
+                  <!-- Max Retries -->
+                  <div>
+                    <label class="block text-[10px] font-medium mb-1 truncate" style="color: var(--text-secondary);">
+                      Max Retries
+                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                    </label>
+                    <input
+                      type="number"
+                      v-model.number="settings.ai.maxRetries"
+                      placeholder="2"
+                      min="0"
+                      max="10"
+                      class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                      style="background: var(--bg-secondary); color: var(--text-primary);"
+                    />
+                  </div>
+                </div>
               </div>
 
-              <!-- Max Tokens -->
-              <div class="px-3 py-2 setting-row">
-                <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
-                  Max Output Tokens
-                  <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                </label>
-                <input
-                  type="number"
-                  v-model.number="settings.ai.maxTokens"
-                  :placeholder="currentModelDefaultMaxTokens.toString()"
-                  min="1"
-                  max="1048576"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
-                />
-              </div>
-
-              <!-- Max Retries -->
-              <div class="px-3 py-2 setting-row">
-                <label class="block text-[10px] font-medium mb-1" style="color: var(--text-secondary);">
-                  Max API Retries
-                  <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                </label>
-                <input
-                  type="number"
-                  v-model.number="settings.ai.maxRetries"
-                  placeholder="2"
-                  min="0"
-                  max="10"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
-                />
-              </div>
-
-              <!-- Reasoning Effort (Thinking & CoT Models) -->
-              <div v-if="settings.ai.provider === 'openrouter' || settings.ai.provider === 'openai'" class="px-3 py-2 setting-row">
+              <!-- OpenRouter Provider Routing (e.g. Google, NVIDIA, Groq) -->
+              <div v-if="settings.ai.provider === 'openrouter'" class="px-3 py-2 setting-row">
                 <div class="flex items-center justify-between mb-1">
                   <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                    Reasoning Effort
-                    <span style="color: var(--text-tertiary);">(Thinking Models)</span>
+                    OpenRouter Provider Routing
+                    <span style="color: var(--text-tertiary);">(BYOK / Backend)</span>
                   </label>
-                  <span class="text-[9px] opacity-70" style="color: var(--text-tertiary);">Deliberation depth</span>
+                  <span class="text-[9px] opacity-70" style="color: var(--text-tertiary);">e.g. Google, NVIDIA, Groq</span>
                 </div>
                 <select
-                  v-model="settings.ai.reasoningEffort"
+                  v-model="openRouterProviderSelectValue"
                   class="w-full text-xs rounded-sm border-0 py-1.5 px-2 cursor-pointer"
                   style="background: var(--bg-secondary); color: var(--text-primary);"
                 >
-                  <option value="auto">Auto (Model Default)</option>
-                  <option value="minimal">Minimal (Fastest)</option>
-                  <option value="low">Low (Fast)</option>
-                  <option value="medium">Medium (Balanced)</option>
-                  <option value="high">High (Deep)</option>
-                  <option value="max">Max (Maximum)</option>
+                  <option value="">Auto (All Providers / Default)</option>
+                  <option 
+                    v-for="provider in currentOpenRouterProviders" 
+                    :key="provider.slug" 
+                    :value="provider.slug"
+                  >
+                    {{ provider.name }} ({{ provider.slug }})
+                  </option>
+                  <option value="custom">Custom provider slug...</option>
                 </select>
+                <input
+                  v-if="openRouterProviderSelectValue === 'custom'"
+                  v-focus
+                  type="text"
+                  v-model="settings.ai.openrouterProvider"
+                  placeholder="Enter provider slug (e.g. google, nvidia, groq)"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 mt-2"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                />
+
+                <!-- Fetch OpenRouter Providers Button -->
+                <div class="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    @click="handleFetchOpenRouterProviders"
+                    :disabled="fetchingOpenRouterProviders"
+                    class="text-[10px] px-2.5 py-1 rounded-sm flex items-center gap-1.5 font-medium transition-all cursor-pointer"
+                    style="background: var(--accent-soft); color: var(--accent); border: 0.5px solid var(--border);"
+                    title="Fetch live provider list from OpenRouter API"
+                  >
+                    <span v-if="fetchingOpenRouterProviders" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
+                    <svg v-else class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                    </svg>
+                    <span>{{ fetchingOpenRouterProviders ? 'Fetching providers...' : 'Fetch Live Providers from OpenRouter' }}</span>
+                  </button>
+                </div>
+                <div v-if="fetchOpenRouterProvidersMessage" class="mt-1.5 text-[10px] font-medium" style="color: var(--group-green);">
+                  {{ fetchOpenRouterProvidersMessage }}
+                </div>
+                <div v-if="fetchOpenRouterProvidersError" class="mt-1.5 text-[10px] font-medium" style="color: var(--group-red);">
+                  {{ fetchOpenRouterProvidersError }}
+                </div>
+                <!-- Provider Strategy & Privacy Controls (2 Columns) -->
+                <div class="mt-3 grid grid-cols-2 gap-2.5 pt-2.5 border-t" style="border-color: var(--border);">
+                  <!-- Routing Strategy (Sort) -->
+                  <div>
+                    <label class="block text-[10px] font-medium mb-1 truncate" style="color: var(--text-secondary);">
+                      Routing Strategy
+                    </label>
+                    <select
+                      v-model="settings.ai.openrouterSort"
+                      class="w-full text-xs rounded-sm border-0 py-1.5 px-2 cursor-pointer"
+                      style="background: var(--bg-secondary); color: var(--text-primary);"
+                    >
+                      <option value="auto">Auto (Balanced)</option>
+                      <option value="price">Lowest Price (price)</option>
+                      <option value="throughput">Highest Speed (throughput)</option>
+                      <option value="latency">Lowest Latency (latency)</option>
+                    </select>
+                  </div>
+
+                  <!-- Data Collection Policy -->
+                  <div>
+                    <label class="block text-[10px] font-medium mb-1 truncate" style="color: var(--text-secondary);">
+                      Privacy Policy
+                    </label>
+                    <select
+                      v-model="settings.ai.openrouterDataCollection"
+                      class="w-full text-xs rounded-sm border-0 py-1.5 px-2 cursor-pointer"
+                      style="background: var(--bg-secondary); color: var(--text-primary);"
+                    >
+                      <option value="allow">Standard (Allow All)</option>
+                      <option value="deny">Zero Data Retention (deny)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Fallback Models Input -->
+                <div class="mt-2.5">
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                      Model Fallbacks
+                      <span style="color: var(--text-tertiary);">(Optional Redundancy)</span>
+                    </label>
+                    <span class="text-[9px] opacity-70" style="color: var(--text-tertiary);">Comma-separated model IDs</span>
+                  </div>
+                  <input
+                    type="text"
+                    v-model="settings.ai.openrouterFallbackModels"
+                    placeholder="e.g. openai/gpt-4o-mini, google/gemini-2.5-flash"
+                    class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                    style="background: var(--bg-secondary); color: var(--text-primary);"
+                  />
+                </div>
+
+                <!-- Excluded Providers Input -->
+                <div class="mt-2.5">
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                      Exclude Providers
+                      <span style="color: var(--text-tertiary);">(Optional Blacklist)</span>
+                    </label>
+                    <span class="text-[9px] opacity-70" style="color: var(--text-tertiary);">Comma-separated provider slugs</span>
+                  </div>
+                  <input
+                    type="text"
+                    v-model="settings.ai.openrouterIgnoreProviders"
+                    placeholder="e.g. cloudflare, novita"
+                    class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                    style="background: var(--bg-secondary); color: var(--text-primary);"
+                  />
+                </div>
               </div>
+
+              <!-- Require All Parameters Supported Toggle (OpenRouter only) -->
+              <label v-if="settings.ai.provider === 'openrouter'" class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
+                <div class="flex-1">
+                  <span class="text-xs block font-medium" style="color: var(--text-primary);">Enforce Parameter Support</span>
+                  <span class="text-[10.5px] block" style="color: var(--text-secondary);">Only route to providers supporting all requested JSON schema parameters</span>
+                </div>
+                <div class="relative shrink-0">
+                  <input
+                    type="checkbox"
+                    v-model="settings.ai.openrouterRequireParams"
+                    class="sr-only peer"
+                  />
+                  <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                  <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+                </div>
+              </label>
+
+              <!-- Allow Fallbacks Toggle (OpenRouter only) -->
+              <label v-if="settings.ai.provider === 'openrouter' && settings.ai.openrouterProvider" class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
+                <div class="flex-1">
+                  <span class="text-xs block font-medium" style="color: var(--text-primary);">Allow Provider Fallbacks</span>
+                  <span class="text-[10.5px] block" style="color: var(--text-secondary);">Allow fallback to other providers if {{ settings.ai.openrouterProvider }} fails (uncheck to hard-lock to BYOK)</span>
+                </div>
+                <div class="relative shrink-0">
+                  <input
+                    type="checkbox"
+                    v-model="settings.ai.openrouterAllowFallbacks"
+                    class="sr-only peer"
+                  />
+                  <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                  <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+                </div>
+              </label>
+
+              <!-- Assume BYOK Active Manual Override Toggle (OpenRouter only) -->
+              <label v-if="settings.ai.provider === 'openrouter'" class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
+                <div class="flex-1">
+                  <span class="text-xs block font-medium" style="color: var(--text-primary);">Assume BYOK Active (Direct Billing)</span>
+                  <span class="text-[10.5px] block" style="color: var(--text-secondary);">Force BYOK badges and direct upstream billing labels for newly provisioned keys</span>
+                </div>
+                <div class="relative shrink-0">
+                  <input
+                    type="checkbox"
+                    v-model="settings.ai.openRouterByokManual"
+                    class="sr-only peer"
+                  />
+                  <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                  <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+                </div>
+              </label>
 
               <!-- Test connection -->
               <div class="flex items-center gap-2.5 px-3.5 py-2.5 setting-row">
@@ -1645,145 +2311,188 @@ async function pasteConfig() {
           <!-- Divider -->
           <div class="mx-3.5" style="height: 0.5px; background: var(--border);" />
 
-          <!-- Window Width -->
+          <!-- Window Dimensions (2 Columns) -->
           <div class="px-3 py-2 setting-row">
-            <div class="flex items-center justify-between mb-1">
-              <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                Window Width (px)
-              </label>
-              <button
-                v-if="settings.windowWidth !== 800"
-                @click="settings.windowWidth = 800"
-                class="text-[9px] hover:underline focus:outline-none transition-opacity"
-                style="color: var(--accent);"
-              >
-                Max
-              </button>
+            <div class="grid grid-cols-2 gap-3">
+              <!-- Window Width -->
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                    Window Width (px)
+                  </label>
+                  <button
+                    v-if="settings.windowWidth !== 800"
+                    @click="settings.windowWidth = 800"
+                    class="text-[9px] hover:underline focus:outline-none transition-opacity"
+                    style="color: var(--accent);"
+                  >
+                    Max
+                  </button>
+                </div>
+                <input
+                  type="number"
+                  v-model.number="settings.windowWidth"
+                  placeholder="360"
+                  min="360"
+                  max="800"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                />
+              </div>
+
+              <!-- Window Height -->
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
+                    Window Height (px)
+                  </label>
+                  <button
+                    v-if="settings.windowHeight !== 600"
+                    @click="settings.windowHeight = 600"
+                    class="text-[9px] hover:underline focus:outline-none transition-opacity"
+                    style="color: var(--accent);"
+                  >
+                    Max
+                  </button>
+                </div>
+                <input
+                  type="number"
+                  v-model.number="settings.windowHeight"
+                  placeholder="500"
+                  min="240"
+                  max="600"
+                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                />
+              </div>
             </div>
-            <input
-              type="number"
-              v-model.number="settings.windowWidth"
-              placeholder="360"
-              min="360"
-              max="800"
-              class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-              style="background: var(--bg-secondary); color: var(--text-primary);"
-            />
           </div>
 
-          <!-- Window Height -->
-          <div class="px-3 pb-2 setting-row">
-            <div class="flex items-center justify-between mb-1">
-              <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                Window Height (px)
-              </label>
-              <button
-                v-if="settings.windowHeight !== 600"
-                @click="settings.windowHeight = 600"
-                class="text-[9px] hover:underline focus:outline-none transition-opacity"
-                style="color: var(--accent);"
-              >
-                Max
-              </button>
-            </div>
-            <input
-              type="number"
-              v-model.number="settings.windowHeight"
-              placeholder="500"
-              min="240"
-              max="600"
-              class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-              style="background: var(--bg-secondary); color: var(--text-primary);"
-            />
+          <!-- Divider -->
+          <div class="mx-3.5" style="height: 0.5px; background: var(--border);" />
+
+          <!-- Smart Group Title & 2-Column Search Layout (2 Columns) -->
+          <div class="grid grid-cols-2 border-b" style="border-color: var(--border);">
+            <!-- Smart group title toggle -->
+            <label class="flex items-start gap-3 px-3 py-2 cursor-pointer border-r" style="border-color: var(--border);">
+              <div class="flex-1">
+                <span class="text-xs block" style="color: var(--text-primary);">{{ getMessage('smartGroupTitle') }}</span>
+                <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
+                  {{ getMessage('smartGroupTitleDesc') }}
+                </p>
+              </div>
+              <div class="relative mt-0.5 shrink-0">
+                <input
+                  type="checkbox"
+                  v-model="settings.smartGroupTitle"
+                  class="sr-only peer"
+                />
+                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+              </div>
+            </label>
+
+            <!-- Search popup layout toggle -->
+            <label class="flex items-start gap-3 px-3 py-2 cursor-pointer">
+              <div class="flex-1">
+                <span class="text-xs block" style="color: var(--text-primary);">Use 2-Column Search Layout</span>
+                <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
+                  Switches popup to wide search overlay design.
+                </p>
+              </div>
+              <div class="relative mt-0.5 shrink-0">
+                <input
+                  type="checkbox"
+                  v-model="settings.useSearchPopup"
+                  class="sr-only peer"
+                />
+                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+              </div>
+            </label>
           </div>
 
-          <!-- Divider -->
-          <div class="mx-3.5" style="height: 0.5px; background: var(--border);" />
+          <!-- Sort new tabs & Offline grouping preview (2 Columns) -->
+          <div class="grid grid-cols-2 border-b" style="border-color: var(--border);">
+            <!-- Sort new tabs toggle -->
+            <label class="flex items-start gap-3 px-3 py-2 cursor-pointer border-r" style="border-color: var(--border);">
+              <div class="flex-1">
+                <span class="text-xs block" style="color: var(--text-primary);">Sort New Tabs</span>
+                <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
+                  Auto-sort newly created tabs by domain & title.
+                </p>
+              </div>
+              <div class="relative mt-0.5 shrink-0">
+                <input
+                  type="checkbox"
+                  v-model="settings.sortNewTabs"
+                  class="sr-only peer"
+                />
+                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+              </div>
+            </label>
 
-          <!-- Smart group title toggle -->
-          <label class="flex items-start gap-3 px-3 py-2 cursor-pointer">
-            <div class="flex-1">
-              <span class="text-xs block" style="color: var(--text-primary);">{{ getMessage('smartGroupTitle') }}</span>
-              <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
-                {{ getMessage('smartGroupTitleDesc') }}
-              </p>
-            </div>
-            <div class="relative mt-0.5">
-              <input
-                type="checkbox"
-                v-model="settings.smartGroupTitle"
-                class="sr-only peer"
-              />
-              <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
-              <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
-            </div>
-          </label>
+            <!-- Offline grouping preview toggle -->
+            <label class="flex items-start gap-3 px-3 py-2 cursor-pointer">
+              <div class="flex-1">
+                <span class="text-xs block" style="color: var(--text-primary);">{{ getMessage('showRuleGroupsWhenUngrouped') }}</span>
+                <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
+                  {{ getMessage('showRuleGroupsWhenUngroupedDesc') }}
+                </p>
+              </div>
+              <div class="relative mt-0.5 shrink-0">
+                <input
+                  type="checkbox"
+                  v-model="settings.showRuleGroupsWhenUngrouped"
+                  class="sr-only peer"
+                />
+                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+              </div>
+            </label>
+          </div>
 
-          <!-- Divider -->
-          <div class="mx-3.5" style="height: 0.5px; background: var(--border);" />
+          <!-- Eco Mode & Fast Overlay Mode (2 Columns) -->
+          <div class="grid grid-cols-2">
+            <!-- Eco Mode toggle -->
+            <label class="flex items-start gap-3 px-3 py-2 cursor-pointer border-r" style="border-color: var(--border);">
+              <div class="flex-1">
+                <span class="text-xs block font-medium" style="color: var(--text-primary);">{{ getMessage('ecoMode') }}</span>
+                <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
+                  {{ getMessage('ecoModeDesc') }}
+                </p>
+              </div>
+              <div class="relative mt-0.5 shrink-0">
+                <input
+                  type="checkbox"
+                  v-model="settings.ecoMode"
+                  class="sr-only peer"
+                />
+                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+              </div>
+            </label>
 
-          <!-- Search popup layout toggle -->
-          <label class="flex items-start gap-3 px-3 py-2 cursor-pointer">
-            <div class="flex-1">
-              <span class="text-xs block" style="color: var(--text-primary);">Use 2-Column Search Layout</span>
-              <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
-                Switches the extension popup to the wider, 2-column search overlay design.
-              </p>
-            </div>
-            <div class="relative mt-0.5">
-              <input
-                type="checkbox"
-                v-model="settings.useSearchPopup"
-                class="sr-only peer"
-              />
-              <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
-              <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
-            </div>
-          </label>
-
-          <!-- Divider -->
-          <div class="mx-3.5" style="height: 0.5px; background: var(--border);" />
-
-          <!-- Sort new tabs toggle -->
-          <label class="flex items-start gap-3 px-3 py-2 cursor-pointer">
-            <div class="flex-1">
-              <span class="text-xs block" style="color: var(--text-primary);">Sort New Tabs</span>
-              <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
-                Automatically sort newly created tabs by domain and title at the end of the window.
-              </p>
-            </div>
-            <div class="relative mt-0.5">
-              <input
-                type="checkbox"
-                v-model="settings.sortNewTabs"
-                class="sr-only peer"
-              />
-              <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
-              <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
-            </div>
-          </label>
-
-          <!-- Divider -->
-          <div class="mx-3.5" style="height: 0.5px; background: var(--border);" />
-
-          <!-- Offline grouping preview toggle -->
-          <label class="flex items-start gap-3 px-3 py-2 cursor-pointer">
-            <div class="flex-1">
-              <span class="text-xs block" style="color: var(--text-primary);">{{ getMessage('showRuleGroupsWhenUngrouped') }}</span>
-              <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
-                {{ getMessage('showRuleGroupsWhenUngroupedDesc') }}
-              </p>
-            </div>
-            <div class="relative mt-0.5">
-              <input
-                type="checkbox"
-                v-model="settings.showRuleGroupsWhenUngrouped"
-                class="sr-only peer"
-              />
-              <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
-              <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
-            </div>
-          </label>
+            <!-- Fast Overlay Mode toggle -->
+            <label class="flex items-start gap-3 px-3 py-2 cursor-pointer">
+              <div class="flex-1">
+                <span class="text-xs block font-medium" style="color: var(--text-primary);">{{ getMessage('fastOverlayMode') }}</span>
+                <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
+                  {{ getMessage('fastOverlayModeDesc') }}
+                </p>
+              </div>
+              <div class="relative mt-0.5 shrink-0">
+                <input
+                  type="checkbox"
+                  v-model="settings.fastOverlayMode"
+                  class="sr-only peer"
+                />
+                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+              </div>
+            </label>
+          </div>
         </div>
       </div>
 

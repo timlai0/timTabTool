@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { AIClient, fetchGoogleModels, fetchOpenRouterModels, getGoogleModelPricing, isFreeModel } from '../src/shared/ai-client'
+import { AIClient, fetchGoogleModels, fetchOpenRouterModels, fetchOpenRouterProviders, fetchOpenRouterKeyInfo, getGoogleModelPricing, isFreeModel } from '../src/shared/ai-client'
 import type { AIConfig, AIProgressUpdate } from '../src/shared/types'
 
 describe('getGoogleModelPricing', () => {
@@ -579,6 +579,70 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(claude?.maxTokens).toBe('16K')
   })
 
+  it('safely bounds maxTokens for models reporting context window as max_completion_tokens in OpenRouter', async () => {
+    const mockApiResponse = {
+      data: [
+        {
+          id: 'google/gemini-2.0-flash-001',
+          name: 'Google: Gemini 2.0 Flash',
+          context_length: 256000,
+          top_provider: {
+            max_completion_tokens: 256000,
+          }
+        },
+        {
+          id: 'qwen/qwen-2.5-72b-instruct',
+          name: 'Qwen: Qwen 2.5 72B',
+          context_length: 131072,
+          top_provider: {}
+        }
+      ]
+    }
+
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(mockApiResponse), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    )
+    vi.stubGlobal('fetch', mockFetch)
+
+    const models = await fetchOpenRouterModels('sk-or-v1-test')
+    const gemini = models.find(m => m.id === 'google/gemini-2.0-flash-001')
+    expect(gemini).toBeDefined()
+    expect(gemini?.rawMaxOutputTokens).toBe(32768)
+    expect(gemini?.maxTokens).toBe('32K')
+
+    const qwen = models.find(m => m.id === 'qwen/qwen-2.5-72b-instruct')
+    expect(qwen).toBeDefined()
+    expect(qwen?.rawMaxOutputTokens).toBe(16384)
+    expect(qwen?.maxTokens).toBe('16K')
+  })
+
+  it('bounds max_tokens in chatOpenAI request payload when configured with huge token limits', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'google/gemini-2.0-flash-001',
+      maxTokens: 256000,
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: 'OK' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await client.testConnection()
+    expect(capturedBody).toBeDefined()
+    expect(capturedBody.max_tokens).toBe(16384)
+  })
+
   it('estimates costs correctly for OpenRouter models', () => {
     const config: AIConfig = {
       enabled: true,
@@ -773,6 +837,46 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(capturedBody.reasoning).toBeUndefined()
   })
 
+  it('injects thinkingConfig.thinkingBudget into Gemini request body when reasoningEffort is configured', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'gemini',
+      apiKey: 'AIza-test-key',
+      model: 'gemini-2.5-flash',
+      reasoningEffort: 'medium',
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    { text: 'Thinking about the request...', thought: true },
+                    { text: 'OK' },
+                  ],
+                },
+                finishReason: 'STOP',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const result = await client.testConnection()
+    expect(result.ok).toBe(true)
+    expect(capturedBody).toBeDefined()
+    expect(capturedBody.generationConfig?.thinkingConfig).toEqual({ thinkingBudget: 4096 })
+  })
+
   it('omits reasoning effort parameters when reasoningEffort is auto or unset', async () => {
     const config: AIConfig = {
       enabled: true,
@@ -799,6 +903,287 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(capturedBody).toBeDefined()
     expect(capturedBody.reasoning).toBeUndefined()
     expect(capturedBody.reasoning_effort).toBeUndefined()
+  })
+
+  it('omits thinkingConfig for Gemini when reasoningEffort is auto or unset', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'gemini',
+      apiKey: 'AIza-test-key',
+      model: 'gemini-2.5-flash',
+      reasoningEffort: 'auto',
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: 'OK' }],
+                },
+                finishReason: 'STOP',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await client.testConnection()
+    expect(capturedBody).toBeDefined()
+    expect(capturedBody.generationConfig?.thinkingConfig).toBeUndefined()
+  })
+
+  it('injects provider routing order and allow_fallbacks into OpenRouter request body when openrouterProvider is configured', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'google/gemini-2.5-flash',
+      openrouterProvider: 'google',
+      openrouterAllowFallbacks: true,
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: 'OK' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await client.testConnection()
+    expect(capturedBody).toBeDefined()
+    expect(capturedBody.provider).toEqual({
+      order: ['google'],
+      allow_fallbacks: true,
+    })
+  })
+
+  it('injects provider routing with allow_fallbacks=false when fallbacks are disabled', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'nvidia/llama-3.1-nemotron-70b-instruct',
+      openrouterProvider: 'nvidia',
+      openrouterAllowFallbacks: false,
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: 'OK' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await client.testConnection()
+    expect(capturedBody).toBeDefined()
+    expect(capturedBody.provider).toEqual({
+      order: ['nvidia'],
+      allow_fallbacks: false,
+    })
+  })
+
+  it('omits provider routing when openrouterProvider is auto or unset', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-test',
+      model: 'openai/gpt-4o-mini',
+      openrouterProvider: '',
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: 'OK' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await client.testConnection()
+    expect(capturedBody).toBeDefined()
+    expect(capturedBody.provider).toBeUndefined()
+  })
+
+  it('fetches and parses live OpenRouter providers using fetchOpenRouterProviders', async () => {
+    const mockProvidersResponse = {
+      data: [
+        { slug: 'together', name: 'Together AI' },
+        { slug: 'google', name: 'Google' },
+        { slug: 'nvidia', name: 'NVIDIA' },
+      ]
+    }
+
+    const mockFetch = vi.fn().mockImplementation((url: string, init: RequestInit) => {
+      expect(url).toContain('/providers')
+      expect((init.headers as any)['Authorization']).toBe('Bearer test-key')
+      return Promise.resolve(
+        new Response(JSON.stringify(mockProvidersResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const providers = await fetchOpenRouterProviders('test-key')
+    expect(providers.length).toBe(3)
+    expect(providers[0].name).toBe('Google')
+    expect(providers[0].slug).toBe('google')
+    expect(providers[1].name).toBe('NVIDIA')
+    expect(providers[1].slug).toBe('nvidia')
+    expect(providers[2].name).toBe('Together AI')
+    expect(providers[2].slug).toBe('together')
+  })
+
+  it('fetches OpenRouter key info and detects active BYOK when byok_usage > 0', async () => {
+    const mockKeyResponse = {
+      data: {
+        label: 'Production Key',
+        usage: 12.5,
+        limit: 100,
+        is_free_tier: false,
+        byok_usage: 4.82,
+        byok_usage_daily: 0.15,
+        byok_usage_weekly: 1.25,
+        byok_usage_monthly: 4.82,
+      }
+    }
+
+    const mockFetch = vi.fn().mockImplementation((url: string, init: RequestInit) => {
+      if (url.endsWith('/key')) {
+        return Promise.resolve(
+          new Response(JSON.stringify(mockKeyResponse), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
+      }
+      if (url.endsWith('/byok')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: [{ provider: 'google', disabled: false }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
+      }
+      return Promise.reject(new Error('Unknown URL'))
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const info = await fetchOpenRouterKeyInfo('sk-or-v1-test')
+    expect(info.label).toBe('Production Key')
+    expect(info.isByokActive).toBe(true)
+    expect(info.byokUsage).toBe(4.82)
+    expect(info.byokProviders).toEqual(['google'])
+  })
+
+  it('detects inactive BYOK when byok_usage is 0 and no upstream providers returned', async () => {
+    const mockKeyResponse = {
+      data: {
+        label: 'Standard Key',
+        usage: 5.0,
+        limit: 50,
+        is_free_tier: false,
+        byok_usage: 0,
+      }
+    }
+
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/key')) {
+        return Promise.resolve(
+          new Response(JSON.stringify(mockKeyResponse), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
+      }
+      if (url.endsWith('/byok')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
+      }
+      return Promise.reject(new Error('Unknown URL'))
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const info = await fetchOpenRouterKeyInfo('sk-or-v1-standard')
+    expect(info.label).toBe('Standard Key')
+    expect(info.isByokActive).toBe(false)
+    expect(info.byokUsage).toBe(0)
+    expect(info.byokProviders).toBeUndefined()
+  })
+
+  it('falls back to /auth/key when /key returns 404', async () => {
+    const mockAuthKeyResponse = {
+      data: {
+        label: 'Legacy Key',
+        usage: 1.0,
+        is_free_tier: true,
+        byok_usage: 0.5,
+      }
+    }
+
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/auth/key')) {
+        return Promise.resolve(
+          new Response(JSON.stringify(mockAuthKeyResponse), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
+      }
+      if (url.endsWith('/key')) {
+        return Promise.resolve(new Response('Not Found', { status: 404 }))
+      }
+      return Promise.resolve(new Response('Not Found', { status: 404 }))
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const info = await fetchOpenRouterKeyInfo('sk-or-v1-legacy')
+    expect(info.label).toBe('Legacy Key')
+    expect(info.isByokActive).toBe(true)
+    expect(info.byokUsage).toBe(0.5)
+  })
+
+  it('throws descriptive error on invalid API key for fetchOpenRouterKeyInfo', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: 'Invalid API key' } }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    )
+    vi.stubGlobal('fetch', mockFetch)
+
+    await expect(fetchOpenRouterKeyInfo('invalid-key')).rejects.toThrow('Invalid API key')
   })
 
   it('streams live reasoning and emits progress updates via SSE', async () => {
@@ -948,6 +1333,80 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(assignments.length).toBe(1)
     expect(assignments[0].group).toBe('Work')
     expect(callCount).toBe(2)
+  })
+
+  it('injects provider routing strategy, data_collection, require_parameters, and ignore list for OpenRouter', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-test-key',
+      model: 'anthropic/claude-3.5-sonnet',
+      openrouterProvider: 'google',
+      openrouterAllowFallbacks: false,
+      openrouterSort: 'throughput',
+      openrouterDataCollection: 'deny',
+      openrouterRequireParams: true,
+      openrouterIgnoreProviders: 'cloudflare, novita',
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'OK' } }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const result = await client.testConnection()
+    expect(result.ok).toBe(true)
+    expect(capturedBody.provider).toEqual({
+      order: ['google'],
+      allow_fallbacks: false,
+      sort: 'throughput',
+      data_collection: 'deny',
+      require_parameters: true,
+      ignore: ['cloudflare', 'novita'],
+    })
+  })
+
+  it('injects fallback models array when openrouterFallbackModels is configured', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-test-key',
+      model: 'anthropic/claude-3.5-sonnet',
+      openrouterFallbackModels: 'openai/gpt-4o-mini, google/gemini-2.5-flash',
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'OK' } }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const result = await client.testConnection()
+    expect(result.ok).toBe(true)
+    expect(capturedBody.models).toEqual([
+      'anthropic/claude-3.5-sonnet',
+      'openai/gpt-4o-mini',
+      'google/gemini-2.5-flash',
+    ])
   })
 })
 

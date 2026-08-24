@@ -1,4 +1,4 @@
-import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory, AIProgressCallback, AIProgressUpdate, OperationRetryInfo } from './types'
+import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory, AIProgressCallback, AIProgressUpdate, OperationRetryInfo, OpenRouterProviderItem, OpenRouterKeyInfo } from './types'
 import type { AILogger } from './ai-logger'
 import { DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS, DEFAULT_ENDPOINTS } from './constants'
 import { getAutoBatchSize, formatTimeAgo, extractDomain, extractJsonSubstring } from './utils'
@@ -1016,7 +1016,7 @@ Only output the JSON object.`
       }
 
       if (provider === 'gemini') {
-        return this.chatGemini(userMessage, jsonMode, batchIndex)
+        return this.chatGemini(userMessage, jsonMode, batchIndex, onProgress)
       }
 
       // OpenAI / Custom (OpenAI-compatible)
@@ -1075,6 +1075,41 @@ Only output the JSON object.`
         this.logger.logRawRequest(batchIndex, endpoint, `Message len: ${userMessage.length}`, this.systemPrompt, userMessage)
       }
 
+      const openrouterProviderObj: any = {}
+      if (this.config.provider === 'openrouter') {
+        if (this.config.openrouterProvider && this.config.openrouterProvider.trim() !== '' && this.config.openrouterProvider !== 'auto') {
+          openrouterProviderObj.order = [this.config.openrouterProvider.trim()]
+        }
+        if (this.config.openrouterAllowFallbacks !== undefined) {
+          openrouterProviderObj.allow_fallbacks = this.config.openrouterAllowFallbacks
+        }
+        if (this.config.openrouterRequireParams !== undefined) {
+          openrouterProviderObj.require_parameters = this.config.openrouterRequireParams
+        }
+        if (this.config.openrouterDataCollection && this.config.openrouterDataCollection !== 'allow') {
+          openrouterProviderObj.data_collection = this.config.openrouterDataCollection
+        }
+        if (this.config.openrouterSort && this.config.openrouterSort !== 'auto') {
+          openrouterProviderObj.sort = this.config.openrouterSort
+        }
+        if (this.config.openrouterIgnoreProviders && this.config.openrouterIgnoreProviders.trim()) {
+          const ignored = this.config.openrouterIgnoreProviders.split(',').map((s: string) => s.trim()).filter(Boolean)
+          if (ignored.length > 0) {
+            openrouterProviderObj.ignore = ignored
+          }
+        }
+      }
+
+      const openrouterFallbackList = this.config.provider === 'openrouter' && this.config.openrouterFallbackModels && this.config.openrouterFallbackModels.trim()
+        ? [model, ...this.config.openrouterFallbackModels.split(',').map((s: string) => s.trim()).filter((s: string) => s && s !== model)]
+        : undefined
+
+      // Safe completion token ceiling to ensure prompt + max_tokens <= context_length
+      let reqMaxTokens = this.config.maxTokens || 16384
+      if (reqMaxTokens > 32768) {
+        reqMaxTokens = 16384
+      }
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: this.getHeaders(),
@@ -1082,13 +1117,19 @@ Only output the JSON object.`
           model,
           messages,
           temperature: 0,
-          max_tokens: this.config.maxTokens || 16384,
+          max_tokens: reqMaxTokens,
           ...(onProgress && { stream: true }),
           ...(jsonMode && { response_format: { type: 'json_object' } }),
           ...(this.config.provider === 'openrouter' && this.config.reasoningEffort && this.config.reasoningEffort !== 'auto' && {
             reasoning: {
               effort: this.config.reasoningEffort
             }
+          }),
+          ...(this.config.provider === 'openrouter' && Object.keys(openrouterProviderObj).length > 0 && {
+            provider: openrouterProviderObj
+          }),
+          ...(this.config.provider === 'openrouter' && openrouterFallbackList && openrouterFallbackList.length > 1 && {
+            models: openrouterFallbackList
           }),
           ...(this.config.provider === 'openai' && this.config.reasoningEffort && this.config.reasoningEffort !== 'auto' && {
             reasoning_effort: this.config.reasoningEffort
@@ -1154,12 +1195,13 @@ Only output the JSON object.`
                 if (rDelta) {
                   accumulatedReasoning += rDelta
                   const now = Date.now()
-                  if (onProgress && now - lastProgressEmit > 120) {
+                  if (onProgress && now - lastProgressEmit > 80) {
                     lastProgressEmit = now
+                    const cleanSnippet = accumulatedReasoning.trim()
                     onProgress({
                       stage: 'evaluating',
                       liveReasoning: accumulatedReasoning,
-                      reasoningSnippet: rDelta.trim() ? rDelta.trim() : undefined,
+                      reasoningSnippet: cleanSnippet.length > 120 ? '...' + cleanSnippet.slice(-120) : cleanSnippet,
                     })
                   }
                 }
@@ -1171,9 +1213,11 @@ Only output the JSON object.`
         }
         // Final live reasoning flush
         if (onProgress && accumulatedReasoning) {
+          const cleanSnippet = accumulatedReasoning.trim()
           onProgress({
             stage: 'evaluating',
             liveReasoning: accumulatedReasoning,
+            reasoningSnippet: cleanSnippet.length > 120 ? '...' + cleanSnippet.slice(-120) : cleanSnippet,
           })
         }
         if (this.logger) {
@@ -1185,13 +1229,15 @@ Only output the JSON object.`
         const choice = data.choices?.[0]
         text = choice?.message?.content || ''
         finishReason = choice?.finish_reason
-        const reasoning = choice?.message?.reasoning || choice?.message?.reasoning_content
+        const reasoning = choice?.message?.reasoning || choice?.message?.reasoning_content || choice?.message?.thought
         if (reasoning) {
           accumulatedReasoning = reasoning
           if (onProgress) {
+            const cleanSnippet = reasoning.trim()
             onProgress({
               stage: 'evaluating',
               liveReasoning: reasoning,
+              reasoningSnippet: cleanSnippet.length > 120 ? '...' + cleanSnippet.slice(-120) : cleanSnippet,
             })
           }
         }
@@ -1249,6 +1295,14 @@ Only output the JSON object.`
         this.logger.logRawRequest(batchIndex, endpoint, `Message len: ${userMessage.length}`, this.systemPrompt, userMessage)
       }
 
+      let reqMaxTokens = this.config.maxTokens || 8192
+      const claudeModel = this.config.model || this.defaultModel
+      if (claudeModel.includes('3-7') || claudeModel.includes('opus-4')) {
+        reqMaxTokens = Math.min(reqMaxTokens, 64000)
+      } else {
+        reqMaxTokens = Math.min(reqMaxTokens, 8192)
+      }
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -1258,8 +1312,8 @@ Only output the JSON object.`
           'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify({
-          model: this.config.model || this.defaultModel,
-          max_tokens: this.config.maxTokens || 16384,
+          model: claudeModel,
+          max_tokens: reqMaxTokens,
           system: this.systemPrompt,
           messages,
         }),
@@ -1323,7 +1377,12 @@ Only output the JSON object.`
    * @param {number} [batchIndex]
    * @returns {Promise<string>}
    */
-  private async chatGemini(userMessage: string, jsonMode?: boolean, batchIndex = 1): Promise<string> {
+  private async chatGemini(
+    userMessage: string, 
+    jsonMode?: boolean, 
+    batchIndex = 1,
+    onProgress?: (update: AIProgressUpdate) => void
+  ): Promise<string> {
     // loop through items to handle max token continuations
     const baseUrl = this.config.endpoint || DEFAULT_ENDPOINTS.gemini
     const model = this.config.model || this.defaultModel
@@ -1331,6 +1390,17 @@ Only output the JSON object.`
     const maxContinuations = 3
     let continuations = 0
     let accumulatedContent = ''
+
+    const thinkingBudgetMap: Record<string, number> = {
+      minimal: 1024,
+      low: 2048,
+      medium: 4096,
+      high: 8192,
+      max: 16384,
+    }
+    const thinkingBudget = this.config.reasoningEffort && this.config.reasoningEffort !== 'auto'
+      ? (thinkingBudgetMap[this.config.reasoningEffort] || 2048)
+      : undefined
     
     const contents: any[] = [
       { role: 'user', parts: [{ text: userMessage }] },
@@ -1356,8 +1426,13 @@ Only output the JSON object.`
             contents,
             generationConfig: {
               temperature: 0,
-              maxOutputTokens: this.config.maxTokens || 16384,
+              maxOutputTokens: Math.min(this.config.maxTokens || 16384, 65536),
               ...(jsonMode && { responseMimeType: 'application/json' }),
+              ...(thinkingBudget !== undefined && {
+                thinkingConfig: {
+                  thinkingBudget,
+                },
+              }),
             },
           }),
           signal: this.signal,
@@ -1400,8 +1475,24 @@ Only output the JSON object.`
       }
 
       const candidate = data.candidates?.[0]
-      const text = candidate?.content?.parts?.[0]?.text || ''
+      const parts: any[] = candidate?.content?.parts || []
+      const thoughtParts = parts.filter((p: any) => p.thought)
+      const textParts = parts.filter((p: any) => !p.thought)
+      const text = textParts.length > 0
+        ? textParts.map((p: any) => p.text || '').join('')
+        : (parts[0]?.text || '')
       accumulatedContent += text
+
+      if (thoughtParts.length > 0 && onProgress) {
+        const reasoningText = thoughtParts.map((p: any) => p.text || '').join('')
+        onProgress({
+          stage: 'classifying',
+          percent: 60,
+          statusText: 'Processing reasoning...',
+          liveReasoning: reasoningText,
+          reasoningSnippet: reasoningText.slice(-150),
+        })
+      }
 
       if (this.logger) {
         this.logger.logRawResponse(batchIndex, response.status, duration, text, data)
@@ -1569,6 +1660,7 @@ export interface GoogleModelItem {
   outputCost?: number
   costDetails?: string
   rawMaxOutputTokens?: number
+  isByok?: boolean
 }
 
 export function getGoogleModelPricing(id: string): { input: number; output: number } {
@@ -1803,7 +1895,21 @@ export async function fetchOpenRouterModels(apiKey?: string, endpoint?: string, 
       costDetails = `$${inputCost}/$${outputCost} per 1M`
     }
 
-    const outputLimitTokens = m.top_provider?.max_completion_tokens || m.per_request_limits?.completion_tokens || (m.context_length && m.context_length <= 131072 ? m.context_length : 16384)
+    const contextLength = typeof m.context_length === 'number' ? m.context_length : undefined
+    let rawOutput = m.top_provider?.max_completion_tokens || m.per_request_limits?.completion_tokens
+    if (!rawOutput || (contextLength !== undefined && rawOutput >= contextLength)) {
+      const effectiveContext = contextLength || 16384
+      if (effectiveContext <= 8192) {
+        rawOutput = 4096
+      } else if (effectiveContext <= 16384) {
+        rawOutput = 8192
+      } else if (effectiveContext <= 131072) {
+        rawOutput = 16384
+      } else {
+        rawOutput = 32768
+      }
+    }
+    const outputLimitTokens = Math.min(rawOutput, 65536)
     const outputLimit = Math.round(outputLimitTokens / 1024)
     const maxTokens = `${outputLimit > 0 ? outputLimit : 16}K`
 
@@ -1827,3 +1933,130 @@ export async function fetchOpenRouterModels(apiKey?: string, endpoint?: string, 
   results.sort((a, b) => a.name.localeCompare(b.name))
   return results
 }
+
+/**
+ * Fetches the available providers from OpenRouter API.
+ * @param {string} [apiKey] - Optional API key for OpenRouter.
+ * @param {string} [endpoint] - Optional endpoint override.
+ * @returns {Promise<OpenRouterProviderItem[]>} Array of providers with slug and name.
+ */
+export async function fetchOpenRouterProviders(apiKey?: string, endpoint?: string): Promise<OpenRouterProviderItem[]> {
+  const baseUrl = endpoint?.trim() || DEFAULT_ENDPOINTS.openrouter
+  const cleanBase = baseUrl.replace(/\/$/, '')
+  const url = `${cleanBase}/providers`
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (apiKey && apiKey.trim()) {
+    headers['Authorization'] = `Bearer ${apiKey.trim()}`
+  }
+
+  const res = await fetch(url, { headers })
+  if (!res.ok) {
+    let errText = ''
+    try {
+      const errJson = await res.json()
+      errText = errJson.error?.message || errJson.message || JSON.stringify(errJson)
+    } catch {
+      errText = await res.text().catch(() => res.statusText)
+    }
+    throw new Error(`OpenRouter API Error (${res.status}): ${errText || 'Failed to fetch providers'}`)
+  }
+
+  const data = await res.json()
+  if (!data.data || !Array.isArray(data.data)) {
+    throw new Error('Invalid response structure from OpenRouter API: missing "data" array.')
+  }
+
+  const results: OpenRouterProviderItem[] = data.data.map((p: any) => ({
+    slug: p.slug || p.id || '',
+    name: p.name || p.slug || p.id || '',
+  })).filter((p: OpenRouterProviderItem) => p.slug && p.name)
+
+  results.sort((a, b) => a.name.localeCompare(b.name))
+  return results
+}
+
+/**
+ * Fetches OpenRouter API key information, spending metrics, and BYOK status.
+ * @param {string} [apiKey] - The OpenRouter API key.
+ * @param {string} [endpoint] - Optional endpoint override.
+ * @returns {Promise<OpenRouterKeyInfo>} Key metadata and BYOK activation state.
+ */
+export async function fetchOpenRouterKeyInfo(apiKey?: string, endpoint?: string): Promise<OpenRouterKeyInfo> {
+  const baseUrl = endpoint?.trim() || DEFAULT_ENDPOINTS.openrouter
+  const cleanBase = baseUrl.replace(/\/$/, '')
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (apiKey && apiKey.trim()) {
+    headers['Authorization'] = `Bearer ${apiKey.trim()}`
+  }
+
+  let keyData: any = null
+
+  // 1. Query /key with fallback to /auth/key
+  const keyRes = await fetch(`${cleanBase}/key`, { headers }).catch(() => null)
+  if (keyRes && keyRes.ok) {
+    const json = await keyRes.json()
+    keyData = json.data || json
+  } else {
+    const authRes = await fetch(`${cleanBase}/auth/key`, { headers }).catch(() => null)
+    if (authRes && authRes.ok) {
+      const json = await authRes.json()
+      keyData = json.data || json
+    } else {
+      let errText = ''
+      if (keyRes) {
+        try {
+          const errJson = await keyRes.json()
+          errText = errJson.error?.message || errJson.message || JSON.stringify(errJson)
+        } catch {
+          errText = await keyRes.text().catch(() => keyRes.statusText)
+        }
+      } else if (authRes) {
+        try {
+          const authJson = await authRes.json()
+          errText = authJson.error?.message || authJson.message || JSON.stringify(authJson)
+        } catch {
+          errText = await authRes.text().catch(() => authRes.statusText)
+        }
+      }
+      throw new Error(`OpenRouter API Key Error: ${errText || 'Failed to fetch key info'}`)
+    }
+  }
+
+  // 2. Query /byok to list configured upstream provider credentials
+  let byokProviders: string[] = []
+  try {
+    const byokRes = await fetch(`${cleanBase}/byok`, { headers }).catch(() => null)
+    if (byokRes && byokRes.ok) {
+      const byokJson = await byokRes.json()
+      if (Array.isArray(byokJson.data)) {
+        byokProviders = byokJson.data
+          .filter((item: any) => !item.disabled && item.provider)
+          .map((item: any) => String(item.provider).toLowerCase())
+      }
+    }
+  } catch {
+    // Non-management keys or unpermitted endpoints safely fail silently
+  }
+
+  const byokUsage = typeof keyData?.byok_usage === 'number' ? keyData.byok_usage : (typeof keyData?.byokUsage === 'number' ? keyData.byokUsage : 0)
+  const isByokActive = byokUsage > 0 || byokProviders.length > 0
+
+  return {
+    label: keyData?.label,
+    usage: typeof keyData?.usage === 'number' ? keyData.usage : undefined,
+    limit: typeof keyData?.limit === 'number' ? keyData.limit : (keyData?.limit === null ? null : undefined),
+    isFreeTier: !!keyData?.is_free_tier,
+    byokUsage,
+    byokUsageDaily: typeof keyData?.byok_usage_daily === 'number' ? keyData.byok_usage_daily : undefined,
+    byokUsageWeekly: typeof keyData?.byok_usage_weekly === 'number' ? keyData.byok_usage_weekly : undefined,
+    byokUsageMonthly: typeof keyData?.byok_usage_monthly === 'number' ? keyData.byok_usage_monthly : undefined,
+    byokProviders: byokProviders.length > 0 ? byokProviders : undefined,
+    isByokActive,
+  }
+}
+
