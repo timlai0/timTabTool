@@ -7,6 +7,24 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/icons/icon-16.png" />
   <link rel="shortcut icon" href="/icons/icon-32.png" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: fit-content;
+      height: fit-content;
+      min-width: 400px;
+      min-height: 550px;
+      background: var(--bg-primary, #ffffff);
+      overflow-x: hidden;
+    }
+    #app {
+      min-width: 400px;
+      min-height: 550px;
+      display: flex;
+      flex-direction: column;
+    }
+  </style>
 </head>
 <body>
   <div id="app"></div>
