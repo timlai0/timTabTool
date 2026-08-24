@@ -995,32 +995,33 @@ Only output the JSON object.`
   /**
    * Send a chat completion request to the configured provider.
    * @param {string} userMessage
+   * @param {string} prompt
    * @param {boolean} [jsonMode]
    * @param {number} [batchIndex]
    * @param {Function} [onRetry]
    * @returns {Promise<string>}
    */
-  private async chat(
-    userMessage: string,
-    jsonMode?: boolean,
+  public async chat(
+    prompt: string,
+    jsonMode = false,
     batchIndex = 1,
     onRetry?: (info: OperationRetryInfo) => void,
-    onProgress?: (update: AIProgressUpdate) => void
+    onProgress?: (progress: AIProgressUpdate) => void
   ): Promise<string> {
     // Logic: Delegate request to OpenAI, Claude, or Gemini
     return this.executeWithRetry(async () => {
       const { provider } = this.config
 
       if (provider === 'claude') {
-        return this.chatClaude(userMessage, jsonMode, batchIndex)
+        return this.chatClaude(prompt, jsonMode, batchIndex)
       }
 
       if (provider === 'gemini') {
-        return this.chatGemini(userMessage, jsonMode, batchIndex, onProgress)
+        return this.chatGemini(prompt, jsonMode, batchIndex, onProgress)
       }
 
       // OpenAI / Custom (OpenAI-compatible)
-      return this.chatOpenAI(userMessage, jsonMode, batchIndex, onProgress)
+      return this.chatOpenAI(prompt, jsonMode, batchIndex, onProgress)
     }, onRetry)
   }
 
@@ -1194,12 +1195,16 @@ Only output the JSON object.`
                 const rDelta = delta?.reasoning || delta?.reasoning_content || delta?.thought || ''
                 if (rDelta) {
                   accumulatedReasoning += rDelta
+                }
+
+                if ((delta?.content || rDelta) && onProgress) {
                   const now = Date.now()
-                  if (onProgress && now - lastProgressEmit > 80) {
+                  if (now - lastProgressEmit > 40) {
                     lastProgressEmit = now
                     const cleanSnippet = accumulatedReasoning.trim()
                     onProgress({
                       stage: 'evaluating',
+                      liveContent: text,
                       liveReasoning: accumulatedReasoning,
                       reasoningSnippet: cleanSnippet.length > 120 ? '...' + cleanSnippet.slice(-120) : cleanSnippet,
                     })
@@ -1211,11 +1216,12 @@ Only output the JSON object.`
             }
           }
         }
-        // Final live reasoning flush
-        if (onProgress && accumulatedReasoning) {
+        // Final live content and reasoning flush
+        if (onProgress && (accumulatedReasoning || text)) {
           const cleanSnippet = accumulatedReasoning.trim()
           onProgress({
             stage: 'evaluating',
+            liveContent: text,
             liveReasoning: accumulatedReasoning,
             reasoningSnippet: cleanSnippet.length > 120 ? '...' + cleanSnippet.slice(-120) : cleanSnippet,
           })
@@ -1486,8 +1492,7 @@ Only output the JSON object.`
       if (thoughtParts.length > 0 && onProgress) {
         const reasoningText = thoughtParts.map((p: any) => p.text || '').join('')
         onProgress({
-          stage: 'classifying',
-          percent: 60,
+          stage: 'evaluating',
           statusText: 'Processing reasoning...',
           liveReasoning: reasoningText,
           reasoningSnippet: reasoningText.slice(-150),

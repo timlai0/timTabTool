@@ -467,6 +467,7 @@ export interface AIProgressUpdate {
   discoveredGroupNames?: string[]
   liveReasoning?: string
   reasoningSnippet?: string
+  liveContent?: string
   retry?: OperationRetryInfo
 }
 
