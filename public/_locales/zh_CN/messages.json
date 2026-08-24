@@ -318,5 +318,21 @@
   "sortGroupsBySize": {
     "message": "按大小排序分组",
     "description": "Submenu action to sort tab groups by tab count (largest first)"
+  },
+  "ecoMode": {
+    "message": "节能模式（大标签量优化）",
+    "description": "Setting toggle for Eco Mode"
+  },
+  "ecoModeDesc": {
+    "message": "批量合并后台存储 I/O，延长标签事件防抖时间，大幅降低 100+ 标签页时的内存和 CPU 占用。",
+    "description": "Description for Eco Mode"
+  },
+  "fastOverlayMode": {
+    "message": "极速搜索浮层模式",
+    "description": "Setting toggle for Fast Overlay Mode"
+  },
+  "fastOverlayModeDesc": {
+    "message": "延迟计算 AI 消耗指标，节流指针事件，使用高性能 DOM 批处理渲染搜索结果。",
+    "description": "Description for Fast Overlay Mode"
   }
 }

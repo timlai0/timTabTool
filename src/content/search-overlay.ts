@@ -81,6 +81,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let progressHideBtn: HTMLButtonElement | null = null
   let progressFill: HTMLDivElement | null = null
   let progressDetail: HTMLDivElement | null = null
+  let progressDetailText: HTMLSpanElement | null = null
+  let progressThinkingPopover: HTMLDivElement | null = null
   let isAIOperating = false
   let isExternalAI = false
   let aiProgressInterval: ReturnType<typeof setInterval> | null = null
@@ -175,6 +177,22 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     aiModel = ''
   }
 
+  function setProgressDetail(text: string, isError = false): void {
+    if (progressDetailText) {
+      progressDetailText.textContent = text
+    } else if (progressDetail) {
+      progressDetail.textContent = text
+    }
+    if (progressDetail) {
+      progressDetail.style.color = isError ? 'var(--group-red, #FF3B30)' : ''
+      if (isError || !isAIOperating) {
+        progressDetail.classList.remove('has-thinking')
+        progressDetail.title = ''
+        if (progressThinkingPopover) progressThinkingPopover.innerHTML = ''
+      }
+    }
+  }
+
   /**
    * Recalculates progress percentage, percentage remaining, and estimated time remaining,
    * then updates the overlay DOM elements synchronously.
@@ -243,16 +261,39 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       if (aiRetryText) {
         detail = `${aiRetryText} • ${detail}`
       }
-      if (aiReasoningSnippet || aiLiveReasoning) {
-        const thought = aiReasoningSnippet || (aiLiveReasoning.length > 70 ? '...' + aiLiveReasoning.slice(-70).trim() : aiLiveReasoning.trim())
-        detail += ` • Thinking: "${thought.replace(/\s+/g, ' ')}"`
+      const rawThought = (aiLiveReasoning || aiReasoningSnippet || '').trim()
+      if (rawThought) {
+        const thoughtPreview = rawThought.length > 120 ? '...' + rawThought.slice(-120).trim() : rawThought
+        detail += ` • Thinking: "${thoughtPreview.replace(/\s+/g, ' ')}" (hover to view full)`
+        progressDetail.classList.add('has-thinking')
+        progressDetail.title = `Model Thinking (Full Stream):\n\n${rawThought}`
+        if (progressThinkingPopover) {
+          progressThinkingPopover.innerHTML = ''
+          const header = document.createElement('div')
+          header.className = 'atm-progress-thinking-popover-header'
+          header.textContent = `Model Thinking Stream (${rawThought.length} chars)`
+          const body = document.createElement('div')
+          body.textContent = rawThought
+          progressThinkingPopover.appendChild(header)
+          progressThinkingPopover.appendChild(body)
+        }
+      } else {
+        progressDetail.classList.remove('has-thinking')
+        progressDetail.title = ''
+        if (progressThinkingPopover) {
+          progressThinkingPopover.innerHTML = ''
+        }
       }
       if (aiDiscoveredGroups.length > 0) {
         const sample = aiDiscoveredGroups.slice(0, 3).join(', ')
         const extra = aiDiscoveredGroups.length > 3 ? ` (+${aiDiscoveredGroups.length - 3} more)` : ''
         detail += ` • Discovered: [${sample}${extra}]`
       }
-      progressDetail.textContent = detail
+      if (progressDetailText) {
+        progressDetailText.textContent = detail
+      } else {
+        progressDetail.textContent = detail
+      }
     }
     if (progressStopApplyBtn) {
       const canApplyPartial = isAIOperating && (aiBatchCurrent > 1 || aiDiscoveredGroups.length > 0)
@@ -482,30 +523,34 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     })
   }
 
+  let mouseMoveRaf = 0
   window.addEventListener('mousemove', (e) => {
+    if (!visible) return
     mouseX = e.clientX
     mouseY = e.clientY
 
-    if (visible && (mouseX !== lastMouseX || mouseY !== lastMouseY)) {
-      lastMouseX = mouseX
-      lastMouseY = mouseY
-      ignoreMouseHover = false
+    if (mouseX === lastMouseX && mouseY === lastMouseY) return
+    lastMouseX = mouseX
+    lastMouseY = mouseY
+    ignoreMouseHover = false
 
-      if (shadow) {
-        const hoveredEl = shadow.elementFromPoint(mouseX, mouseY)?.closest('.atm-result-item')
-        if (hoveredEl) {
-          const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
-          if (resultsList) {
-            const items = Array.from(resultsList.querySelectorAll('.atm-result-item'))
-            const index = items.indexOf(hoveredEl)
-            if (index !== -1 && index !== selectedIndex) {
-              selectedIndex = index
-              updateSelection(resultsList)
-            }
+    if (mouseMoveRaf) return
+    mouseMoveRaf = requestAnimationFrame(() => {
+      mouseMoveRaf = 0
+      if (!visible || !shadow) return
+      const hoveredEl = shadow.elementFromPoint(mouseX, mouseY)?.closest('.atm-result-item')
+      if (hoveredEl) {
+        const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
+        if (resultsList) {
+          const items = Array.from(resultsList.querySelectorAll('.atm-result-item'))
+          const index = items.indexOf(hoveredEl)
+          if (index !== -1 && index !== selectedIndex) {
+            selectedIndex = index
+            updateSelection(resultsList)
           }
         }
       }
-    }
+    })
   }, { passive: true })
 
   /**
@@ -646,6 +691,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         </div>
       `)
       detailsPanel.style.display = 'flex'
+      loadMetrics().then(() => {
+        if (visible && selectedIndex !== -1 && results[selectedIndex] === result) {
+          renderDetailsPanel(result)
+        }
+      })
       return
     }
 
@@ -998,7 +1048,15 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     progressDetail = document.createElement('div')
     progressDetail.className = 'atm-progress-detail'
-    progressDetail.textContent = 'Ready'
+
+    progressDetailText = document.createElement('span')
+    progressDetailText.className = 'atm-progress-detail-text'
+    progressDetailText.textContent = 'Ready'
+    progressDetail.appendChild(progressDetailText)
+
+    progressThinkingPopover = document.createElement('div')
+    progressThinkingPopover.className = 'atm-progress-thinking-popover'
+    progressDetail.appendChild(progressThinkingPopover)
 
     domainChipsContainer = document.createElement('div')
     domainChipsContainer.className = 'atm-domain-chips'
@@ -1041,8 +1099,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         chrome.runtime.sendMessage({
           action: 'GROUP_CLUSTER',
           payload: { tabIds, title }
-        }).catch(() => {})
-        hide()
+        })
       }
     })
 
@@ -1220,16 +1277,18 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     lastMouseX = mouseX
     lastMouseY = mouseY
 
-    // Reset details panel state and load fresh metrics
+    // Reset details panel state and load metrics conditionally
     const detailsPanel = shadow.querySelector('.atm-details-panel') as HTMLDivElement
     if (detailsPanel) detailsPanel.style.display = 'none'
     overlayMetrics = null
-    loadMetrics().then(() => {
-      if (visible && selectedIndex !== -1 && shadow) {
-        const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
-        if (resultsList) updateSelection(resultsList)
-      }
-    })
+    if (initialQuery.startsWith('/')) {
+      loadMetrics().then(() => {
+        if (visible && selectedIndex !== -1 && shadow) {
+          const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
+          if (resultsList) updateSelection(resultsList)
+        }
+      })
+    }
 
     const input = shadow.querySelector('.atm-input') as HTMLInputElement
     const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
@@ -1311,10 +1370,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       progressFill.style.backgroundColor = '' // reset color
       progressFill.classList.remove('atm-indeterminate')
     }
-    if (progressDetail) {
-      progressDetail.textContent = 'Ready'
-      progressDetail.style.color = ''
-    }
+    setProgressDetail('Ready')
     if (progressCloseBtn) progressCloseBtn.style.display = 'none'
     if (progressStopApplyBtn) progressStopApplyBtn.style.display = 'none'
     if (progressHideBtn) progressHideBtn.style.display = 'none'
@@ -1373,10 +1429,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       progressFill.classList.add('atm-indeterminate')
     }
     if (progressPercent) progressPercent.textContent = ''
-    if (progressDetail) {
-      progressDetail.textContent = 'Processing...'
-      progressDetail.style.color = ''
-    }
+    setProgressDetail('Processing...')
 
     // Extract overrides and display name
     let model = 'gemini-3.5-flash'
@@ -1463,9 +1516,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         progressStatus.textContent = 'Success!'
         progressStatus.style.color = 'var(--group-green, #34C759)'
       }
-      if (progressDetail) {
-        progressDetail.textContent = 'Operation completed successfully.'
-      }
+      setProgressDetail('Operation completed successfully.')
 
       // Reset the progress state after 1.5 seconds instead of hiding the entire overlay
       if (aiProgressTimeout) clearTimeout(aiProgressTimeout)
@@ -1500,8 +1551,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         progressStatus.style.color = 'var(--group-red, #FF3B30)'
       }
       if (progressDetail) {
-        progressDetail.textContent = err.message || 'An unknown error occurred.'
-        progressDetail.style.color = 'var(--group-red, #FF3B30)'
+        setProgressDetail(err.message || 'An unknown error occurred.', true)
 
         if (err.message && (err.message.includes('safety safeguard') || err.message.includes('safety limit'))) {
           const btn = document.createElement('button')
@@ -1516,7 +1566,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
               if (progressFill) progressFill.style.width = '100%'
             } catch (e: any) {
               if (progressStatus) progressStatus.textContent = 'AI Operation Failed'
-              if (progressDetail) progressDetail.textContent = e.message || 'Failed to execute command'
+              setProgressDetail(e.message || 'Failed to execute command', true)
             }
           })
           progressDetail.appendChild(document.createElement('br'))
@@ -1793,6 +1843,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       return
     }
 
+    const fragment = document.createDocumentFragment()
     results.forEach((result, index) => {
       const item = document.createElement('div')
       item.className = 'atm-result-item' + (index === selectedIndex ? ' atm-selected' : '')
@@ -1804,7 +1855,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           chrome.runtime.sendMessage({
             action: 'CLOSE_TAB',
             payload: { tabId: result.tab.id }
-          }).catch(() => {})
+          })
           const idx = results.indexOf(result)
           if (idx !== -1) {
             results.splice(idx, 1)
@@ -1900,10 +1951,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
             chrome.runtime.sendMessage({
               action: 'CLOSE_TAB',
               payload: { tabId: result.tab.id }
-            }).catch(() => {})
+            })
             const idx = results.indexOf(result)
             if (idx !== -1) {
-              results.splice(idx, 1)
               if (selectedIndex >= results.length) {
                 selectedIndex = results.length - 1
               }
@@ -1919,8 +1969,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         item.appendChild(closeBtn)
       }
 
-      resultsList.appendChild(item)
+      fragment.appendChild(item)
     })
+    resultsList.appendChild(fragment)
 
     if (justOpened && shadow) {
       justOpened = false
@@ -2070,9 +2121,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
 
     const displayName = MODEL_NAMES[modelId] || modelId
-    if (progressDetail) {
-      progressDetail.textContent = `Setting default model to ${displayName}...`
-    }
+    setProgressDetail(`Setting default model to ${displayName}...`)
 
     try {
       // Step 1: Get settings
@@ -2086,10 +2135,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       let maxTokens = 16384
       if (modelId.includes('/')) {
         provider = 'openrouter'
-        maxTokens = modelId === 'stealth/ox-alpha' ? 131072 : 16384
+        maxTokens = modelId === 'stealth/ox-alpha' ? 32768 : 16384
+      } else if (modelId.startsWith('gemini') || modelId.startsWith('gemma')) {
         provider = 'gemini'
         maxTokens = 65536
-      } else if (modelId.startsWith('gpt')) {
+      } else if (modelId.startsWith('gpt') || modelId.startsWith('o1') || modelId.startsWith('o3')) {
         provider = 'openai'
         maxTokens = 16384
       } else if (modelId.startsWith('claude')) {
@@ -2125,9 +2175,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         progressStatus.textContent = 'Success!'
         progressStatus.style.color = 'var(--group-green, #34C759)'
       }
-      if (progressDetail) {
-        progressDetail.textContent = `Default model is now set to ${displayName}.`
-      }
+      setProgressDetail(`Default model is now set to ${displayName}.`)
 
       // Reset the progress state after 1.5 seconds instead of hiding the entire overlay
       if (aiProgressTimeout) clearTimeout(aiProgressTimeout)
@@ -2150,9 +2198,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         progressStatus.textContent = 'Failed to update model'
         progressStatus.style.color = 'var(--group-red, #FF3B30)'
       }
-      if (progressDetail) {
-        progressDetail.textContent = err.message || 'An unknown error occurred.'
-      }
+      setProgressDetail(err.message || 'An unknown error occurred.', true)
       if (progressCloseBtn) {
         progressCloseBtn.textContent = 'Dismiss'
         progressCloseBtn.style.color = 'var(--group-red, #FF3B30)'
@@ -2185,17 +2231,17 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       chrome.runtime.sendMessage({
         action: result.commandAction,
         payload: result.commandAction === 'CLEANUP_GROUPS' ? { minTabs: result.minTabs } : undefined
-      }).catch(() => {})
+      })
     } else if (result.isOpen && result.tab.id) {
       chrome.runtime.sendMessage({
         action: 'SWITCH_TAB',
-        payload: { tabId: result.tab.id },
-      }).catch(() => {})
+        payload: { tabId: result.tab.id, windowId: (result.tab as TabInfo).windowId }
+      })
     } else {
       chrome.runtime.sendMessage({
         action: 'OPEN_URL',
-        payload: { url: result.tab.url },
-      }).catch(() => {})
+        payload: { url: result.tab.url }
+      })
     }
     const isStandalone = window.location.protocol.includes('-extension:') && window.location.pathname.includes('search.html')
     const isNavigation = !(result.isCommand && result.commandAction)
@@ -2362,9 +2408,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           progressStatus.textContent = 'Success!'
           progressStatus.style.color = 'var(--group-green, #34C759)'
         }
-        if (progressDetail) {
-          progressDetail.textContent = 'Operation completed successfully.'
-        }
+        setProgressDetail('Operation completed successfully.')
         if (progressCloseBtn) {
           progressCloseBtn.style.display = 'none'
         }
@@ -2405,9 +2449,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           progressStatus.textContent = 'AI Operation Failed'
           progressStatus.style.color = 'var(--group-red, #FF3B30)'
         }
-        if (progressDetail) {
-          progressDetail.textContent = message.payload?.error || 'An unknown error occurred.'
-        }
+        setProgressDetail(message.payload?.error || 'An unknown error occurred.', true)
         if (progressCloseBtn) {
           progressCloseBtn.textContent = 'Dismiss'
           progressCloseBtn.style.color = 'var(--group-red, #FF3B30)'

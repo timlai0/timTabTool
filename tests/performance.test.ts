@@ -1,8 +1,22 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeAll } from 'vitest'
 import { classify, classifyTabs } from '../src/background/classifier'
 import { sortTabsByDomainAndTitleHelper } from '../src/background/tab-manager'
 
 describe('Performance Benchmarks for Large Batches of Tabs', () => {
+  beforeAll(() => {
+    let mockStorage: Record<string, any> = {}
+    vi.stubGlobal('chrome', {
+      storage: {
+        local: {
+          get: vi.fn((key: string) => Promise.resolve(mockStorage)),
+          set: vi.fn((obj: Record<string, any>) => {
+            mockStorage = { ...mockStorage, ...obj }
+            return Promise.resolve()
+          }),
+        },
+      },
+    })
+  })
   it('benchmarks classifyTabs with 5,000 tabs', () => {
     const mockTabs = Array.from({ length: 5000 }, (_, i) => ({
       id: i + 1,
@@ -32,4 +46,21 @@ describe('Performance Benchmarks for Large Batches of Tabs', () => {
     console.log(`sortTabsByDomainAndTitleHelper (5,000 tabs): ${duration.toFixed(2)} ms`)
     expect(sorted.length).toBe(5000)
   })
+
+  it('benchmarks recordTabVisit batching with 2,000 tabs', async () => {
+    const { recordTabVisit, getHistoryEntries, flushTabHistory } = await import('../src/background/storage')
+    const start = performance.now()
+
+    for (let i = 0; i < 2000; i++) {
+      await recordTabVisit(`https://example.com/item-${i}`, `Title ${i}`)
+    }
+    const writeDuration = performance.now() - start
+    console.log(`recordTabVisit 2,000 tabs (in-memory batched): ${writeDuration.toFixed(2)} ms`)
+
+    const entries = await getHistoryEntries()
+    expect(entries.length).toBeGreaterThan(0)
+
+    await flushTabHistory()
+  })
 })
+

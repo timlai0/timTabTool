@@ -318,5 +318,21 @@
   "sortGroupsBySize": {
     "message": "Sort Groups by Size",
     "description": "Submenu action to sort tab groups by tab count (largest first)"
+  },
+  "ecoMode": {
+    "message": "Eco Mode (High Tab Count Optimization)",
+    "description": "Setting toggle for Eco Mode"
+  },
+  "ecoModeDesc": {
+    "message": "Batches background disk storage I/O, scales tab event debouncing, and reduces memory & CPU usage for sessions with 100+ tabs.",
+    "description": "Description for Eco Mode"
+  },
+  "fastOverlayMode": {
+    "message": "Quick Overlay Fast Mode",
+    "description": "Setting toggle for Fast Overlay Mode"
+  },
+  "fastOverlayModeDesc": {
+    "message": "Defers AI metric computations, throttles pointer tracking, and renders search results in high-performance DOM batches.",
+    "description": "Description for Fast Overlay Mode"
   }
 }

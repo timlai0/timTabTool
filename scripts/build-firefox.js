@@ -43,18 +43,8 @@ try {
     type: 'module'
   };
 
-  // 4. Update content scripts to point to compiled content.js
-  if (manifest.content_scripts) {
-    manifest.content_scripts = manifest.content_scripts.map(cs => {
-      if (cs.js && cs.js.includes('src/content/search-overlay.ts')) {
-        return {
-          ...cs,
-          js: ['content.js']
-        };
-      }
-      return cs;
-    });
-  }
+  // 4. Remove static content_scripts for Firefox to prevent 2000+ tab memory leaks (loaded dynamically on demand via scripting.executeScript)
+  delete manifest.content_scripts;
 
   // 5. Add Firefox browser_specific_settings (Gecko ID is MANDATORY for Firefox MV3)
   manifest.browser_specific_settings = {
