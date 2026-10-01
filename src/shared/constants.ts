@@ -117,6 +117,7 @@ export const STORAGE_KEYS = {
   TAB_HISTORY: 'tabHistory',
   LAST_AI_RESULT: 'lastAIResult',
   AI_OPERATION_LOGS: 'aiOperationLogs',
+  CLOSED_TABS_BY_EXTENSION: 'closedTabsByExtension',
 } as const
 
 export const MODEL_PRICING: Record<string, { input: number; output: number }> = {

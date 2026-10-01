@@ -10,6 +10,7 @@ export interface TabInfo {
   index: number
   active: boolean
   pinned: boolean
+  audible?: boolean
   lastAccessed?: number
   createdAt?: number
   groupId?: number
@@ -75,6 +76,21 @@ export interface TabHistoryEntry {
   lastAccessed: number
   visitCount: number
   closed: boolean
+}
+
+/**
+ * @interface ClosedTabEntry
+ */
+export interface ClosedTabEntry {
+  id: string
+  url: string
+  title: string
+  favIconUrl?: string
+  closedAt: number
+  source: string
+  groupTitle?: string
+  windowId?: number
+  batchId?: string
 }
 
 /**
@@ -250,6 +266,7 @@ type MessageAction =
   | 'UNGROUP_GROUP'
   | 'CLOSE_GROUP'
   | 'CLASSIFY_NEW_TABS'
+  | 'CHECK_LAST_20_TABS'
   | 'EXPAND_ALL_GROUPS'
   | 'COLLAPSE_ALL_GROUPS'
   | 'TOGGLE_GROUP_TITLES'
@@ -302,6 +319,14 @@ type MessageAction =
   | 'CLEAR_AI_LOGS'
   | 'DELETE_AI_LOG'
   | 'EXTEND_OPERATION'
+  | 'GET_CLOSED_TABS'
+  | 'RESTORE_CLOSED_TAB'
+  | 'RESTORE_ALL_CLOSED_TABS'
+  | 'DELETE_CLOSED_TAB'
+  | 'RESTORE_CLOSED_BATCH'
+  | 'DELETE_CLOSED_BATCH'
+  | 'CLEAR_CLOSED_TAB'
+  | 'CLEAR_CLOSED_TABS'
 
 /**
  * @interface ExtensionMessage
@@ -316,7 +341,7 @@ export interface ExtensionMessage {
  */
 export interface LastAIResult {
   timestamp: number
-  actionType: 'group' | 'classify' | 'split' | 'merge'
+  actionType: 'group' | 'classify' | 'split' | 'merge' | 'regroup'
   actionTitle: string
   windowId: number
   tabsProcessed: number
@@ -481,7 +506,7 @@ export type AIProgressCallback = (update: AIProgressUpdate) => void
  * Complete real-time status of an active operation per window.
  */
 export interface OperationStatusInfo {
-  type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | null
+  type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup' | null
   error: string | null
   stage?: OperationStage
   statusText?: string
@@ -509,5 +534,37 @@ export interface OperationStatusInfo {
   lastAutoExtendTimestamp?: number
   autoExtendCount?: number
 }
+
+/**
+ * @interface ReviewAndRegroupTabInput
+ */
+export interface ReviewAndRegroupTabInput {
+  url: string
+  title: string
+  currentGroup?: string
+  lastAccessed?: number
+  createdAt?: number
+}
+
+/**
+ * @interface ReviewAndRegroupDecision
+ */
+export interface ReviewAndRegroupDecision {
+  index: number
+  group: string
+  newGroupName?: string
+  newGroupColor?: string
+}
+
+/**
+ * @interface RegroupLast20Result
+ */
+export interface RegroupLast20Result {
+  checkedCount: number
+  regroupedCount: number
+  unchangedCount: number
+  summary: string
+}
+
 
 
