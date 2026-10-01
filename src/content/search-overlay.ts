@@ -54,9 +54,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let results: SearchResultItem[] = []
   let debounceTimer: ReturnType<typeof setTimeout> | undefined
   let ignoreMouseHover = false
-  // Logik: Bestimmt, ob geschlossene Tabs in den Suchergebnissen angezeigt werden
-  // Programming logic: Determines whether closed tabs are displayed in the search results
-  let showClosedTabs = false
+  // Logik: Filter-Modus fuer Tabs ('open' | 'closed' | 'both')
+  // Programming logic: Filter mode for tabs ('open' | 'closed' | 'both')
+  let tabFilterMode: 'open' | 'closed' | 'both' = 'open'
   let showUngroupedOnly = false
   let sortMode: 'off' | 'title' | 'url' = 'off'
 
@@ -970,7 +970,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     inputWrap.appendChild(inputContainer)
     inputWrap.appendChild(shortcut)
 
-    // ─── Premium Integrated Progress Bar DOM ───
+    // ─── Integrated Progress Bar DOM ───
     progressContainer = document.createElement('div')
     progressContainer.className = 'atm-progress-container'
     progressContainer.style.display = 'none'
@@ -1121,27 +1121,25 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       doSearch(input.value, resultsList)
     })
 
-    const toggleLabel = document.createElement('label')
-    toggleLabel.className = 'atm-closed-tabs-toggle'
-
-    const toggleCheckbox = document.createElement('input')
-    toggleCheckbox.type = 'checkbox'
-    toggleCheckbox.checked = showClosedTabs
-    toggleCheckbox.className = 'atm-closed-tabs-checkbox'
-    toggleCheckbox.addEventListener('change', () => {
-      // Logic: Toggle the state for closed tabs
-      // Programming logic: Toggle the showClosedTabs state
-      showClosedTabs = toggleCheckbox.checked
-      // Logic: Execute search with new filter
-      // Programming logic: Re-run search with the updated filter
+    const closedTabsToggleBtn = document.createElement('button')
+    closedTabsToggleBtn.className = 'atm-footer-btn'
+    closedTabsToggleBtn.textContent = 'Show: only open'
+    closedTabsToggleBtn.title = 'Filter tabs: only open -> only closed -> both'
+    closedTabsToggleBtn.addEventListener('click', () => {
+      // Logic: Cycle filter mode through 'open' -> 'closed' -> 'both'
+      // Programming logic: Cycle tabFilterMode through open, closed, and both states
+      if (tabFilterMode === 'open') {
+        tabFilterMode = 'closed'
+        closedTabsToggleBtn.textContent = 'Show: only closed'
+      } else if (tabFilterMode === 'closed') {
+        tabFilterMode = 'both'
+        closedTabsToggleBtn.textContent = 'Show: both'
+      } else {
+        tabFilterMode = 'open'
+        closedTabsToggleBtn.textContent = 'Show: only open'
+      }
       doSearch(input.value, resultsList)
     })
-
-    const toggleText = document.createElement('span')
-    toggleText.textContent = 'Show closed'
-
-    toggleLabel.appendChild(toggleCheckbox)
-    toggleLabel.appendChild(toggleText)
 
     const ungroupedToggleLabel = document.createElement('label')
     ungroupedToggleLabel.className = 'atm-closed-tabs-toggle'
@@ -1184,7 +1182,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
     rightControls.appendChild(groupResultsBtn)
     rightControls.appendChild(sortToggleBtn)
-    rightControls.appendChild(toggleLabel)
+    rightControls.appendChild(closedTabsToggleBtn)
     rightControls.appendChild(ungroupedToggleLabel)
     rightControls.appendChild(scoreInfoSpan)
 
@@ -1259,7 +1257,8 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       } else if (mode === 'light') {
         hostEl.setAttribute('data-theme', 'light')
       } else {
-        hostEl.removeAttribute('data-theme')
+        const isDark = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        hostEl.setAttribute('data-theme', isDark ? 'dark' : 'light')
       }
     } catch { /* ignore */ }
   }
@@ -1751,14 +1750,19 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     try {
       const res = await chrome.runtime.sendMessage({
         action: 'SEARCH_TABS',
-        payload: { query },
+        payload: { 
+          query,
+          includeClosedWhenEmpty: tabFilterMode !== 'open'
+        },
       })
       if (Array.isArray(res)) {
         results = res
-        // Logik: Geschlossene Tabs filtern, wenn die Option deaktiviert ist
-        // Programming logic: Filter out closed tabs if the option is disabled
-        if (!showClosedTabs) {
+        // Logik: Tabs nach Filter-Modus filtern ('open', 'closed', 'both')
+        // Programming logic: Filter tabs by filter mode ('open', 'closed', 'both')
+        if (tabFilterMode === 'open') {
           results = results.filter(r => r.isOpen || r.isCommand)
+        } else if (tabFilterMode === 'closed') {
+          results = results.filter(r => !r.isOpen && !r.isCommand)
         }
         if (showUngroupedOnly) {
           results = results.filter(r => !r.tab || r.tab.groupId === undefined)

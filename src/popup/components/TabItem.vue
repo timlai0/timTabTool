@@ -33,15 +33,7 @@ async function switchToTab(tabId: number): Promise<void> {
  * @returns {Promise<void>}
  */
 async function closeTab(tabId: number): Promise<void> {
-  // Logic: Remove tab via Chrome API
-  try {
-    await chrome.tabs.remove(tabId)
-  } catch (err: any) {
-    const errMsg = err?.message || String(err)
-    if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
-      console.error('[timTabTool] Failed to close tab:', err)
-    }
-  }
+  await chrome.runtime.sendMessage({ action: 'CLOSE_TAB', payload: { tabId } })
 }
 
 /**

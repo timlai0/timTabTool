@@ -53,7 +53,10 @@ const def = GROUP_DEFINITIONS[props.group.category]
 const displayColor = computed(() => props.group.groupColor || def.color)
 const displayLabel = computed(() => props.group.groupName || getMessage(def.labelKey))
 
-const groupColorVar = computed(() => `var(--group-${displayColor.value})`)
+const groupColorVar = computed(() => `var(--group-${displayColor.value}, var(--group-grey))`)
+
+const LIGHT_GROUP_COLORS = new Set(['yellow', 'cyan', 'green', 'orange'])
+const badgeTextColor = computed(() => (LIGHT_GROUP_COLORS.has(displayColor.value) ? '#000000' : '#ffffff'))
 
 /**
  * Load AI Settings for estimating tokens/cost and rendering the preview
@@ -253,8 +256,13 @@ async function handleMergeGroup(event?: MouseEvent): Promise<void> {
         @click="collapsed = false"
       >
         <span
-          class="min-w-[22px] h-[22px] rounded-full flex items-center justify-center text-white text-[10px] font-bold px-1.5 tabular-nums"
-          :style="{ background: groupColorVar }"
+          class="w-[22px] h-[22px] shrink-0 rounded-full flex items-center justify-center font-bold tabular-nums leading-none border border-border select-none"
+          :class="group.tabs.length >= 100 ? 'text-[9px] tracking-tight' : 'text-[10px]'"
+          :style="{
+            background: groupColorVar,
+            color: badgeTextColor,
+            borderColor: 'var(--border)'
+          }"
         >
           {{ group.tabs.length }}
         </span>

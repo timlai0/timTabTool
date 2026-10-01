@@ -3,7 +3,8 @@ import { ref, computed, watch, onMounted, onUnmounted, toRaw } from 'vue'
 import { getMessage } from '../../shared/i18n'
 import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS, MODEL_PRICING, PROVIDER_DEFAULTS, OPENROUTER_PROVIDERS } from '../../shared/constants'
 import { getAutoBatchSize, parseMaxTokensToNumber, formatTimeAgo } from '../../shared/utils'
-import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse, AIProvider, OpenRouterProviderItem } from '../../shared/types'
+import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse, AIProvider, OpenRouterProviderItem, ClosedTabEntry } from '../../shared/types'
+import { getClosedTabs, restoreClosedTab, restoreAllClosedTabs, removeClosedTab, clearClosedTabs, restoreClosedBatch, removeClosedBatch } from '../../shared/closed-tabs-manager'
 import { AIClient, SYSTEM_PROMPT, fetchGoogleModels, fetchOpenRouterModels, fetchOpenRouterProviders, fetchOpenRouterKeyInfo, isFreeModel } from '../../shared/ai-client'
 import { APP_VERSION, BUILD_NUMBER, BUILD_HASH, BUILD_TIME } from '../../shared/version'
 
@@ -182,22 +183,26 @@ async function handleFetchGoogleModels(): Promise<void> {
  * Fetches the available models from the OpenRouter API.
  * @returns {Promise<void>}
  */
+/**
+ * Fetches the available models from the OpenRouter API.
+ * @returns {Promise<void>}
+ */
 async function handleFetchOpenRouterModels(): Promise<void> {
   fetchingOpenRouterModels.value = true
   fetchOpenRouterMessage.value = null
   fetchOpenRouterError.value = null
   try {
-    const onlyFree = !!settings.value.ai.openRouterOnlyFree
-    const models = await fetchOpenRouterModels(settings.value.ai.apiKey, settings.value.ai.endpoint, onlyFree)
+    const models = await fetchOpenRouterModels(settings.value.ai.apiKey, settings.value.ai.endpoint, false)
     if (!settings.value.ai.customModels) {
       settings.value.ai.customModels = {}
     }
     settings.value.ai.customModels.openrouter = models
-    fetchOpenRouterMessage.value = `Loaded ${models.length} live ${onlyFree ? 'free ' : ''}models from OpenRouter!`
+    const freeCount = models.filter((m: any) => isFreeModel(m.id, m)).length
+    fetchOpenRouterMessage.value = `Loaded ${models.length} live models (${freeCount} free) from OpenRouter!`
     if (!settings.value.ai.model && models.length > 0) {
-      settings.value.ai.model = models[0].id
-    } else if (onlyFree && !isFreeModel(settings.value.ai.model)) {
-      settings.value.ai.model = models[0]?.id || 'stealth/ox-alpha'
+      settings.value.ai.model = settings.value.ai.openRouterOnlyFree ? (models.find((m: any) => isFreeModel(m.id, m))?.id || models[0].id) : models[0].id
+    } else if (settings.value.ai.openRouterOnlyFree && !isFreeModel(settings.value.ai.model)) {
+      settings.value.ai.model = models.find((m: any) => isFreeModel(m.id, m))?.id || 'stealth/ox-alpha'
     }
     autoFillModelParams(settings.value.ai.model, models)
 
@@ -253,6 +258,19 @@ const isOpenRouterByokActive = computed(() => {
   return !!(settings.value.ai.openRouterByokManual || settings.value.ai.openRouterByokActive || settings.value.ai.openRouterKeyInfo?.isByokActive)
 })
 
+const KNOWN_BYOK_UPSTREAM_PROVIDERS = [
+  'openai',
+  'anthropic',
+  'google',
+  'google-vertex',
+  'amazon-bedrock',
+  'azure',
+  'mistralai',
+  'together',
+  'groq',
+  'cohere',
+]
+
 /**
  * Evaluates whether a specific OpenRouter model runs via BYOK direct billing.
  * @param {string} [modelId] - The model identifier.
@@ -260,6 +278,8 @@ const isOpenRouterByokActive = computed(() => {
  */
 function isModelByok(modelId?: string): boolean {
   if (!modelId || settings.value.ai.provider !== 'openrouter') return false
+  if (isFreeModel(modelId)) return false
+
   const manual = !!settings.value.ai.openRouterByokManual
   const active = !!settings.value.ai.openRouterByokActive
   const info = settings.value.ai.openRouterKeyInfo
@@ -280,7 +300,7 @@ function isModelByok(modelId?: string): boolean {
 
   // 3. If manual override or detected byok usage on key without granular provider list
   if (manual || (info?.byokUsage && info.byokUsage > 0) || active) {
-    return true
+    return !vendor || KNOWN_BYOK_UPSTREAM_PROVIDERS.includes(vendor)
   }
 
   return false
@@ -353,27 +373,29 @@ const openRouterProviderSelectValue = computed({
   }
 })
 
-const currentProviderModels = computed(() => {
+const allProviderModels = computed(() => {
   const provider = settings.value.ai.provider
-  let list: any[] = []
   if (provider === 'gemini' && settings.value.ai.customModels?.gemini?.length) {
-    list = settings.value.ai.customModels.gemini
+    return settings.value.ai.customModels.gemini
   } else if (provider === 'openrouter' && settings.value.ai.customModels?.openrouter?.length) {
-    list = settings.value.ai.customModels.openrouter
-  } else {
-    list = PREDEFINED_MODELS[provider] || []
+    return settings.value.ai.customModels.openrouter
   }
+  return PREDEFINED_MODELS[provider] || []
+})
 
-  if (provider === 'openrouter' && settings.value.ai.openRouterOnlyFree) {
+const currentProviderModels = computed(() => {
+  const list = allProviderModels.value
+  if (settings.value.ai.provider === 'openrouter' && settings.value.ai.openRouterOnlyFree) {
     return list.filter((m: any) => isFreeModel(m.id, m))
   }
   return list
 })
 
 const filteredProviderModels = computed(() => {
-  let list = currentProviderModels.value || []
+  const baseList = allProviderModels.value
+  let list: any[] = baseList
   if (settings.value.ai.provider === 'openrouter') {
-    if (openRouterCategoryFilter.value === 'free') {
+    if (openRouterCategoryFilter.value === 'free' || settings.value.ai.openRouterOnlyFree) {
       list = list.filter((m: any) => isFreeModel(m.id, m))
     } else if (openRouterCategoryFilter.value === 'thinking') {
       list = list.filter((m: any) => {
@@ -400,9 +422,11 @@ function applyOpenRouterPreset(modelId: string): void {
   autoFillModelParams(modelId)
 }
 
+const applyModelPreset = applyOpenRouterPreset
+
 const isPredefinedModel = computed(() => {
-  const models = currentProviderModels.value
-  return (id: string | undefined) => !!id && models.some(m => m.id === id)
+  const models = allProviderModels.value
+  return (id: string | undefined) => !!id && models.some((m: any) => m.id === id)
 })
 
 const isCustomSelected = ref(false)
@@ -643,6 +667,9 @@ onMounted(async () => {
 
   // Load AI operation logs
   loadAILogs()
+
+  // Load restorable closed tabs
+  loadClosedTabs()
 })
 
 onUnmounted(() => {
@@ -650,6 +677,83 @@ onUnmounted(() => {
     clearInterval(statusPollInterval)
   }
 })
+
+// --- Restorable Closed Tabs state and handlers ---
+const closedTabs = ref<ClosedTabEntry[]>([])
+const restoringTabId = ref<string | null>(null)
+const restoringAll = ref(false)
+
+async function loadClosedTabs(): Promise<void> {
+  try {
+    const res = await chrome.runtime.sendMessage({ action: 'GET_CLOSED_TABS' })
+    if (res && Array.isArray(res.tabs)) {
+      closedTabs.value = res.tabs
+    } else {
+      closedTabs.value = await getClosedTabs()
+    }
+  } catch {
+    closedTabs.value = await getClosedTabs()
+  }
+}
+
+async function handleRestoreTab(id: string): Promise<void> {
+  restoringTabId.value = id
+  try {
+    await chrome.runtime.sendMessage({ action: 'RESTORE_CLOSED_TAB', payload: { id } })
+  } catch {
+    await restoreClosedTab(id)
+  } finally {
+    restoringTabId.value = null
+    await loadClosedTabs()
+  }
+}
+
+const restoringBatchId = ref<string | null>(null)
+
+async function handleRestoreBatch(batchId: string): Promise<void> {
+  restoringBatchId.value = batchId
+  try {
+    await chrome.runtime.sendMessage({ action: 'RESTORE_CLOSED_BATCH', payload: { batchId } })
+  } catch {
+    await restoreClosedBatch(batchId)
+  } finally {
+    restoringBatchId.value = null
+    await loadClosedTabs()
+  }
+}
+
+async function handleRestoreAllTabs(): Promise<void> {
+  if (closedTabs.value.length === 0) return
+  restoringAll.value = true
+  try {
+    await chrome.runtime.sendMessage({ action: 'RESTORE_ALL_CLOSED_TABS' })
+  } catch {
+    await restoreAllClosedTabs()
+  } finally {
+    restoringAll.value = false
+    await loadClosedTabs()
+  }
+}
+
+async function handleDeleteClosedTab(id: string): Promise<void> {
+  try {
+    await chrome.runtime.sendMessage({ action: 'DELETE_CLOSED_TAB', payload: { id } })
+  } catch {
+    await removeClosedTab(id)
+  }
+  await loadClosedTabs()
+}
+
+async function handleClearClosedTabs(): Promise<void> {
+  if (confirm((getMessage('clearClosedTabs') || 'Clear History') + '?')) {
+    try {
+      await chrome.runtime.sendMessage({ action: 'CLEAR_CLOSED_TABS' })
+    } catch {
+      await clearClosedTabs()
+    }
+    await loadClosedTabs()
+  }
+}
 
 // --- AI Operation Logs state and handlers ---
 const aiLogs = ref<AIOperationLogEntry[]>([])
@@ -1296,6 +1400,37 @@ async function pasteConfig() {
                       title="Gemini 2.5 Flash"
                     >
                       🔥 Gemini 2.5 Flash
+                    </button>
+                  </div>
+
+                  <!-- Google Gemini Quick Model Presets -->
+                  <div v-if="settings.ai.provider === 'gemini'" class="mt-1.5 flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      @click="applyModelPreset('gemini-2.5-flash')"
+                      class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity"
+                      :style="settings.ai.model === 'gemini-2.5-flash' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
+                      title="Default thinking model with low latency"
+                    >
+                      Gemini 2.5 Flash (Thinking)
+                    </button>
+                    <button
+                      type="button"
+                      @click="applyModelPreset('gemini-2.5-pro')"
+                      class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity"
+                      :style="settings.ai.model === 'gemini-2.5-pro' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
+                      title="High capability deep reasoning model"
+                    >
+                      Gemini 2.5 Pro (Deep CoT)
+                    </button>
+                    <button
+                      type="button"
+                      @click="applyModelPreset('gemini-3.5-flash')"
+                      class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity"
+                      :style="settings.ai.model === 'gemini-3.5-flash' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
+                      title="Next-gen Gemini 3.5 Flash"
+                    >
+                      Gemini 3.5 Flash
                     </button>
                   </div>
                 </div>
@@ -2496,6 +2631,131 @@ async function pasteConfig() {
         </div>
       </div>
 
+      <!-- Restorable Closed Tabs Section -->
+      <div>
+        <div class="flex items-center justify-between px-3 mb-1.5">
+          <h2 class="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5" style="color: var(--text-secondary);">
+            <svg class="w-3.5 h-3.5 opacity-80" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3 3a.75.75 0 001.06-1.06l-2.78-2.78V5z" clip-rule="evenodd" />
+            </svg>
+            {{ getMessage('restorableClosedTabs') }} ({{ closedTabs.length }})
+          </h2>
+          <div class="flex items-center gap-1.5">
+            <button
+              v-if="closedTabs.length > 0"
+              @click="handleRestoreAllTabs"
+              :disabled="restoringAll"
+              class="px-2 py-0.5 text-[9px] font-medium rounded-sm transition-all cursor-pointer flex items-center gap-1"
+              style="background: var(--bg-primary); color: var(--accent); border: 0.5px solid var(--border);"
+              :title="getMessage('restoreAll')"
+            >
+              <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.451a.75.75 0 000-1.5H4.5a.75.75 0 00-.75.75v3.75a.75.75 0 001.5 0v-2.19l.37.37a7 7 0 101.99-9.19.75.75 0 00-.91 1.192 5.5 5.5 0 018.612 4.723z" clip-rule="evenodd" />
+              </svg>
+              {{ getMessage('restoreAll') }}
+            </button>
+            <button
+              v-if="closedTabs.length > 0"
+              @click="handleClearClosedTabs"
+              class="px-2 py-0.5 text-[9px] font-medium rounded-sm transition-all cursor-pointer"
+              style="background: var(--bg-primary); color: var(--group-red); border: 0.5px solid var(--border);"
+              :title="getMessage('clearClosedTabs')"
+            >
+              {{ getMessage('clearClosedTabs') }}
+            </button>
+          </div>
+        </div>
+
+        <div class="rounded-sm overflow-hidden p-2 space-y-2" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
+          <p class="text-[10px] px-1" style="color: var(--text-tertiary);">
+            {{ getMessage('restorableClosedTabsDesc') }}
+          </p>
+
+          <div v-if="closedTabs.length === 0" class="text-center py-6 text-[11px]" style="color: var(--text-tertiary);">
+            {{ getMessage('noClosedTabs') }}
+          </div>
+
+          <div v-else class="space-y-1 max-h-[260px] overflow-y-auto pr-0.5">
+            <div
+              v-for="entry in closedTabs"
+              :key="entry.id"
+              class="p-2 rounded-sm border flex items-center justify-between gap-2 text-xs transition-all hover:bg-black/5 dark:hover:bg-white/5"
+              style="background: var(--bg-secondary); border-color: var(--border);"
+            >
+              <div class="flex items-center gap-2 min-w-0 flex-1">
+                <!-- Favicon -->
+                <img
+                  v-if="entry.favIconUrl"
+                  :src="entry.favIconUrl"
+                  alt=""
+                  class="w-3.5 h-3.5 shrink-0 rounded-xs object-contain"
+                  @error="(e) => (e.target as HTMLElement).style.display = 'none'"
+                />
+                <svg v-else class="w-3.5 h-3.5 shrink-0 opacity-40" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM4.332 7.747a6.5 6.5 0 0110.336-2.08.75.75 0 001.06-1.06A8 8 0 102.5 10c0 .91.152 1.785.432 2.6a.75.75 0 001.4-.526 6.467 6.467 0 01-.004-.327z" clip-rule="evenodd" />
+                </svg>
+
+                <div class="min-w-0 flex-1">
+                  <div class="font-medium text-[11px] truncate" style="color: var(--text-primary);" :title="entry.title">
+                    {{ entry.title }}
+                  </div>
+                  <div class="flex items-center gap-1.5 text-[9.5px]" style="color: var(--text-tertiary);">
+                    <span class="truncate max-w-[180px]" :title="entry.url">{{ entry.url }}</span>
+                    <span>&bull;</span>
+                    <span>{{ formatTimeAgo(entry.closedAt) }}</span>
+                    <span
+                      class="px-1.5 py-0.2 rounded-xs text-[8.5px] font-medium shrink-0"
+                      :style="entry.batchId ? 'background: rgba(239, 68, 68, 0.12); color: var(--group-red); border: 0.5px solid rgba(239, 68, 68, 0.25);' : 'background: var(--hover); color: var(--accent);'"
+                    >
+                      {{ entry.source }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Action buttons -->
+              <div class="flex items-center gap-1 shrink-0">
+                <button
+                  v-if="entry.batchId"
+                  @click="handleRestoreBatch(entry.batchId)"
+                  :disabled="restoringBatchId === entry.batchId"
+                  class="px-2 py-1 text-[9.5px] font-semibold rounded-xs transition-colors cursor-pointer flex items-center gap-1 border"
+                  style="background: var(--bg-primary); color: var(--accent); border-color: var(--border);"
+                  :title="getMessage('restoreBatch')"
+                >
+                  <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.451a.75.75 0 000-1.5H4.5a.75.75 0 00-.75.75v3.75a.75.75 0 001.5 0v-2.19l.37.37a7 7 0 101.99-9.19.75.75 0 00-.91 1.192 5.5 5.5 0 018.612 4.723z" clip-rule="evenodd" />
+                  </svg>
+                  <span>{{ getMessage('restoreBatch') }}</span>
+                </button>
+                <button
+                  @click="handleRestoreTab(entry.id)"
+                  :disabled="restoringTabId === entry.id"
+                  class="px-2 py-1 text-[9.5px] font-semibold rounded-xs transition-colors cursor-pointer flex items-center gap-1"
+                  style="background: var(--accent); color: #fff;"
+                  :title="getMessage('restoreTab')"
+                >
+                  <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
+                  </svg>
+                  <span>{{ getMessage('restoreTab') }}</span>
+                </button>
+                <button
+                  @click="handleDeleteClosedTab(entry.id)"
+                  class="p-1 rounded-xs hover:bg-black/10 dark:hover:bg-white/10 transition-colors opacity-60 hover:opacity-100 cursor-pointer"
+                  style="color: var(--group-red);"
+                  title="Remove from history"
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.21-2.35.398a.75.75 0 00-.56.885l.135.539a.75.75 0 00.885.56 25.1 25.1 0 011.89-.37v10.55A2.75 2.75 0 008.75 19h2.5a2.75 2.75 0 002.75-2.75V5.727c.642.096 1.272.22 1.89.37a.75.75 0 00.885-.56l.135-.539a.75.75 0 00-.56-.885 26.6 26.6 0 00-2.35-.398V3.75A2.75 2.75 0 0011.25 1h-2.5zm1.25 1.5c.69 0 1.25.56 1.25 1.25v.266c-.83-.04-1.67-.04-2.5 0V3.75c0-.69.56-1.25 1.25-1.25z" clip-rule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- AI Operation Logs Section -->
       <div>
         <div class="flex items-center justify-between px-3 mb-1.5">
@@ -2600,7 +2860,7 @@ async function pasteConfig() {
                   </span>
                   <button
                     @click.stop="deleteSingleLog(log.id)"
-                    class="p-1 rounded hover:bg-red-500/10 text-red-500 transition-colors cursor-pointer"
+                    class="p-1 rounded-sm hover:bg-red-500/10 text-red-500 transition-colors cursor-pointer"
                     title="Delete log"
                   >
                     <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
@@ -2622,18 +2882,18 @@ async function pasteConfig() {
               <!-- Expanded Log Details -->
               <div v-if="expandedLogId === log.id" class="p-2.5 border-t space-y-2 text-[10.5px] font-mono leading-relaxed select-text" style="border-color: var(--border); background: var(--bg-primary);">
                 <!-- Error Details if failed -->
-                <div v-if="log.error" class="p-2 rounded bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 space-y-1">
+                <div v-if="log.error" class="p-2 rounded-sm bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 space-y-1">
                   <div class="font-bold flex items-center gap-1">
                     <span>CRASH / ERROR DETAILS:</span>
                   </div>
                   <div>Message: {{ log.error.message }}</div>
-                  <div v-if="log.error.stack" class="whitespace-pre-wrap text-[9.5px] opacity-90 overflow-x-auto p-1 bg-black/5 dark:bg-black/30 rounded">
+                  <div v-if="log.error.stack" class="whitespace-pre-wrap text-[9.5px] opacity-90 overflow-x-auto p-1 bg-black/5 dark:bg-black/30 rounded-sm">
                     {{ log.error.stack }}
                   </div>
                 </div>
 
                 <!-- Config & Metadata -->
-                <div class="grid grid-cols-2 gap-2 p-2 rounded bg-black/5 dark:bg-white/5 text-[10px]">
+                <div class="grid grid-cols-2 gap-2 p-2 rounded-sm bg-black/5 dark:bg-white/5 text-[10px]">
                   <div><span class="opacity-60">Provider:</span> {{ log.configSnapshot?.provider }}</div>
                   <div><span class="opacity-60">Model:</span> {{ log.configSnapshot?.model || 'default' }}</div>
                   <div><span class="opacity-60">Duration:</span> {{ log.durationMs ? formatDurationMs(log.durationMs) : 'In progress' }}</div>
@@ -2642,7 +2902,7 @@ async function pasteConfig() {
                 </div>
 
                 <!-- Token Usage & Cost Comparison Card (Estimated vs Actual) -->
-                <div v-if="log.tokenUsage" class="p-2.5 rounded bg-black/5 dark:bg-white/5 space-y-1.5 text-[9.5px]">
+                <div v-if="log.tokenUsage" class="p-2.5 rounded-sm bg-black/5 dark:bg-white/5 space-y-1.5 text-[9.5px]">
                   <div class="font-bold flex items-center justify-between opacity-90 border-b border-black/10 dark:border-white/10 pb-1">
                     <span>TOKEN USAGE & COST COMPARISON:</span>
                     <span class="text-[8.5px] font-normal opacity-70 font-sans">Estimated vs Actual Response</span>
@@ -2676,7 +2936,7 @@ async function pasteConfig() {
                 <!-- Execution Steps -->
                 <div>
                   <div class="font-semibold text-[10px] mb-1 opacity-80">Execution Steps ({{ log.steps.length }}):</div>
-                  <div class="space-y-1 max-h-36 overflow-y-auto p-1.5 rounded bg-black/5 dark:bg-white/5 text-[9.5px]">
+                  <div class="space-y-1 max-h-36 overflow-y-auto p-1.5 rounded-sm bg-black/5 dark:bg-white/5 text-[9.5px]">
                     <div v-for="(step, idx) in log.steps" :key="idx" class="flex items-start gap-1.5">
                       <span class="opacity-50 shrink-0">{{ new Date(step.timestamp).toLocaleTimeString() }}</span>
                       <span class="font-bold text-accent shrink-0">[{{ step.step }}]</span>
@@ -2688,7 +2948,7 @@ async function pasteConfig() {
                 <!-- Prompts Used -->
                 <div v-if="log.prompts.userPrompt || log.prompts.systemPrompt">
                   <div class="font-semibold text-[10px] mb-1 opacity-80">Prompts Used:</div>
-                  <div class="space-y-1 max-h-32 overflow-y-auto p-1.5 rounded bg-black/5 dark:bg-white/5 text-[9.5px] whitespace-pre-wrap">
+                  <div class="space-y-1 max-h-32 overflow-y-auto p-1.5 rounded-sm bg-black/5 dark:bg-white/5 text-[9.5px] whitespace-pre-wrap">
                     <div v-if="log.prompts.systemPrompt"><span class="font-bold">System:</span> {{ log.prompts.systemPrompt }}</div>
                     <div v-if="log.prompts.userPrompt"><span class="font-bold">User:</span> {{ log.prompts.userPrompt }}</div>
                   </div>
@@ -2700,7 +2960,7 @@ async function pasteConfig() {
                     <span>Raw API Requests & Responses ({{ log.rawResponses.length }}):</span>
                   </div>
                   <div class="space-y-2">
-                    <div v-for="(resp, idx) in log.rawResponses" :key="idx" class="p-2 rounded bg-black/5 dark:bg-white/5 space-y-2 text-[9.5px]">
+                    <div v-for="(resp, idx) in log.rawResponses" :key="idx" class="p-2 rounded-sm bg-black/5 dark:bg-white/5 space-y-2 text-[9.5px]">
                       <div class="flex items-center justify-between font-bold">
                         <span class="text-accent">Batch #{{ resp.batchIndex }} (Status {{ resp.statusCode ?? 'ERR' }}) - {{ formatDurationMs(resp.responseTimeMs) }}</span>
                       </div>
@@ -2732,7 +2992,7 @@ async function pasteConfig() {
                       </div>
 
                       <!-- Raw Response Body -->
-                      <div v-if="resp.responseBody" class="max-h-44 overflow-y-auto whitespace-pre-wrap p-1.5 bg-black/5 dark:bg-black/40 rounded opacity-90 font-mono text-[9px]">
+                      <div v-if="resp.responseBody" class="max-h-44 overflow-y-auto whitespace-pre-wrap p-1.5 bg-black/5 dark:bg-black/40 rounded-sm opacity-90 font-mono text-[9px]">
                         {{ resp.responseBody }}
                       </div>
                       <div v-if="resp.error" class="text-red-500 font-bold">
@@ -2745,7 +3005,7 @@ async function pasteConfig() {
                 <!-- Input Tabs -->
                 <div v-if="log.tabsInput && log.tabsInput.length > 0">
                   <div class="font-semibold text-[10px] mb-1 opacity-80">Input Tabs ({{ log.tabsInput.length }}):</div>
-                  <div class="max-h-32 overflow-y-auto space-y-1 p-1.5 rounded bg-black/5 dark:bg-white/5 text-[9.5px]">
+                  <div class="max-h-32 overflow-y-auto space-y-1 p-1.5 rounded-sm bg-black/5 dark:bg-white/5 text-[9.5px]">
                     <div v-for="tab in log.tabsInput" :key="tab.index" class="truncate">
                       <span class="opacity-50">#{{ tab.index }}</span> <span class="font-medium">{{ tab.title }}</span> <span class="opacity-60 text-[8.5px]">({{ tab.url }})</span>
                     </div>

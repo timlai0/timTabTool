@@ -30,6 +30,7 @@
   --group-yellow: #FF9F0A;
   --group-pink: #FF2D55;
   --group-grey: #8E8E93;
+  --group-orange: #FF9500;
 }
 
 .dark {
@@ -58,6 +59,7 @@
   --group-yellow: #FFD60A;
   --group-pink: #FF375F;
   --group-grey: #98989D;
+  --group-orange: #FF9F0A;
 }
 
 /* ─── Base Styles ─── */

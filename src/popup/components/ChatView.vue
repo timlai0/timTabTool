@@ -45,6 +45,19 @@ const activeModel = ref<string>("")
 const activeProvider = ref<string>("")
 const chatContainer = ref<HTMLElement | null>(null)
 const elapsedMs = ref<number>(0)
+const selectedScope = ref<string | number>(props.currentWindowId ?? "all")
+
+const totalScopeTabs = computed(() => {
+  if (selectedScope.value === "all") {
+    return props.allWindows.reduce((acc, w) => acc + w.groups.reduce((gAcc, g) => gAcc + g.tabs.length, 0), 0)
+  }
+  const target = props.allWindows.find(w => w.windowId === selectedScope.value)
+  return target ? target.groups.reduce((acc, g) => acc + g.tabs.length, 0) : targetTabCount.value
+})
+
+const estimatedTokens = computed(() => {
+  return Math.round(totalScopeTabs.value * 35)
+})
 
 let timerInterval: ReturnType<typeof setInterval> | null = null
 let currentAbortController: AbortController | null = null
@@ -244,10 +257,16 @@ async function askQuestion() {
 
     const client = new AIClient(aiConfig, currentAbortController.signal)
     
-    const targetWin = props.allWindows.find(w => w.windowId === props.currentWindowId) || props.allWindows[0]
+    const targetWindows = selectedScope.value === "all"
+      ? props.allWindows
+      : [props.allWindows.find(w => w.windowId === selectedScope.value) || props.allWindows[0]].filter(Boolean)
+
     let tabsContext = ""
-    if (targetWin) {
-      for (const group of targetWin.groups) {
+    for (const win of targetWindows) {
+      if (selectedScope.value === "all" && props.allWindows.length > 1) {
+        tabsContext += `\n## Window #${win.windowId}\n`
+      }
+      for (const group of win.groups) {
         const groupName = group.groupName || (group.isPinnedGroup ? "Pinned Tabs" : "Ungrouped Tabs")
         tabsContext += `\n### Group: ${groupName}\n`
         for (const tab of group.tabs) {
@@ -330,10 +349,10 @@ function formatMarkdown(text: string) {
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.*?)\*/g, "<em>$1</em>")
     .replace(/~~(.*?)~~/g, "<del class='opacity-50'>$1</del>")
-    .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded text-[10px] font-mono bg-black/10 dark:bg-white/10">$1</code>')
+    .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded-sm text-[10px] font-mono bg-black/10 dark:bg-white/10">$1</code>')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, title, url) => {
       const isClicked = clickedUrls.value.includes(url)
-      const clickedClasses = isClicked ? "line-through opacity-40 text-gray-400" : "text-blue-500 hover:underline"
+      const clickedClasses = isClicked ? "line-through opacity-40 text-t-secondary" : "text-accent hover:underline"
       return `<a href="${url}" class="${clickedClasses} cursor-pointer transition-all duration-150" data-url="${url}">${title}</a>`
     })
     .replace(/\n\n/g, '<div class="h-1.5"></div>')
@@ -350,8 +369,8 @@ function handleLinkClick(e: MouseEvent) {
         clickedUrls.value.push(url)
         chrome.storage.local.set({ chatClickedUrls: clickedUrls.value })
       }
-      target.classList.add("line-through", "opacity-40", "text-gray-400")
-      target.classList.remove("text-blue-500")
+      target.classList.add("line-through", "opacity-40")
+      target.classList.remove("text-accent")
 
       const targetWin = props.allWindows.find(w => w.windowId === props.currentWindowId) || props.allWindows[0]
       let foundTab = null
@@ -393,13 +412,14 @@ async function copyToClipboard(text: string) {
 </script>
 
 <template>
-  <div class="flex flex-col h-full bg-white dark:bg-[#1a1a1a] text-black dark:text-white" style="background: var(--bg-primary); color: var(--text-primary);">
+  <div class="flex flex-col h-full bg-primary text-t-primary" style="background: var(--bg-primary); color: var(--text-primary);">
     <!-- Header -->
-    <header class="flex items-center gap-3 px-4 py-2.5 justify-between shrink-0" style="box-shadow: 0 0.5px 0 var(--border);">
-      <div class="flex items-center gap-2.5">
+    <header class="flex items-center justify-between px-3 py-2 shrink-0 border-b border-border/40 gap-1.5" style="box-shadow: 0 0.5px 0 var(--border);">
+      <!-- Left: Back button + Title + Scope Selector -->
+      <div class="flex items-center gap-1.5 min-w-0 flex-1">
         <button 
           @click="emit('back')" 
-          class="w-6 h-6 flex items-center justify-center rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors -ml-1 cursor-pointer shrink-0"
+          class="w-6 h-6 flex items-center justify-center rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors -ml-0.5 cursor-pointer shrink-0"
           title="Go Back"
         >
           <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
@@ -408,25 +428,41 @@ async function copyToClipboard(text: string) {
         </button>
         <div class="flex items-center gap-1.5 min-w-0">
           <h2 class="text-[13px] font-semibold tracking-tight shrink-0">Window Chat</h2>
-          <span v-if="targetWin" class="text-[9.5px] px-1.5 py-0.5 rounded opacity-75 font-mono truncate" style="background: var(--hover); border: 1px solid var(--border);">
+          <span v-if="targetWin" class="text-[9.5px] px-1.5 py-0.5 rounded-sm opacity-75 font-mono truncate" style="background: var(--hover); border: 1px solid var(--border);">
             {{ targetWin.windowId === props.allWindows[0]?.windowId ? 'Current Win' : 'Win #' + targetWin.windowId }} · {{ targetTabCount }} tabs
           </span>
-          <span v-if="activeModel" class="text-[9px] px-1.5 py-0.5 rounded font-mono truncate hidden sm:inline" :style="isLoading ? 'background: rgba(0,122,255,0.15); color: var(--accent); border: 1px solid var(--accent);' : 'background: var(--hover); border: 1px solid var(--border); color: var(--text-secondary);'">
+          <span v-if="activeModel" class="text-[9px] px-1.5 py-0.5 rounded-sm font-mono truncate hidden sm:inline" :style="isLoading ? 'background: rgba(0,122,255,0.15); color: var(--accent); border: 1px solid var(--accent);' : 'background: var(--hover); border: 1px solid var(--border); color: var(--text-secondary);'">
             {{ activeModel }}
           </span>
         </div>
+
+        <!-- Scope selector badge / dropdown -->
+        <select 
+          v-model="selectedScope" 
+          class="text-[10.5px] font-medium px-1.5 py-0.5 rounded-sm border bg-transparent cursor-pointer focus:outline-none max-w-[125px] truncate"
+          style="border-color: var(--border); color: var(--text-primary);"
+          title="Switch target window scope"
+        >
+          <option value="all" class="bg-primary text-t-primary" style="background: var(--bg-primary); color: var(--text-primary);">
+            All Windows ({{ props.allWindows.reduce((acc, w) => acc + w.groups.reduce((gAcc, g) => gAcc + g.tabs.length, 0), 0) }} tabs)
+          </option>
+          <option v-for="w in props.allWindows" :key="w.windowId" :value="w.windowId" class="bg-primary text-t-primary" style="background: var(--bg-primary); color: var(--text-primary);">
+            {{ w.windowId === props.allWindows[0]?.windowId ? 'Current Win' : 'Win #' + w.windowId }} ({{ w.groups.reduce((a, g) => a + g.tabs.length, 0) }})
+          </option>
+        </select>
       </div>
 
-      <div class="flex items-center gap-2">
+      <!-- Right: Effort + Clear + Pinned Tab actions -->
+      <div class="flex items-center gap-1 shrink-0">
         <!-- Reasoning Effort Selector -->
         <div class="flex items-center gap-1 text-[11px]" title="Reasoning effort for this chat session">
           <span class="text-[10px] opacity-60">Effort:</span>
           <select 
             v-model="reasoningEffort" 
-            class="text-[10.5px] px-1.5 py-0.5 rounded border bg-transparent cursor-pointer focus:outline-none"
+            class="text-[10.5px] px-1.5 py-0.5 rounded-sm border bg-transparent cursor-pointer focus:outline-none"
             style="border-color: var(--border); color: var(--text-primary);"
           >
-            <option v-for="opt in REASONING_OPTIONS" :key="opt.value" :value="opt.value" class="bg-white dark:bg-[#1a1a1a]">
+            <option v-for="opt in REASONING_OPTIONS" :key="opt.value" :value="opt.value" class="bg-primary text-t-primary" style="background: var(--bg-primary); color: var(--text-primary);">
               {{ opt.label }}
             </option>
           </select>
@@ -464,16 +500,16 @@ async function copyToClipboard(text: string) {
     <div class="flex flex-col p-3 gap-2.5 flex-1 overflow-hidden">
       <!-- Saved Prompts Row -->
       <div v-if="savedPrompts.length > 0" class="flex flex-wrap gap-1.5 overflow-y-auto max-h-14 scrollbar-thin shrink-0">
-        <div v-for="prompt in savedPrompts" :key="prompt" class="group flex items-center gap-1 rounded-full px-2 py-0.5 text-[9.5px] font-medium border" style="background: var(--bg-elevated); border-color: var(--border);">
+        <div v-for="prompt in savedPrompts" :key="prompt" class="group flex items-center gap-1 rounded-sm px-2 py-0.5 text-[9.5px] font-medium border" style="background: var(--bg-elevated); border-color: var(--border);">
           <button @click="useSavedPrompt(prompt)" class="truncate max-w-[130px] cursor-pointer hover:text-[var(--accent)] transition-colors" style="color: var(--text-secondary);" :title="prompt">{{ prompt }}</button>
-          <button @click="removePrompt(prompt)" class="opacity-0 group-hover:opacity-100 transition-opacity ml-0.5 cursor-pointer hover:text-red-500" style="color: var(--text-tertiary);" title="Remove">
+          <button @click="removePrompt(prompt)" class="opacity-0 group-hover:opacity-100 transition-opacity ml-0.5 cursor-pointer hover:text-[var(--group-red)]" style="color: var(--text-tertiary);" title="Remove">
             <svg class="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
           </button>
         </div>
       </div>
 
       <!-- Messages Log -->
-      <div ref="chatContainer" class="flex-1 overflow-y-auto scrollbar-thin rounded border p-3 flex flex-col gap-3 text-[12px]" style="border-color: var(--border); background: var(--bg-elevated);">
+      <div ref="chatContainer" class="flex-1 overflow-y-auto scrollbar-thin rounded-sm border p-3 flex flex-col gap-3 text-[12px]" style="border-color: var(--border); background: var(--bg-elevated);">
         <div v-if="messages.length === 0 && !isLoading && !errorMsg" class="opacity-50 italic text-center my-auto">
           Ask a question about your tabs (e.g. "Which tabs contain urgent things?")
         </div>
@@ -482,14 +518,14 @@ async function copyToClipboard(text: string) {
         <template v-for="msg in messages" :key="msg.id">
           <!-- User message -->
           <div v-if="msg.role === 'user'" class="flex justify-end">
-            <div class="max-w-[85%] rounded-lg px-3 py-1.5 text-[11.5px] leading-relaxed shadow-xs" style="background: var(--accent); color: white;">
+            <div class="max-w-[85%] rounded-sm px-3 py-1.5 text-[11.5px] leading-relaxed shadow-xs text-white" style="background: var(--accent);">
               {{ msg.content }}
             </div>
           </div>
 
           <!-- Assistant message -->
           <div v-else class="flex flex-col gap-1.5 max-w-[95%]">
-            <div class="rounded-lg p-2.5 border leading-relaxed bg-black/5 dark:bg-white/5" style="border-color: var(--border);" v-html="formatMarkdown(msg.content)" @click="handleLinkClick"></div>
+            <div class="rounded-sm p-2.5 border leading-relaxed bg-black/5 dark:bg-white/5" style="border-color: var(--border);" v-html="formatMarkdown(msg.content)" @click="handleLinkClick"></div>
             
             <!-- Inspector button for Request & Reasoning -->
             <div v-if="msg.reasoning || msg.fullRequest" class="flex items-center gap-2 text-[10px]">
@@ -506,14 +542,14 @@ async function copyToClipboard(text: string) {
             </div>
 
             <!-- Inspector Details Panel -->
-            <div v-if="msg.showDetails" class="flex flex-col gap-2 p-2.5 rounded border text-[10.5px] bg-black/5 dark:bg-white/5" style="border-color: var(--border);">
+            <div v-if="msg.showDetails" class="flex flex-col gap-2 p-2.5 rounded-sm border text-[10.5px] bg-black/5 dark:bg-white/5" style="border-color: var(--border);">
               <!-- Reasoning Trace -->
               <div v-if="msg.reasoning" class="flex flex-col gap-1">
-                <span class="font-semibold opacity-80 flex items-center gap-1">
-                  <svg class="w-3 h-3 text-amber-500" viewBox="0 0 20 20" fill="currentColor"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14H8v-1h4v1zM6 8a4 4 0 118 0c0 1.098-.5 2.1-1.3 2.7-.4.3-.7.8-.7 1.3H8c0-.5-.3-1-.7-1.3C6.5 10.1 6 9.1 6 8z" /></svg>
+                <span class="font-semibold opacity-80 flex items-center gap-1" style="color: var(--group-yellow);">
+                  <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor" style="color: var(--group-yellow);"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14H8v-1h4v1zM6 8a4 4 0 118 0c0 1.098-.5 2.1-1.3 2.7-.4.3-.7.8-.7 1.3H8c0-.5-.3-1-.7-1.3C6.5 10.1 6 9.1 6 8z" /></svg>
                   Model Reasoning Trace:
                 </span>
-                <div class="p-2 rounded bg-black/10 dark:bg-white/10 font-mono text-[9.5px] whitespace-pre-wrap max-h-32 overflow-y-auto scrollbar-thin opacity-85 leading-tight">
+                <div class="p-2 rounded-sm bg-black/10 dark:bg-white/10 font-mono text-[9.5px] whitespace-pre-wrap max-h-32 overflow-y-auto scrollbar-thin opacity-85 leading-tight">
                   {{ msg.reasoning }}
                 </div>
               </div>
@@ -524,13 +560,13 @@ async function copyToClipboard(text: string) {
                   <span class="font-semibold opacity-80">Full Request Prompt:</span>
                   <button 
                     @click="copyToClipboard(msg.fullRequest)"
-                    class="text-[9px] px-1.5 py-0.5 rounded border hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
+                    class="text-[9px] px-1.5 py-0.5 rounded-sm border hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
                     style="border-color: var(--border);"
                   >
                     Copy Prompt
                   </button>
                 </div>
-                <div class="p-2 rounded bg-black/10 dark:bg-white/10 font-mono text-[9.5px] whitespace-pre-wrap max-h-36 overflow-y-auto scrollbar-thin opacity-85 leading-tight">
+                <div class="p-2 rounded-sm bg-black/10 dark:bg-white/10 font-mono text-[9.5px] whitespace-pre-wrap max-h-36 overflow-y-auto scrollbar-thin opacity-85 leading-tight">
                   {{ msg.fullRequest }}
                 </div>
               </div>
@@ -541,7 +577,7 @@ async function copyToClipboard(text: string) {
         <!-- Live Loading / Streaming Assistant View -->
         <div v-if="isLoading" class="flex flex-col gap-2 max-w-[95%]">
           <!-- Active Status Bar -->
-          <div class="flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded font-medium border" style="background: var(--hover); color: var(--accent); border-color: var(--border);">
+          <div class="flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded-sm font-medium border" style="background: var(--hover); color: var(--accent); border-color: var(--border);">
             <div class="flex items-center gap-2 min-w-0">
               <span class="animate-spin w-3 h-3 border-2 border-current border-t-transparent rounded-full shrink-0" />
               <span class="truncate">{{ liveContent ? `Streaming from ${activeModel || 'AI'}...` : `Analyzing ${targetTabCount} tabs with ${activeModel || 'AI'}...` }}</span>
@@ -550,8 +586,8 @@ async function copyToClipboard(text: string) {
           </div>
 
           <!-- Streaming Live Reasoning Trace if available -->
-          <div v-if="liveReasoning" class="p-2.5 rounded border border-dashed text-[10px] flex flex-col gap-1.5" style="border-color: var(--border); background: var(--bg-elevated);">
-            <div class="font-semibold text-amber-500 flex items-center gap-1.5">
+          <div v-if="liveReasoning" class="p-2.5 rounded-sm border border-dashed text-[10px] flex flex-col gap-1.5" style="border-color: var(--border); background: var(--bg-elevated);">
+            <div class="font-semibold flex items-center gap-1.5" style="color: var(--group-yellow);">
               <svg class="w-3.5 h-3.5 animate-pulse" viewBox="0 0 20 20" fill="currentColor"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14H8v-1h4v1zM6 8a4 4 0 118 0c0 1.098-.5 2.1-1.3 2.7-.4.3-.7.8-.7 1.3H8c0-.5-.3-1-.7-1.3C6.5 10.1 6 9.1 6 8z" /></svg>
               <span>Thinking & Reasoning:</span>
             </div>
@@ -561,23 +597,23 @@ async function copyToClipboard(text: string) {
           </div>
 
           <!-- Live Streaming Text Content (rendered markdown + typing cursor) -->
-          <div v-if="liveContent" class="rounded-lg p-2.5 border leading-relaxed bg-black/5 dark:bg-white/5" style="border-color: var(--border);">
+          <div v-if="liveContent" class="rounded-sm p-2.5 border leading-relaxed bg-black/5 dark:bg-white/5" style="border-color: var(--border);">
             <span v-html="formatMarkdown(liveContent)" @click="handleLinkClick"></span>
-            <span class="inline-block w-1.5 h-3.5 ml-0.5 align-middle bg-blue-500 animate-pulse"></span>
+            <span class="inline-block w-1.5 h-3.5 ml-0.5 align-middle animate-pulse" style="background: var(--accent);"></span>
           </div>
 
           <!-- Waiting for initial tokens animation -->
-          <div v-else-if="!liveReasoning" class="p-3 rounded-lg border bg-black/5 dark:bg-white/5 flex items-center gap-2.5" style="border-color: var(--border);">
+          <div v-else-if="!liveReasoning" class="p-3 rounded-sm border bg-black/5 dark:bg-white/5 flex items-center gap-2.5" style="border-color: var(--border);">
             <div class="flex items-center gap-1.5 shrink-0">
-              <span class="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0ms;"></span>
-              <span class="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 150ms;"></span>
-              <span class="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 300ms;"></span>
+              <span class="w-2 h-2 rounded-full animate-bounce" style="background: var(--accent); animation-delay: 0ms;"></span>
+              <span class="w-2 h-2 rounded-full animate-bounce" style="background: var(--accent); animation-delay: 150ms;"></span>
+              <span class="w-2 h-2 rounded-full animate-bounce" style="background: var(--accent); animation-delay: 300ms;"></span>
             </div>
             <span class="text-[11px] opacity-70">Waiting for model response...</span>
           </div>
         </div>
 
-        <div v-if="errorMsg" class="p-2.5 rounded bg-red-500/10 border border-red-500/20 text-red-500 text-[11px] flex items-start gap-2">
+        <div v-if="errorMsg" class="p-2.5 rounded-sm border text-[11px] flex items-start gap-2" style="background: rgba(255, 59, 48, 0.08); border-color: rgba(255, 59, 48, 0.2); color: var(--group-red);">
           <svg class="w-4 h-4 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
           </svg>
@@ -589,20 +625,31 @@ async function copyToClipboard(text: string) {
       </div>
 
       <!-- Input and Controls -->
-      <div class="flex flex-col gap-2 shrink-0">
+      <div class="flex flex-col gap-1.5 shrink-0">
+        <!-- Scope & Model info row -->
+        <div class="flex items-center justify-between text-[10px] px-1 opacity-70">
+          <div class="flex items-center gap-1.5 min-w-0 truncate">
+            <span v-if="activeModel" class="font-mono text-[9px] px-1 py-0.2 rounded-sm border bg-black/5 dark:bg-white/5" style="border-color: var(--border);">
+              {{ activeModel }}
+            </span>
+            <span class="truncate">Scope: {{ totalScopeTabs }} tabs</span>
+          </div>
+          <span class="shrink-0">Est. Input: ~{{ estimatedTokens }} tokens</span>
+        </div>
+
         <textarea 
           v-model="userPrompt" 
           @keydown.enter.exact.prevent="askQuestion"
           :placeholder="isLoading ? 'AI is generating response...' : 'Ask a question about your tabs...'"
           :disabled="isLoading"
-          class="w-full text-[12px] p-2 rounded border focus:outline-none focus:ring-1 resize-none h-16 scrollbar-thin disabled:opacity-60"
+          class="w-full text-[12px] p-2 rounded-sm border focus:outline-none focus:ring-1 resize-none h-16 scrollbar-thin disabled:opacity-60"
           style="border-color: var(--border); background: var(--bg-primary); color: var(--text-primary); --tw-ring-color: var(--accent);"
         />
         <div class="flex items-center gap-2">
           <button 
             @click="savePrompt"
             :disabled="isLoading || !userPrompt.trim() || savedPrompts.includes(userPrompt.trim())"
-            class="px-3 py-1.5 rounded text-[11px] font-medium transition-opacity disabled:opacity-50 cursor-pointer border"
+            class="px-3 py-1.5 rounded-sm text-[11px] font-medium transition-opacity disabled:opacity-50 cursor-pointer border"
             style="background: var(--bg-elevated); color: var(--text-primary); border-color: var(--border);"
             title="Save this prompt for future use"
           >
@@ -612,7 +659,8 @@ async function copyToClipboard(text: string) {
           <button 
             v-if="isLoading"
             @click="stopGenerating"
-            class="flex-1 py-1.5 rounded text-[12px] font-medium cursor-pointer flex items-center justify-center gap-1.5 bg-red-500/20 text-red-500 hover:bg-red-500/30 border border-red-500/30 transition-colors"
+            class="flex-1 py-1.5 rounded-sm text-[12px] font-medium cursor-pointer flex items-center justify-center gap-1.5 transition-colors border"
+            style="color: var(--group-red); background: rgba(255, 59, 48, 0.12); border-color: rgba(255, 59, 48, 0.25);"
             title="Stop generating response"
           >
             <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -624,8 +672,8 @@ async function copyToClipboard(text: string) {
             v-else
             @click="askQuestion"
             :disabled="!userPrompt.trim()"
-            class="flex-1 py-1.5 rounded text-[12px] font-medium transition-opacity disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
-            style="background: var(--accent); color: white;"
+            class="flex-1 py-1.5 rounded-sm text-[12px] font-medium transition-opacity disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5 text-white"
+            style="background: var(--accent);"
           >
             <span>Send</span>
           </button>

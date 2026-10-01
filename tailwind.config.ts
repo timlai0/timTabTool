@@ -25,6 +25,7 @@ export default {
         'g-yellow': 'var(--group-yellow)',
         'g-pink': 'var(--group-pink)',
         'g-grey': 'var(--group-grey)',
+        'g-orange': 'var(--group-orange)',
       },
       boxShadow: {
         'xs': 'var(--shadow-xs)',
@@ -32,10 +33,13 @@ export default {
         'card': 'var(--shadow-card)',
       },
       borderRadius: {
+        DEFAULT: '2px',
         'card': '2px',
         'btn': '2px',
+        'xs': '1px',
         'sm': '2px',
         'md': '2px',
+        'lg': '2px',
       },
       transitionTimingFunction: {
         'apple': 'cubic-bezier(0.25, 0.1, 0.25, 1)',

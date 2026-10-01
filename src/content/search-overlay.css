@@ -13,6 +13,15 @@
   -webkit-font-smoothing: antialiased;
 }
 
+:host([data-standalone="true"]) {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  z-index: 1 !important;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -271,7 +280,7 @@
   align-items: center;
   justify-content: center;
   padding: 2px 7px;
-  border-radius: 4px;
+  border-radius: 2px;
   font-size: 10px;
   font-weight: 500;
   white-space: nowrap;
@@ -279,7 +288,7 @@
   color: #1D1D1F;
   border: 0.5px solid rgba(0, 0, 0, 0.08);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.15s cubic-bezier(0.25, 0.1, 0.25, 1);
   user-select: none;
   line-height: 1.4;
 }
@@ -287,6 +296,10 @@
 .atm-footer-btn:hover {
   background: rgba(0, 0, 0, 0.06);
   color: #000000;
+}
+
+.atm-footer-btn:active {
+  transform: scale(0.99);
 }
 
 .atm-closed-tabs-toggle {
@@ -412,11 +425,40 @@
 
   .atm-footer {
     border-top-color: rgba(255, 255, 255, 0.08);
+    color: #98989D;
+  }
+
+  .atm-footer-btn {
+    background: #2C2C2E;
+    color: #F5F5F7;
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .atm-footer-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #FFFFFF;
+  }
+
+  .atm-footer-btn:active {
+    transform: scale(0.99);
+  }
+
+  .atm-closed-tabs-toggle {
+    color: #98989D;
+  }
+
+  .atm-closed-tabs-toggle:hover {
+    color: #F5F5F7;
+  }
+
+  .atm-closed-tabs-checkbox {
+    accent-color: #0A84FF;
   }
 
   .atm-footer kbd {
     background: #2C2C2E;
     border-color: rgba(255, 255, 255, 0.08);
+    color: #98989D;
   }
 
   .atm-empty {
@@ -513,6 +555,10 @@
   color: #FFFFFF;
 }
 
+:host([data-theme="dark"]) .atm-footer-btn:active {
+  transform: scale(0.99);
+}
+
 :host([data-theme="dark"]) .atm-closed-tabs-toggle {
   color: #98989D;
 }
@@ -553,18 +599,6 @@
 .atm-score-info {
   position: relative;
   cursor: help;
-  color: #86868B;
-  background: #F5F5F7;
-  padding: 2px 7px;
-  border-radius: 2px;
-  font-size: 10px;
-  font-weight: 500;
-  user-select: none;
-}
-
-.atm-score-info:hover {
-  background: rgba(0, 0, 0, 0.06);
-  color: #1D1D1F;
 }
 
 .atm-score-tooltip {
@@ -577,7 +611,7 @@
   border: 0.5px solid rgba(0, 0, 0, 0.08);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
   padding: 12px;
-  border-radius: 4px;
+  border-radius: 2px;
   font-size: 11px;
   color: #1D1D1F;
   text-align: left;
@@ -618,14 +652,6 @@
 
 /* Dark mode overrides */
 @media (prefers-color-scheme: dark) {
-  .atm-score-info {
-    background: #2C2C2E;
-    color: #98989D;
-  }
-  .atm-score-info:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #F5F5F7;
-  }
   .atm-score-tooltip {
     background: #1C1C1E;
     border-color: rgba(255, 255, 255, 0.08);
@@ -639,16 +665,6 @@
   .atm-score-tooltip li span {
     color: #0A84FF;
   }
-}
-
-:host([data-theme="dark"]) .atm-score-info {
-  background: #2C2C2E;
-  color: #98989D;
-}
-
-:host([data-theme="dark"]) .atm-score-info:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #F5F5F7;
 }
 
 :host([data-theme="dark"]) .atm-score-tooltip {
@@ -713,7 +729,7 @@
   color: #FF453A;
 }
 
-/* ─── Premium Integrated Details Panel ─── */
+/* ─── Integrated Details Panel ─── */
 
 .atm-details-panel {
   flex-shrink: 0;
@@ -877,7 +893,7 @@
   color: #98989D;
 }
 
-/* ─── Premium Integrated Progress Bar ─── */
+/* ─── Integrated Progress Bar ─── */
 
 .atm-progress-container {
   width: 100%;
@@ -923,7 +939,7 @@
   color: #3A3A3C;
   background: rgba(0, 0, 0, 0.05);
   border: 0.5px solid rgba(0, 0, 0, 0.12);
-  border-radius: 6px;
+  border-radius: 2px;
   padding: 4px 10px;
   cursor: pointer;
   outline: none;
@@ -951,7 +967,7 @@
   color: #FF3B30;
   background: rgba(255, 59, 48, 0.08);
   border: 0.5px solid rgba(255, 59, 48, 0.2);
-  border-radius: 6px;
+  border-radius: 2px;
   padding: 4px 10px;
   cursor: pointer;
   outline: none;
@@ -979,7 +995,7 @@
   color: #D97706;
   background: rgba(245, 158, 11, 0.12);
   border: 0.5px solid rgba(245, 158, 11, 0.35);
-  border-radius: 6px;
+  border-radius: 2px;
   padding: 4px 10px;
   cursor: pointer;
   outline: none;
@@ -1002,7 +1018,7 @@
   color: #007AFF;
   background: rgba(0, 122, 255, 0.08);
   border: 0.5px solid rgba(0, 122, 255, 0.2);
-  border-radius: 6px;
+  border-radius: 2px;
   padding: 4px 10px;
   cursor: pointer;
   outline: none;
@@ -1239,7 +1255,7 @@
   color: #3A3A3C;
   background: rgba(0, 0, 0, 0.05);
   border: 0.5px solid rgba(0, 0, 0, 0.1);
-  border-radius: 12px;
+  border-radius: 4px;
   padding: 4px 10px;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
