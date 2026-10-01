@@ -1235,6 +1235,162 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(finalReasoning).toContain('grouping by topic.')
   })
 
+  it('streams live reasoning and emits progress updates via SSE for Gemini', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'gemini',
+      apiKey: 'AIza-gemini-test-key',
+      model: 'gemini-2.5-flash',
+      reasoningEffort: 'medium',
+    }
+    const client = new AIClient(config)
+
+    const encoder = new TextEncoder()
+    const sseChunks = [
+      'data: {"candidates":[{"content":{"parts":[{"text":"Evaluating quantum physics tabs...","thought":true}]},"finishReason":null}]}\n\n',
+      'data: {"candidates":[{"content":{"parts":[{"text":" Creating dedicated research cluster.","thought":true}]},"finishReason":null}]}\n\n',
+      'data: {"candidates":[{"content":{"parts":[{"text":"[{\\"name\\":\\"Quantum Physics\\",\\"color\\":\\"cyan\\",\\"tabIndices\\":[1]}]"}]},"finishReason":"STOP"}]}\n\n',
+    ]
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of sseChunks) {
+          controller.enqueue(encoder.encode(chunk))
+        }
+        controller.close()
+      }
+    })
+
+    const mockResponse = new Response(stream, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    let capturedUrl = ''
+    let capturedBody: any = null
+    const mockFetch = vi.fn().mockImplementation((url: string, init: RequestInit) => {
+      capturedUrl = url
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(mockResponse)
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const progressUpdates: any[] = []
+    const tabs = [{ url: 'https://quantum-physics.org', title: 'Quantum Physics' }]
+
+    const groups = await client.groupTabsFreely(tabs, undefined, (update: AIProgressUpdate) => {
+      progressUpdates.push(update)
+    })
+
+    expect(groups.length).toBe(1)
+    expect(groups[0].name).toBe('Quantum Physics')
+    expect(capturedUrl).toContain('streamGenerateContent')
+    expect(capturedUrl).toContain('alt=sse')
+    expect(capturedBody.generationConfig?.thinkingConfig).toEqual({ thinkingBudget: 4096 })
+
+    const reasoningUpdates = progressUpdates.filter(u => u.liveReasoning)
+    expect(reasoningUpdates.length).toBeGreaterThan(0)
+    const finalReasoning = reasoningUpdates[reasoningUpdates.length - 1].liveReasoning
+    expect(finalReasoning).toContain('Evaluating quantum physics tabs')
+    expect(finalReasoning).toContain('Creating dedicated research cluster.')
+    expect(reasoningUpdates[reasoningUpdates.length - 1].reasoningSnippet).toBeDefined()
+  })
+
+  it('extracts thought parts in Gemini non-streaming fallback and emits progress updates', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'gemini',
+      apiKey: 'AIza-gemini-test-key',
+      model: 'gemini-2.5-flash',
+    }
+    const client = new AIClient(config)
+
+    const mockResponseData = {
+      candidates: [
+        {
+          content: {
+            parts: [
+              { text: 'Analyzing tabs for optimal grouping...', thought: true },
+              { text: '[{"name":"Dev Docs","color":"green","tabIndices":[1]}]' },
+            ],
+          },
+          finishReason: 'STOP',
+        },
+      ],
+    }
+
+    const mockResponse = new Response(JSON.stringify(mockResponseData), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse))
+
+    const progressUpdates: any[] = []
+    const tabs = [{ url: 'https://dev.example.com', title: 'Dev Docs' }]
+
+    const groups = await client.groupTabsFreely(tabs, undefined, (update: AIProgressUpdate) => {
+      progressUpdates.push(update)
+    })
+
+    expect(groups.length).toBe(1)
+    expect(groups[0].name).toBe('Dev Docs')
+
+    const reasoningUpdates = progressUpdates.filter(u => u.liveReasoning)
+    expect(reasoningUpdates.length).toBeGreaterThan(0)
+    expect(reasoningUpdates[0].liveReasoning).toBe('Analyzing tabs for optimal grouping...')
+    expect(reasoningUpdates[0].reasoningSnippet).toBe('Analyzing tabs for optimal grouping...')
+  })
+
+  it('automatically recovers and retries without thinkingConfig when Gemini returns 400 Bad Request on unsupported model', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'gemini',
+      apiKey: 'AIza-gemini-test-key',
+      model: 'gemini-1.5-flash',
+      reasoningEffort: 'medium',
+    }
+    const client = new AIClient(config)
+
+    let callCount = 0
+    let secondRequestBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      callCount++
+      if (callCount === 1) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ error: { message: 'thinkingConfig is not supported for gemini-1.5-flash' } }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          )
+        )
+      }
+      secondRequestBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: '[{"name":"Docs","color":"blue","tabIndices":[1]}]' }],
+                },
+                finishReason: 'STOP',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const tabs = [{ url: 'https://docs.example.com', title: 'Docs' }]
+    const groups = await client.groupTabsFreely(tabs)
+    expect(groups.length).toBe(1)
+    expect(groups[0].name).toBe('Docs')
+    expect(callCount).toBe(2)
+    expect(secondRequestBody.generationConfig?.thinkingConfig).toBeUndefined()
+  })
+
   it('returns partial aggregated results if aborted during later batches in groupTabsFreely', async () => {
     const abortController = new AbortController()
     const config: AIConfig = {
@@ -1408,5 +1564,294 @@ describe('OpenRouter Provider & Model Fetching', () => {
       'google/gemini-2.5-flash',
     ])
   })
+
+  it('omits Authorization header when apiKey is empty or whitespace', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: '   ',
+      model: 'stealth/ox-alpha',
+    }
+    const client = new AIClient(config)
+
+    let capturedHeaders: any
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedHeaders = init.headers
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: 'OK' } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const result = await client.testConnection()
+    expect(result.ok).toBe(true)
+    expect(capturedHeaders['Authorization']).toBeUndefined()
+    expect(capturedHeaders['HTTP-Referer']).toBe('https://tabpilot.app')
+  })
+
+  it('automatically retries without response_format when provider returns 400 parameter error', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-test-key',
+      model: 'z-ai/glm-5.2:free',
+    }
+    const client = new AIClient(config)
+
+    let callCount = 0
+    let lastRequestBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      callCount++
+      lastRequestBody = JSON.parse(init.body as string)
+      if (callCount === 1) {
+        // Return 400 saying response_format not supported
+        return Promise.resolve(
+          new Response('Provider does not support response_format: json_object', { status: 400 })
+        )
+      }
+      // Second call succeeds
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify([{ name: 'Dev', color: 'green', tabIndices: [1] }]) } }]
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const result = await client.groupTabsFreely([{ url: 'https://github.com', title: 'GitHub' }])
+    expect(result.length).toBe(1)
+    expect(result[0].name).toBe('Dev')
+    expect(callCount).toBe(2)
+    expect(lastRequestBody.response_format).toBeUndefined()
+  })
+
+  it('automatically retries with reduced max_tokens when provider returns 400 token limit error', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: 'sk-or-test-key',
+      model: 'liquid/lfm-2.5-2.6b:free',
+      maxTokens: 16384,
+    }
+    const client = new AIClient(config)
+
+    let callCount = 0
+    let lastRequestBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      callCount++
+      lastRequestBody = JSON.parse(init.body as string)
+      if (callCount === 1) {
+        return Promise.resolve(
+          new Response('max_tokens is too large for model context_length limit', { status: 400 })
+        )
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify([{ name: 'Docs', color: 'pink', tabIndices: [1] }]) } }]
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const result = await client.groupTabsFreely([{ url: 'https://docs.com', title: 'Docs' }])
+    expect(result.length).toBe(1)
+    expect(result[0].name).toBe('Docs')
+    expect(callCount).toBe(2)
+    expect(lastRequestBody.max_tokens).toBe(4096)
+  })
+
+  describe('reviewAndRegroupTabs', () => {
+    it('returns empty array when tabs array is empty', async () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key' }
+      const client = new AIClient(config)
+      const res = await client.reviewAndRegroupTabs([], ['Work'])
+      expect(res).toEqual([])
+    })
+
+    it('parses review decisions correctly with KEEP, existing group, new group, and ungroup', async () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key' }
+      const client = new AIClient(config)
+
+      const mockResponse = JSON.stringify([
+        { index: 1, group: 'KEEP' },
+        { index: 2, group: 'Shopping' },
+        { index: 3, group: 'NEW', newGroupName: 'Travel', newGroupColor: 'blue' },
+        { index: 4, group: '_ungrouped_' }
+      ])
+
+      const mockFetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: mockResponse } }]
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+      vi.stubGlobal('fetch', mockFetch)
+
+      const tabs = [
+        { url: 'https://work.com', title: 'Work PR', currentGroup: 'Work' },
+        { url: 'https://amazon.com', title: 'Store', currentGroup: 'Work' },
+        { url: 'https://hotel.com', title: 'Hotel booking' },
+        { url: 'https://random.com', title: 'Misc', currentGroup: 'Work' }
+      ]
+
+      const decisions = await client.reviewAndRegroupTabs(tabs, ['Work', 'Shopping'])
+      expect(decisions).toHaveLength(4)
+      expect(decisions[0]).toEqual({ index: 0, group: 'KEEP', newGroupName: undefined, newGroupColor: undefined })
+      expect(decisions[1]).toEqual({ index: 1, group: 'Shopping', newGroupName: undefined, newGroupColor: undefined })
+      expect(decisions[2]).toEqual({ index: 2, group: 'NEW', newGroupName: 'Travel', newGroupColor: 'blue' })
+      expect(decisions[3]).toEqual({ index: 3, group: '_ungrouped_', newGroupName: undefined, newGroupColor: undefined })
+    })
+
+    it('falls back to KEEP when JSON parsing completely fails', async () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key' }
+      const client = new AIClient(config)
+
+      const mockFetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'This is not json at all' } }]
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+      vi.stubGlobal('fetch', mockFetch)
+
+      const tabs = [
+        { url: 'https://site1.com', title: 'Site 1', currentGroup: 'Work' },
+        { url: 'https://site2.com', title: 'Site 2', currentGroup: 'Research' }
+      ]
+
+      const decisions = await client.reviewAndRegroupTabs(tabs, ['Work', 'Research'])
+      expect(decisions).toEqual([
+        { index: 0, group: 'KEEP' },
+        { index: 1, group: 'KEEP' }
+      ])
+    })
+
+    it('retries with stripped titles when PROHIBITED_CONTENT error occurs', async () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key', maxRetries: 1 }
+      const client = new AIClient(config)
+
+      let callCount = 0
+      const mockFetch = vi.fn().mockImplementation(() => {
+        callCount++
+        if (callCount === 1) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ error: { message: 'PROHIBITED_CONTENT: blocked by policy' } }),
+              { status: 400, headers: { 'Content-Type': 'application/json' } }
+            )
+          )
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{ message: { content: JSON.stringify([{ index: 1, group: 'KEEP' }]) } }]
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        )
+      })
+      vi.stubGlobal('fetch', mockFetch)
+
+      const tabs = [{ url: 'https://sensitive.com', title: 'Secret Doc', currentGroup: 'Confidential' }]
+      const decisions = await client.reviewAndRegroupTabs(tabs, ['Confidential'])
+      expect(decisions).toHaveLength(1)
+      expect(decisions[0].group).toBe('KEEP')
+      expect(callCount).toBe(2)
+    })
+
+    it('estimates tokens and cost accurately for regroup type', () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key' }
+      const est = AIClient.estimateCostAndTokens(config, 20, 'regroup', undefined, undefined, ['Work', 'Dev'])
+      expect(est.tokens).toBeGreaterThan(0)
+      expect(typeof est.costStr).toBe('string')
+    })
+
+    it('treats unknown group name as NEW group instead of forcing KEEP when tab is already grouped', async () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key' }
+      const client = new AIClient(config)
+
+      const mockResponse = JSON.stringify([
+        { index: 1, group: 'Cooking' }
+      ])
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: mockResponse } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      ))
+
+      const tabs = [{ url: 'https://recipes.com', title: 'Pasta Recipe', currentGroup: 'Work' }]
+      const decisions = await client.reviewAndRegroupTabs(tabs, ['Work', 'Dev'])
+      expect(decisions).toHaveLength(1)
+      expect(decisions[0].group).toBe('NEW')
+      expect(decisions[0].newGroupName).toBe('Cooking')
+    })
+
+    it('defaults omitted tabs in partial AI response to KEEP', async () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key' }
+      const client = new AIClient(config)
+
+      // AI only returned decision for tab 2
+      const mockResponse = JSON.stringify([
+        { index: 2, group: 'NEW', newGroupName: 'Travel' }
+      ])
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: mockResponse } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      ))
+
+      const tabs = [
+        { url: 'https://site1.com', title: 'Site 1', currentGroup: 'Work' },
+        { url: 'https://site2.com', title: 'Site 2', currentGroup: 'Work' },
+        { url: 'https://site3.com', title: 'Site 3', currentGroup: 'Work' }
+      ]
+      const decisions = await client.reviewAndRegroupTabs(tabs, ['Work'])
+      expect(decisions).toHaveLength(3)
+      expect(decisions[0]).toEqual({ index: 0, group: 'KEEP' })
+      expect(decisions[1]).toEqual({ index: 1, group: 'NEW', newGroupName: 'Travel', newGroupColor: undefined })
+      expect(decisions[2]).toEqual({ index: 2, group: 'KEEP' })
+    })
+
+    it('handles 0-based indices returned by LLM seamlessly', async () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key' }
+      const client = new AIClient(config)
+
+      const mockResponse = JSON.stringify([
+        { index: 0, group: 'KEEP' },
+        { index: 1, group: 'Work' }
+      ])
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: mockResponse } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      ))
+
+      const tabs = [
+        { url: 'https://site1.com', title: 'Site 1', currentGroup: 'Dev' },
+        { url: 'https://site2.com', title: 'Site 2', currentGroup: 'Dev' }
+      ]
+      const decisions = await client.reviewAndRegroupTabs(tabs, ['Dev', 'Work'])
+      expect(decisions).toHaveLength(2)
+      expect(decisions[0]).toEqual({ index: 0, group: 'KEEP', newGroupName: undefined, newGroupColor: undefined })
+      expect(decisions[1]).toEqual({ index: 1, group: 'Work', newGroupName: undefined, newGroupColor: undefined })
+    })
+  })
 })
+
 

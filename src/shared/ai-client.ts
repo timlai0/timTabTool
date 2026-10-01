@@ -1,4 +1,4 @@
-import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory, AIProgressCallback, AIProgressUpdate, OperationRetryInfo, OpenRouterProviderItem, OpenRouterKeyInfo } from './types'
+import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory, AIProgressCallback, AIProgressUpdate, OperationRetryInfo, OpenRouterProviderItem, OpenRouterKeyInfo, ReviewAndRegroupTabInput, ReviewAndRegroupDecision } from './types'
 import type { AILogger } from './ai-logger'
 import { DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS, DEFAULT_ENDPOINTS } from './constants'
 import { getAutoBatchSize, formatTimeAgo, extractDomain, extractJsonSubstring } from './utils'
@@ -53,7 +53,7 @@ export class AIClient {
   static estimateCostAndTokens(
     config: AIConfig,
     tabsCount: number,
-    type: 'group' | 'split' | 'merge' | 'classify',
+    type: 'group' | 'split' | 'merge' | 'classify' | 'regroup',
     modelOverride?: string,
     providerOverride?: string,
     existingGroupNames: string[] = []
@@ -85,6 +85,11 @@ export class AIClient {
       userPrompt = config.mergePrompt?.trim() || 'Analyze the browser tabs of this group and decide if they should be merged into one of the other existing tab groups. Choose the best fitting existing group from the list. If none of the existing groups are a good fit and this group should remain separate, respond with "KEEP". Be conservative about merging; only merge if the topics are highly related.'
     } else if (type === 'classify') {
       userPrompt = config.classifyPrompt?.trim() || 'You are classifying new tabs. Decide if each new tab belongs to one of the existing groups or if a new group should be created. Be conservative about creating new groups.'
+      if (existingGroupNames.length > 0) {
+        baseUserPromptExtra = '\n\nExisting Groups: ' + existingGroupNames.join(', ')
+      }
+    } else if (type === 'regroup') {
+      userPrompt = 'You are reviewing the last tabs to verify if each tab is currently in the correct group, and regroup it if needed.'
       if (existingGroupNames.length > 0) {
         baseUserPromptExtra = '\n\nExisting Groups: ' + existingGroupNames.join(', ')
       }
@@ -766,6 +771,237 @@ Only output the JSON array.`
   }
 
   /**
+   * Format tab including current group for regrouping review prompt.
+   */
+  private formatTabWithGroupForPrompt(
+    tab: ReviewAndRegroupTabInput,
+    index: number,
+    stripTitles = false,
+  ): string {
+    const base = this.formatTabForPrompt(tab, index, stripTitles)
+    const groupLabel = tab.currentGroup
+      ? ` [Current group: "${tab.currentGroup}"]`
+      : ' [Current group: None (ungrouped)]'
+    return `${base}${groupLabel}`
+  }
+
+  /**
+   * Check if tabs (up to 20 tabs) are in correct groups, and regroup them if needed.
+   * @param {ReviewAndRegroupTabInput[]} tabs - Tabs to review.
+   * @param {string[]} existingGroupNames - Names of existing tab groups in the window.
+   * @param {boolean} [stripTitles] - Whether to omit tab titles for privacy/moderation.
+   * @param {AIProgressCallback} [onProgress] - Optional progress callback.
+   * @returns {Promise<ReviewAndRegroupDecision[]>} Decisions for each tab.
+   */
+  async reviewAndRegroupTabs(
+    tabs: ReviewAndRegroupTabInput[],
+    existingGroupNames: string[],
+    stripTitles = false,
+    onProgress?: AIProgressCallback | ((current: number, total: number) => void)
+  ): Promise<ReviewAndRegroupDecision[]> {
+    if (tabs.length === 0) return []
+
+    const reportProgress = (update: AIProgressUpdate) => {
+      if (typeof onProgress === 'function') {
+        (onProgress as any)(update)
+      }
+    }
+    const modelName = this.config.model || DEFAULT_MODELS[this.config.provider] || 'default'
+
+    reportProgress({
+      stage: 'querying',
+      statusText: `Reviewing ${tabs.length} tab${tabs.length === 1 ? '' : 's'} with ${modelName}...`,
+      totalTabs: tabs.length,
+      processedTabs: 0,
+    })
+
+    const results = await this.reviewAndRegroupBatch(tabs, 0, existingGroupNames, stripTitles, reportProgress)
+
+    reportProgress({
+      stage: 'parsing',
+      statusText: `Finished reviewing ${tabs.length} tabs`,
+      totalTabs: tabs.length,
+      processedTabs: tabs.length,
+    })
+
+    return results
+  }
+
+  /**
+   * Helper to build review & regroup prompt.
+   */
+  private buildReviewAndRegroupPrompt(
+    tabs: ReviewAndRegroupTabInput[],
+    existingGroupNames: string[],
+    stripTitles = false
+  ): string {
+    const tabDescriptions = tabs
+      .map((t, i) => this.formatTabWithGroupForPrompt(t, i + 1, stripTitles))
+      .join('\n')
+    const existingList = existingGroupNames.length > 0 ? existingGroupNames.map((n) => `"${n}"`).join(', ') : 'None'
+
+    return `You are a browser tab organizer. Review the following tabs to verify if each tab is currently in the correct group, and regroup it if needed.
+
+Existing tab groups: ${existingList}.
+
+Tabs to check:
+${tabDescriptions}
+
+For each tab:
+1. If its current group accurately matches its content/topic, KEEP it in that group: {"index": 1, "group": "KEEP"}.
+2. If it belongs in a different existing group, move it: {"index": 2, "group": "existing group name"}.
+3. If it does not belong in any existing group and should be grouped, create a new group: {"index": 3, "group": "NEW", "newGroupName": "...", "newGroupColor": "blue"}.
+4. If it should be ungrouped, set group to "_ungrouped_": {"index": 4, "group": "_ungrouped_"}.
+
+Be conservative: if a tab's current group is already appropriate, keep it in that group. Only regroup tabs that are clearly misplaced or ungrouped.
+Valid colors: grey, blue, red, yellow, green, pink, purple, cyan.
+
+JSON format: [{"index":1,"group":"KEEP"}] or [{"index":2,"group":"existing group name"}] or [{"index":3,"group":"NEW","newGroupName":"...","newGroupColor":"blue"}]
+Only output the JSON array.`
+  }
+
+  /**
+   * Execute batch review and regroup call.
+   */
+  private async reviewAndRegroupBatch(
+    tabs: ReviewAndRegroupTabInput[],
+    offset: number,
+    existingGroupNames: string[],
+    stripTitles = false,
+    onProgress?: (update: AIProgressUpdate) => void
+  ): Promise<ReviewAndRegroupDecision[]> {
+    const prompt = this.buildReviewAndRegroupPrompt(tabs, existingGroupNames, stripTitles)
+    const onRetry = (retry: OperationRetryInfo) => {
+      onProgress?.({
+        stage: 'retrying',
+        statusText: `Rate limit / transient error. Retrying in ${(retry.delayMs / 1000).toFixed(0)}s (Attempt ${retry.attempt}/${retry.maxRetries})...`,
+        retry,
+      })
+    }
+
+    try {
+      const response = await this.chat(prompt, true, 1, onRetry, onProgress)
+      return this.parseReviewAndRegroupResponse(response, tabs, offset, existingGroupNames)
+    } catch (err) {
+      const msg = (err as Error).message
+      if (!stripTitles && (msg.includes('PROHIBITED_CONTENT') || msg.includes('Prohibited Use policy') || msg.includes('promptFeedback'))) {
+        console.warn('[timTabTool] Prompt blocked due to sensitive content in regroup review, retrying with URLs only...')
+        return this.reviewAndRegroupBatch(tabs, offset, existingGroupNames, true, onProgress)
+      }
+      console.error('[timTabTool] Regroup review failed:', err)
+      throw err
+    }
+  }
+
+  /**
+   * Parse the model JSON response for review and regroup decisions.
+   */
+  private parseReviewAndRegroupResponse(
+    response: string,
+    tabs: ReviewAndRegroupTabInput[],
+    offset: number,
+    existingGroupNames: string[]
+  ): ReviewAndRegroupDecision[] {
+    const extracted = extractJsonSubstring(response, 'array')
+    if (!extracted.startsWith('[')) return this.fallbackAllToKeep(tabs, offset)
+
+    let parsed: Array<{ index: number; group: string; newGroupName?: string; newGroupColor?: string }>
+    try {
+      parsed = JSON.parse(extracted.replace(/,\s*([}\]])/g, '$1'))
+    } catch {
+      try {
+        parsed = JSON.parse(repairTruncatedJson(extracted))
+      } catch {
+        return this.fallbackAllToKeep(tabs, offset)
+      }
+    }
+
+    return this.mapParsedDecisions(parsed, tabs, offset, existingGroupNames)
+  }
+
+  /**
+   * Resolve group name and new group name from raw AI response fields.
+   */
+  private resolveTargetGroupName(
+    rawGroup: string,
+    rawNewName: string | undefined,
+    existingGroupNames: string[]
+  ): { group: string; newGroupName?: string } {
+    if (rawGroup.toUpperCase() === 'KEEP') return { group: 'KEEP' }
+    if (rawGroup.toLowerCase() === '_ungrouped_' || rawGroup.toUpperCase() === 'UNGROUPED') return { group: '_ungrouped_' }
+    if (rawGroup.toUpperCase() === 'NEW') {
+      const name = rawNewName || 'New Group'
+      const match = existingGroupNames.find((n) => n.toLowerCase() === name.toLowerCase())
+      return match ? { group: match } : { group: 'NEW', newGroupName: name }
+    }
+    if (rawGroup.length > 0) {
+      const match = existingGroupNames.find((n) => n.toLowerCase() === rawGroup.toLowerCase())
+      return match ? { group: match } : { group: 'NEW', newGroupName: rawNewName || rawGroup }
+    }
+    return { group: 'KEEP' }
+  }
+
+  /**
+   * Resolve a single parsed item into a structured decision.
+   */
+  private resolveParsedDecision(
+    item: { index: number; group?: string; newGroupName?: string; newGroupColor?: string },
+    tabIdx: number,
+    offset: number,
+    existingGroupNames: string[]
+  ): ReviewAndRegroupDecision {
+    const rawGroup = typeof item.group === 'string' ? item.group.trim() : ''
+    const rawNewName = typeof item.newGroupName === 'string' ? item.newGroupName.trim() : undefined
+    const rawColor = typeof item.newGroupColor === 'string' ? item.newGroupColor.trim().toLowerCase() : undefined
+    const validColor = VALID_COLORS.includes(rawColor as ChromeTabGroupColor) ? (rawColor as ChromeTabGroupColor) : undefined
+
+    const { group, newGroupName } = this.resolveTargetGroupName(rawGroup, rawNewName, existingGroupNames)
+
+    return {
+      index: tabIdx + offset,
+      group,
+      newGroupName: newGroupName ? newGroupName.slice(0, MAX_GROUP_NAME_LENGTH) : undefined,
+      newGroupColor: validColor,
+    }
+  }
+
+  /**
+   * Map parsed items into clean decisions, ensuring every tab has a valid decision.
+   */
+  private mapParsedDecisions(
+    parsed: Array<{ index: number; group?: string; newGroupName?: string; newGroupColor?: string }>,
+    tabs: ReviewAndRegroupTabInput[],
+    offset: number,
+    existingGroupNames: string[]
+  ): ReviewAndRegroupDecision[] {
+    const isZeroBased = parsed.some((item) => item?.index === 0) && !parsed.some((item) => item?.index === tabs.length)
+    const decisionsByIndex = new Map<number, ReviewAndRegroupDecision>()
+
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue
+      const rawIdx = typeof item.index === 'number' ? item.index : parseInt(String(item.index), 10)
+      if (isNaN(rawIdx)) continue
+      const tabIdx = isZeroBased ? rawIdx : rawIdx - 1
+      if (tabIdx < 0 || tabIdx >= tabs.length) continue
+
+      const decision = this.resolveParsedDecision(item, tabIdx, offset, existingGroupNames)
+      decisionsByIndex.set(tabIdx, decision)
+    }
+
+    return tabs.map((_, i) => decisionsByIndex.get(i) || { index: i + offset, group: 'KEEP' })
+  }
+
+  /**
+   * Fallback returning KEEP for all tabs.
+   */
+  private fallbackAllToKeep(tabs: ReviewAndRegroupTabInput[], offset = 0): ReviewAndRegroupDecision[] {
+    return tabs.map((_, i) => ({
+      index: i + offset,
+      group: 'KEEP',
+    }))
+  }
+
+  /**
    * Decide if the given group should be merged into one of the other existing groups.
    * Returns the name of the target group to merge into, or "KEEP" if it should remain separate.
    */
@@ -1080,9 +1316,9 @@ Only output the JSON object.`
       if (this.config.provider === 'openrouter') {
         if (this.config.openrouterProvider && this.config.openrouterProvider.trim() !== '' && this.config.openrouterProvider !== 'auto') {
           openrouterProviderObj.order = [this.config.openrouterProvider.trim()]
-        }
-        if (this.config.openrouterAllowFallbacks !== undefined) {
-          openrouterProviderObj.allow_fallbacks = this.config.openrouterAllowFallbacks
+          if (this.config.openrouterAllowFallbacks !== undefined) {
+            openrouterProviderObj.allow_fallbacks = this.config.openrouterAllowFallbacks
+          }
         }
         if (this.config.openrouterRequireParams !== undefined) {
           openrouterProviderObj.require_parameters = this.config.openrouterRequireParams
@@ -1111,33 +1347,71 @@ Only output the JSON object.`
         reqMaxTokens = 16384
       }
 
-      const response = await fetch(endpoint, {
+      const requestBody: any = {
+        model,
+        messages,
+        temperature: 0,
+        max_tokens: reqMaxTokens,
+        ...(onProgress && { stream: true }),
+        ...(jsonMode && { response_format: { type: 'json_object' } }),
+        ...(this.config.provider === 'openrouter' && this.config.reasoningEffort && this.config.reasoningEffort !== 'auto' && {
+          reasoning: {
+            effort: this.config.reasoningEffort
+          }
+        }),
+        ...(this.config.provider === 'openrouter' && Object.keys(openrouterProviderObj).length > 0 && {
+          provider: openrouterProviderObj
+        }),
+        ...(this.config.provider === 'openrouter' && openrouterFallbackList && openrouterFallbackList.length > 1 && {
+          models: openrouterFallbackList
+        }),
+        ...(this.config.provider === 'openai' && this.config.reasoningEffort && this.config.reasoningEffort !== 'auto' && {
+          reasoning_effort: this.config.reasoningEffort
+        }),
+      }
+
+      let response = await fetch(endpoint, {
         method: 'POST',
         headers: this.getHeaders(),
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: 0,
-          max_tokens: reqMaxTokens,
-          ...(onProgress && { stream: true }),
-          ...(jsonMode && { response_format: { type: 'json_object' } }),
-          ...(this.config.provider === 'openrouter' && this.config.reasoningEffort && this.config.reasoningEffort !== 'auto' && {
-            reasoning: {
-              effort: this.config.reasoningEffort
-            }
-          }),
-          ...(this.config.provider === 'openrouter' && Object.keys(openrouterProviderObj).length > 0 && {
-            provider: openrouterProviderObj
-          }),
-          ...(this.config.provider === 'openrouter' && openrouterFallbackList && openrouterFallbackList.length > 1 && {
-            models: openrouterFallbackList
-          }),
-          ...(this.config.provider === 'openai' && this.config.reasoningEffort && this.config.reasoningEffort !== 'auto' && {
-            reasoning_effort: this.config.reasoningEffort
-          }),
-        }),
+        body: JSON.stringify(requestBody),
         signal: this.signal,
       })
+
+      // If 400 Bad Request due to unsupported response_format or parameter on OpenRouter/custom, retry without response_format
+      if (!response.ok && response.status === 400 && requestBody.response_format) {
+        const peekText = await response.clone().text().catch(() => '')
+        const lowerPeek = peekText.toLowerCase()
+        if (
+          lowerPeek.includes('response_format') ||
+          lowerPeek.includes('json_object') ||
+          lowerPeek.includes('parameter') ||
+          lowerPeek.includes('schema') ||
+          lowerPeek.includes('not supported')
+        ) {
+          delete requestBody.response_format
+          response = await fetch(endpoint, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify(requestBody),
+            signal: this.signal,
+          })
+        }
+      }
+
+      // If 400 Bad Request due to max_tokens exceeding provider output limits, retry with safe 4096 tokens
+      if (!response.ok && response.status === 400 && requestBody.max_tokens > 4096) {
+        const peekText = await response.clone().text().catch(() => '')
+        const lowerPeek = peekText.toLowerCase()
+        if (lowerPeek.includes('max_tokens') || lowerPeek.includes('maximum tokens') || lowerPeek.includes('context_length')) {
+          requestBody.max_tokens = 4096
+          response = await fetch(endpoint, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify(requestBody),
+            signal: this.signal,
+          })
+        }
+      }
 
       const duration = Date.now() - startTime
 
@@ -1383,19 +1657,157 @@ Only output the JSON object.`
    * @param {number} [batchIndex]
    * @returns {Promise<string>}
    */
+  /**
+   * Consumes a Gemini Server-Sent Events (SSE) stream and extracts thought / reasoning deltas.
+   * @param {Response} response
+   * @param {Function} [onProgress]
+   * @returns {Promise<{ text: string; accumulatedReasoning: string; finishReason?: string }>}
+   */
+  private async readGeminiSseStream(
+    response: Response,
+    onProgress?: (update: AIProgressUpdate) => void
+  ): Promise<{ text: string; accumulatedReasoning: string; finishReason?: string }> {
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+    let text = ''
+    let accumulatedReasoning = ''
+    let finishReason: string | undefined
+    let lastProgressEmit = 0
+
+    const processLine = (line: string) => {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith(':') || trimmed === 'data: [DONE]') return
+      if (!trimmed.startsWith('data: ')) return
+
+      try {
+        const json = JSON.parse(trimmed.slice(6))
+        if (json.promptFeedback?.blockReason === 'PROHIBITED_CONTENT') {
+          throw new Error(`PROHIBITED_CONTENT: ${json.promptFeedback.blockReasonMessage || 'Prohibited content blocked.'}`)
+        }
+        if (json.error) {
+          throw new Error(`Gemini stream error: ${json.error.message || JSON.stringify(json.error)}`)
+        }
+
+        const candidate = json.candidates?.[0]
+        if (!candidate) return
+
+        if (candidate.finishReason) {
+          finishReason = candidate.finishReason
+        }
+
+        const parts: any[] = candidate.content?.parts || []
+        let chunkHasDelta = false
+
+        for (const part of parts) {
+          if (part.thought) {
+            const rDelta = typeof part.thought === 'string' ? part.thought : (part.text || '')
+            if (rDelta) {
+              accumulatedReasoning += rDelta
+              chunkHasDelta = true
+            }
+          } else if (part.text) {
+            text += part.text
+            chunkHasDelta = true
+          }
+        }
+
+        if (chunkHasDelta && onProgress) {
+          const now = Date.now()
+          if (now - lastProgressEmit > 40) {
+            lastProgressEmit = now
+            const cleanSnippet = accumulatedReasoning.trim()
+            onProgress({
+              stage: 'evaluating',
+              liveContent: text,
+              liveReasoning: accumulatedReasoning,
+              reasoningSnippet: cleanSnippet.length > 120 ? '...' + cleanSnippet.slice(-120) : cleanSnippet,
+            })
+          }
+        }
+      } catch (e: any) {
+        if (e.message?.startsWith('PROHIBITED_CONTENT') || e.message?.startsWith('Gemini stream error')) throw e
+      }
+    }
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        processLine(line)
+      }
+    }
+    if (buffer.trim()) {
+      processLine(buffer)
+    }
+
+    if (onProgress && (accumulatedReasoning || text)) {
+      const cleanSnippet = accumulatedReasoning.trim()
+      onProgress({
+        stage: 'evaluating',
+        liveContent: text,
+        liveReasoning: accumulatedReasoning,
+        reasoningSnippet: cleanSnippet.length > 120 ? '...' + cleanSnippet.slice(-120) : cleanSnippet,
+      })
+    }
+
+    return { text, accumulatedReasoning, finishReason }
+  }
+
+  /**
+   * Parses non-streaming JSON response from Gemini API.
+   * @param {any} data
+   * @param {Function} [onProgress]
+   * @returns {{ text: string; accumulatedReasoning: string; finishReason?: string }}
+   */
+  private parseGeminiJsonResponse(
+    data: any,
+    onProgress?: (update: AIProgressUpdate) => void
+  ): { text: string; accumulatedReasoning: string; finishReason?: string } {
+    if (data.promptFeedback?.blockReason === 'PROHIBITED_CONTENT') {
+      throw new Error(`PROHIBITED_CONTENT: ${data.promptFeedback.blockReasonMessage || 'Prohibited content blocked.'}`)
+    }
+
+    const candidate = data.candidates?.[0]
+    const finishReason = candidate?.finishReason
+    const parts: any[] = candidate?.content?.parts || []
+    const thoughtParts = parts.filter((p: any) => p.thought)
+    const textParts = parts.filter((p: any) => !p.thought)
+    const text = textParts.map((p: any) => p.text || '').join('')
+    let accumulatedReasoning = ''
+
+    if (thoughtParts.length > 0) {
+      const reasoningText = thoughtParts.map((p: any) => (typeof p.thought === 'string' ? p.thought : p.text) || '').join('')
+      accumulatedReasoning = reasoningText
+      if (onProgress) {
+        const cleanSnippet = reasoningText.trim()
+        onProgress({
+          stage: 'evaluating',
+          liveContent: text,
+          liveReasoning: accumulatedReasoning,
+          reasoningSnippet: cleanSnippet.length > 120 ? '...' + cleanSnippet.slice(-120) : cleanSnippet,
+        })
+      }
+    }
+
+    return { text, accumulatedReasoning, finishReason }
+  }
+
   private async chatGemini(
     userMessage: string, 
     jsonMode?: boolean, 
     batchIndex = 1,
     onProgress?: (update: AIProgressUpdate) => void
   ): Promise<string> {
-    // loop through items to handle max token continuations
     const baseUrl = this.config.endpoint || DEFAULT_ENDPOINTS.gemini
     const model = this.config.model || this.defaultModel
-    const endpoint = `${baseUrl}/v1beta/models/${model}:generateContent`
     const maxContinuations = 3
     let continuations = 0
     let accumulatedContent = ''
+    let accumulatedReasoning = ''
 
     const thinkingBudgetMap: Record<string, number> = {
       minimal: 1024,
@@ -1414,36 +1826,59 @@ Only output the JSON object.`
 
     while (continuations <= maxContinuations) {
       const startTime = Date.now()
+      const action = onProgress ? 'streamGenerateContent' : 'generateContent'
+      const sseQuery = onProgress ? '&alt=sse' : ''
+      const apiKey = (this.config.apiKey || '').trim()
+      const endpoint = `${baseUrl}/v1beta/models/${model}:${action}?key=${apiKey}${sseQuery}`
+
       if (this.logger) {
         this.logger.logRawRequest(batchIndex, endpoint, `Message len: ${userMessage.length}`, this.systemPrompt, userMessage)
       }
 
-      const response = await fetch(
-        `${endpoint}?key=${this.config.apiKey}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+      const generationConfig: any = {
+        temperature: 0,
+        maxOutputTokens: Math.min(this.config.maxTokens || 16384, 65536),
+        ...(jsonMode && { responseMimeType: 'application/json' }),
+        ...(thinkingBudget !== undefined && {
+          thinkingConfig: {
+            thinkingBudget,
           },
-          body: JSON.stringify({
-            systemInstruction: {
-              parts: [{ text: this.systemPrompt }],
-            },
-            contents,
-            generationConfig: {
-              temperature: 0,
-              maxOutputTokens: Math.min(this.config.maxTokens || 16384, 65536),
-              ...(jsonMode && { responseMimeType: 'application/json' }),
-              ...(thinkingBudget !== undefined && {
-                thinkingConfig: {
-                  thinkingBudget,
-                },
-              }),
-            },
-          }),
-          signal: this.signal,
-        },
-      )
+        }),
+      }
+
+      let response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: this.systemPrompt }] },
+          contents,
+          generationConfig,
+        }),
+        signal: this.signal,
+      })
+
+      if (!response.ok && response.status === 400 && generationConfig.thinkingConfig) {
+        const peekText = await response.clone().text().catch(() => '')
+        const lowerPeek = peekText.toLowerCase()
+        if (
+          lowerPeek.includes('thinking') ||
+          lowerPeek.includes('thinkingbudget') ||
+          lowerPeek.includes('thinkingconfig') ||
+          lowerPeek.includes('not supported')
+        ) {
+          delete generationConfig.thinkingConfig
+          response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: this.systemPrompt }] },
+              contents,
+              generationConfig,
+            }),
+            signal: this.signal,
+          })
+        }
+      }
 
       const duration = Date.now() - startTime
 
@@ -1461,59 +1896,49 @@ Only output the JSON object.`
         } catch (e: any) {
           if (e.message?.startsWith('PROHIBITED_CONTENT')) throw e
         }
-        if (!errText.trim()) {
-          errText = response.statusText || 'Unknown Error'
-        }
+        if (!errText.trim()) errText = response.statusText || 'Unknown Error'
         if (this.logger) {
           this.logger.logRawResponse(batchIndex, response.status, duration, errText, undefined, `API error ${response.status}: ${errText}`)
         }
         throw new Error(`API error ${response.status}: ${errText}`)
       }
 
-      const data = await response.json()
-      
-      if (data.promptFeedback?.blockReason === 'PROHIBITED_CONTENT') {
-        const errMsg = `PROHIBITED_CONTENT: ${data.promptFeedback.blockReasonMessage || 'Prohibited content blocked.'}`
+      const contentType = response.headers?.get?.('content-type') || ''
+      const isSSE = contentType.includes('text/event-stream')
+      const hasStreamReader = Boolean(response.body && typeof (response.body as any).getReader === 'function')
+
+      let text = ''
+      let finishReason: string | undefined
+
+      if (isSSE && hasStreamReader) {
+        const streamResult = await this.readGeminiSseStream(response, onProgress)
+        text = streamResult.text
+        accumulatedReasoning = streamResult.accumulatedReasoning
+        finishReason = streamResult.finishReason
         if (this.logger) {
-          this.logger.logRawResponse(batchIndex, response.status, duration, JSON.stringify(data), data, errMsg)
+          this.logger.logRawResponse(batchIndex, response.status, duration, text, { accumulatedReasoning })
         }
-        throw new Error(errMsg)
+      } else {
+        const data = await response.json()
+        const nonStreamResult = this.parseGeminiJsonResponse(data, onProgress)
+        text = nonStreamResult.text
+        accumulatedReasoning = nonStreamResult.accumulatedReasoning
+        finishReason = nonStreamResult.finishReason
+        if (this.logger) {
+          this.logger.logRawResponse(batchIndex, response.status, duration, text, { ...data, accumulatedReasoning })
+        }
       }
 
-      const candidate = data.candidates?.[0]
-      const parts: any[] = candidate?.content?.parts || []
-      const thoughtParts = parts.filter((p: any) => p.thought)
-      const textParts = parts.filter((p: any) => !p.thought)
-      const text = textParts.length > 0
-        ? textParts.map((p: any) => p.text || '').join('')
-        : (parts[0]?.text || '')
       accumulatedContent += text
 
-      if (thoughtParts.length > 0 && onProgress) {
-        const reasoningText = thoughtParts.map((p: any) => p.text || '').join('')
-        onProgress({
-          stage: 'evaluating',
-          statusText: 'Processing reasoning...',
-          liveReasoning: reasoningText,
-          reasoningSnippet: reasoningText.slice(-150),
-        })
-      }
-
-      if (this.logger) {
-        this.logger.logRawResponse(batchIndex, response.status, duration, text, data)
-      }
-
-      if (candidate) {
-        const finishReason = candidate.finishReason
+      if (finishReason) {
         if (finishReason === 'MAX_TOKENS') {
-          if (continuations >= maxContinuations) {
-            break
-          }
+          if (continuations >= maxContinuations) break
           continuations++
           contents.push({ role: 'model', parts: [{ text }] })
           contents.push({ role: 'user', parts: [{ text: 'Continue exactly from where you left off. Do not repeat previous text.' }] })
           continue
-        } else if (finishReason && finishReason !== 'STOP') {
+        } else if (finishReason !== 'STOP') {
           throw new Error(`AI response failed: ${finishReason}`)
         }
       }
@@ -1530,7 +1955,9 @@ Only output the JSON object.`
   private getHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${this.config.apiKey}`,
+    }
+    if (this.config.apiKey && this.config.apiKey.trim()) {
+      headers['Authorization'] = `Bearer ${this.config.apiKey.trim()}`
     }
     if (this.config.provider === 'openrouter') {
       headers['HTTP-Referer'] = 'https://tabpilot.app'
