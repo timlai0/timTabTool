@@ -20,8 +20,9 @@ export function searchTabs(
   openTabs: TabInfo[],
   historyEntries: TabHistoryEntry[],
   currentWindowId?: number,
+  includeClosedWhenEmpty: boolean = false,
 ): SearchResult[] {
-  // Logic: if query is empty, simply return open tabs sorted by recency
+  // Logic: if query is empty, return open tabs (and closed tabs if requested) sorted by recency
   if (!query.trim()) {
     // Sort open tabs by lastAccessed descending
     const sorted = [...openTabs].sort((a, b) => {
@@ -32,12 +33,30 @@ export function searchTabs(
       }
       return b.id - a.id
     })
-    return sorted.map((t) => ({
+    const openResults: SearchResult[] = sorted.map((t) => ({
       tab: t,
       score: 0,
       isOpen: true,
       scoreDetails: 'Recently used',
     }))
+
+    if (!includeClosedWhenEmpty) {
+      return openResults
+    }
+
+    const openUrls = new Set(openTabs.map((t) => t.url))
+    const closedSorted = historyEntries
+      .filter((e) => !openUrls.has(e.url))
+      .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))
+
+    const closedResults: SearchResult[] = closedSorted.map((entry) => ({
+      tab: entry,
+      score: 0,
+      isOpen: false,
+      scoreDetails: 'Recently closed',
+    }))
+
+    return [...openResults, ...closedResults].slice(0, 50)
   }
 
   const terms: SearchTerm[] = query

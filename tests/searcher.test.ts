@@ -26,6 +26,16 @@ describe('searchTabs', () => {
     expect(results2.length).toBe(mockTabs.length)
   })
 
+  it('includes closed history entries for empty query when includeClosedWhenEmpty is true', () => {
+    const results = searchTabs('', mockTabs, mockHistory, undefined, true)
+    expect(results.length).toBe(mockTabs.length + mockHistory.length)
+    expect(results.some((r) => r.isOpen)).toBe(true)
+    expect(results.some((r) => !r.isOpen)).toBe(true)
+    const closed = results.filter((r) => !r.isOpen)
+    expect(closed.length).toBe(mockHistory.length)
+    expect(closed[0].scoreDetails).toBe('Recently closed')
+  })
+
   it('matches by title', () => {
     const results = searchTabs('TypeScript', mockTabs, mockHistory)
     expect(results.length).toBeGreaterThanOrEqual(2)
