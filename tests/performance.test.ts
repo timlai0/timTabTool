@@ -62,5 +62,24 @@ describe('Performance Benchmarks for Large Batches of Tabs', () => {
 
     await flushTabHistory()
   })
+
+  it('benchmarks detectDuplicateTabs with 5,000 tabs', async () => {
+    const { detectDuplicateTabs } = await import('../src/shared/utils')
+    const mockTabs = Array.from({ length: 5000 }, (_, i) => ({
+      id: i + 1,
+      url: `https://${['github.com', 'youtube.com', 'amazon.com', 'news.ycombinator.com'][i % 4]}/item/${i % 500}?utm_source=src_${i % 10}&srsltid=tag_${i}`,
+      title: `Tab Title ${i}`,
+      active: i === 10,
+      pinned: i === 20,
+    }))
+
+    const start = performance.now()
+    const result = detectDuplicateTabs(mockTabs)
+    const duration = performance.now() - start
+
+    console.log(`detectDuplicateTabs (5,000 tabs): ${duration.toFixed(2)} ms`)
+    expect(result.possibleDuplicateCount).toBeGreaterThan(0)
+    expect(result.possibleDuplicates.length).toBeGreaterThan(0)
+  })
 })
 

@@ -3,7 +3,7 @@ import { ref, shallowRef, onMounted, computed, watch, onUnmounted, nextTick } fr
 import { getMessage } from '../shared/i18n'
 import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS } from '../shared/constants'
 import { SYSTEM_PROMPT, AIClient } from '../shared/ai-client'
-import { getAutoBatchSize, getOptimalFaviconUrl, detectDuplicateTabs, normalizeUrl } from '../shared/utils'
+import { getAutoBatchSize, getOptimalFaviconUrl, detectDuplicateTabs, normalizeUrl, getUrlVariantDifferences, parseUrlSegments, type MinimalTab } from '../shared/utils'
 import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInfo, LastAIResult, OperationStatusInfo } from '../shared/types'
 import { APP_VERSION, BUILD_NUMBER, BUILD_STRING } from '../shared/version'
 import GroupList from './components/GroupList.vue'
@@ -36,6 +36,7 @@ const loading = ref(true)
 const tabGroupsSupported = typeof chrome !== 'undefined' && typeof chrome.tabGroups !== 'undefined'
 const groupingWindowId = ref<number | null>(null)
 const classifyingWindowId = ref<number | null>(null)
+const checkingLast20WindowId = ref<number | null>(null)
 const currentWindowId = ref<number | null>(null)
 const indicatorStyle = ref<GroupIndicatorStyle>(DEFAULT_SETTINGS.groupIndicatorStyle)
 const windowWidth = ref(DEFAULT_SETTINGS.windowWidth)
@@ -271,17 +272,25 @@ function removeTrackingParams(urlString: string): string {
 }
 
 const duplicateAnalysis = computed(() => {
-  const allTabs: Array<{ id?: number; url?: string; title?: string; favIconUrl?: string; windowId?: number }> = []
-  for (const win of allWindows.value) {
-    for (const group of win.groups) {
-      for (const tab of group.tabs) {
+  const allTabs: MinimalTab[] = []
+  let win: (typeof allWindows.value)[0]
+  let group: (typeof win.groups)[0]
+  let tab: (typeof group.tabs)[0]
+  for (win of allWindows.value) {
+    for (group of win.groups) {
+      for (tab of group.tabs) {
         if (!tab.url) continue
         allTabs.push({
           id: tab.id,
           url: tab.url,
           title: tab.title || 'Untitled',
           favIconUrl: tab.favIconUrl,
-          windowId: win.windowId
+          windowId: win.windowId,
+          active: tab.active,
+          pinned: tab.pinned,
+          audible: tab.audible,
+          groupId: group.groupId,
+          index: tab.index
         })
       }
     }
@@ -347,49 +356,39 @@ const duplicateGroupClusters = computed(() => duplicateGroupAnalysis.value.dupli
 const crossWindowDuplicateGroupsCount = computed(() => duplicateGroupAnalysis.value.crossWindowDuplicateCount)
 const crossWindowDuplicateGroupClusters = computed(() => duplicateGroupAnalysis.value.crossWindowDuplicateGroups)
 
+const isDuplicatesPopoverOpen = ref(false)
+const clusterKeepTabMap = ref<Record<string, number>>({})
+
+function getClusterKeepTabId(cluster: { cleanUrl: string; tabs: Array<{ id?: number; active?: boolean }>; primaryTabId?: number }): number | undefined {
+  if (clusterKeepTabMap.value[cluster.cleanUrl] !== undefined) {
+    return clusterKeepTabMap.value[cluster.cleanUrl]
+  }
+  return cluster.primaryTabId ?? cluster.tabs.find(t => t.active)?.id ?? cluster.tabs[0]?.id
+}
+
+function setClusterKeepTab(clusterCleanUrl: string, tabId: number) {
+  clusterKeepTabMap.value[clusterCleanUrl] = tabId
+}
+
 async function closeExactDuplicates() {
   const ids = exactDuplicateTabs.value.map(t => t.id).filter((id): id is number => typeof id === 'number')
-  if (ids.length > 0) {
-    try {
-      await chrome.tabs.remove(ids)
-    } catch (err: any) {
-      const errMsg = err?.message || String(err)
-      if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
-        console.error('[timTabTool] Failed to close exact duplicate tabs directly:', err)
-      }
-      const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
-      await chrome.runtime.sendMessage({ action: 'CLOSE_DUPLICATES', payload: { windowId: currentWinId, tabIds: ids } })
-    }
-  } else {
-    const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
-    await chrome.runtime.sendMessage({ action: 'CLOSE_DUPLICATES', payload: { windowId: currentWinId } })
-  }
+  const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
+  await chrome.runtime.sendMessage({ action: 'CLOSE_DUPLICATES', payload: { windowId: currentWinId, tabIds: ids.length > 0 ? ids : undefined } })
   await loadAllPreviews()
 }
 
 async function closePossibleDuplicates() {
   const idsToClose: number[] = []
   for (const cluster of possibleDuplicateClusters.value) {
-    for (let i = 1; i < cluster.tabs.length; i++) {
-      const id = cluster.tabs[i].id
-      if (id !== undefined) idsToClose.push(id)
-    }
-  }
-  if (idsToClose.length > 0) {
-    try {
-      await chrome.tabs.remove(idsToClose)
-    } catch (err: any) {
-      const errMsg = err?.message || String(err)
-      if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
-        console.error('[timTabTool] Failed to close possible duplicate tabs directly:', err)
+    const keepId = getClusterKeepTabId(cluster)
+    for (const tab of cluster.tabs) {
+      if (tab.id !== undefined && tab.id !== keepId) {
+        idsToClose.push(tab.id)
       }
-      const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
-      await chrome.runtime.sendMessage({ action: 'CLOSE_POSSIBLE_DUPLICATES', payload: { windowId: currentWinId, tabIds: idsToClose } })
     }
-  } else {
-    const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
-    await chrome.runtime.sendMessage({ action: 'CLOSE_POSSIBLE_DUPLICATES', payload: { windowId: currentWinId } })
   }
+  const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
+  await chrome.runtime.sendMessage({ action: 'CLOSE_POSSIBLE_DUPLICATES', payload: { windowId: currentWinId, tabIds: idsToClose.length > 0 ? idsToClose : undefined } })
   await loadAllPreviews()
 }
 
@@ -441,38 +440,28 @@ async function organizePossibleDuplicates() {
 }
 
 async function closeSingleTab(tabId: number) {
-  try {
-    await chrome.tabs.remove(tabId)
-  } catch (err: any) {
-    const errMsg = err?.message || String(err)
-    if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
-      console.error('[timTabTool] Failed to close tab:', err)
-    }
-  }
+  await chrome.runtime.sendMessage({ action: 'CLOSE_TAB', payload: { tabId } })
   await loadAllPreviews()
 }
 
-async function closeClusterDuplicates(cluster: { cleanUrl: string; domain: string; tabs: Array<{ id?: number }> }) {
-  const idsToClose = cluster.tabs.slice(1).map(t => t.id).filter((id): id is number => id !== undefined)
+async function closeClusterDuplicates(cluster: { cleanUrl: string; domain: string; tabs: Array<{ id?: number; active?: boolean }>; primaryTabId?: number }, keepTabId?: number) {
+  const targetKeepId = keepTabId ?? getClusterKeepTabId(cluster)
+  const idsToClose = cluster.tabs.map(t => t.id).filter((id): id is number => id !== undefined && id !== targetKeepId)
   if (idsToClose.length > 0) {
-    try {
-      await chrome.tabs.remove(idsToClose)
-    } catch (err: any) {
-      const errMsg = err?.message || String(err)
-      if (!errMsg.includes('No tab with id') && !errMsg.includes('Invalid tab id')) {
-        console.error('[timTabTool] Failed to close cluster duplicates:', err)
-      }
-    }
+    const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
+    await chrome.runtime.sendMessage({ action: 'CLOSE_POSSIBLE_DUPLICATES', payload: { windowId: currentWinId, tabIds: idsToClose } })
     await loadAllPreviews()
   }
 }
 
-async function groupCluster(cluster: { cleanUrl: string; domain: string; tabs: Array<{ id?: number }> }) {
+async function groupCluster(cluster: { cleanUrl: string; domain: string; title?: string; tabs: Array<{ id?: number; title?: string }> }) {
   const tabIds = cluster.tabs.map(t => t.id).filter((id): id is number => id !== undefined)
   if (tabIds.length >= 2) {
+    const titleSnippet = (cluster.title || cluster.tabs[0]?.title || '').trim().slice(0, 24)
+    const groupTitle = titleSnippet ? `Dupes: ${titleSnippet}` : `Dupes: ${cluster.domain}`
     await chrome.runtime.sendMessage({
       action: 'GROUP_CLUSTER',
-      payload: { tabIds, title: `Dupes: ${cluster.domain}` }
+      payload: { tabIds, title: groupTitle }
     })
     await loadAllPreviews()
   }
@@ -558,7 +547,7 @@ function formatTimer(ms?: number): string {
 const activeAIOperationsList = computed(() => {
   const list: Array<{
     windowId: number
-    type: 'group' | 'classify' | 'split' | 'merge' | 'sort'
+    type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup'
     windowName: string
     stage?: string
     statusText?: string
@@ -648,13 +637,14 @@ async function loadAllPreviews(showLoading = false) {
     
     // Process active operations and errors immediately
     if (activeOps && typeof activeOps === 'object') {
-      allActiveOperations.value = activeOps as Record<number, { type: 'group' | 'classify' | null; error: string | null }>
+      allActiveOperations.value = activeOps as Record<number, OperationStatusInfo>
       let isAnyGrouping = false
       let isAnyClassifying = false
+      let isAnyRegrouping = false
 
       for (const [widStr, status] of Object.entries(activeOps)) {
         const wid = Number(widStr)
-        const opStatus = status as { type: 'group' | 'classify' | null; error: string | null }
+        const opStatus = status as { type: 'group' | 'classify' | 'regroup' | null; error: string | null }
 
         if (opStatus.type === 'group') {
           groupingWindowId.value = wid
@@ -662,6 +652,9 @@ async function loadAllPreviews(showLoading = false) {
         } else if (opStatus.type === 'classify') {
           classifyingWindowId.value = wid
           isAnyClassifying = true
+        } else if (opStatus.type === 'regroup') {
+          checkingLast20WindowId.value = wid
+          isAnyRegrouping = true
         }
 
         if (opStatus.error) {
@@ -672,8 +665,9 @@ async function loadAllPreviews(showLoading = false) {
 
       if (!isAnyGrouping) groupingWindowId.value = null
       if (!isAnyClassifying) classifyingWindowId.value = null
+      if (!isAnyRegrouping) checkingLast20WindowId.value = null
 
-      if (isAnyGrouping || isAnyClassifying) {
+      if (isAnyGrouping || isAnyClassifying || isAnyRegrouping) {
         startPollingStatus()
       }
     } else {
@@ -743,17 +737,18 @@ let pollInterval: number | null = null
 function startPollingStatus() {
   if (pollInterval) return
   pollInterval = window.setInterval(async () => {
-    if (groupingWindowId.value !== null || classifyingWindowId.value !== null) {
+    if (groupingWindowId.value !== null || classifyingWindowId.value !== null || checkingLast20WindowId.value !== null) {
       try {
         const activeOps = await chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' })
         if (activeOps && typeof activeOps === 'object') {
-          allActiveOperations.value = activeOps as Record<number, { type: 'group' | 'classify' | null; error: string | null }>
+          allActiveOperations.value = activeOps as Record<number, OperationStatusInfo>
           let isAnyGrouping = false
           let isAnyClassifying = false
+          let isAnyRegrouping = false
 
           for (const [widStr, status] of Object.entries(activeOps)) {
             const wid = Number(widStr)
-            const opStatus = status as { type: 'group' | 'classify' | null; error: string | null }
+            const opStatus = status as { type: 'group' | 'classify' | 'regroup' | null; error: string | null }
 
             if (opStatus.type === 'group') {
               groupingWindowId.value = wid
@@ -761,6 +756,9 @@ function startPollingStatus() {
             } else if (opStatus.type === 'classify') {
               classifyingWindowId.value = wid
               isAnyClassifying = true
+            } else if (opStatus.type === 'regroup') {
+              checkingLast20WindowId.value = wid
+              isAnyRegrouping = true
             }
 
             if (opStatus.error) {
@@ -775,6 +773,10 @@ function startPollingStatus() {
           }
           if (!isAnyClassifying && classifyingWindowId.value !== null) {
             classifyingWindowId.value = null
+            await loadAllPreviews()
+          }
+          if (!isAnyRegrouping && checkingLast20WindowId.value !== null) {
+            checkingLast20WindowId.value = null
             await loadAllPreviews()
           }
         }
@@ -847,9 +849,13 @@ const isAIConfigured = computed(() => {
   )
 })
 
-function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classify' | null = 'group') {
-  const type = countType === 'classify' ? 'classify' : 'group'
-  const tabsCount = type === 'group' ? unpinnedTabsCount(w) : newTabsCount(w)
+function estimateCostAndTokens(w: WindowGroupsInfo, countType: 'group' | 'classify' | 'regroup' | null = 'group') {
+  const type = countType || 'group'
+  const tabsCount = type === 'group'
+    ? unpinnedTabsCount(w)
+    : type === 'regroup'
+      ? Math.min(unpinnedTabsCount(w), 20)
+      : newTabsCount(w)
   
   const existingGroupNames = type === 'group' 
     ? [] // Group mode doesn't load existing group names here
@@ -928,6 +934,40 @@ async function handleClassifyNew(windowId: number, shiftKey = false) {
   }
 }
 
+async function handleCancelCheckLast20(windowId: number) {
+  try {
+    await chrome.runtime.sendMessage({ action: 'CANCEL_OPERATION', payload: { windowId } })
+  } catch (err) {
+    console.error('Failed to cancel check last 20 tabs:', err)
+  }
+}
+
+async function handleCheckLast20Tabs(windowId: number, shiftKey = false) {
+  if (!aiSettings.value.enabled || !aiSettings.value.apiKey) {
+    showError('AI feature must be enabled with a valid API key in Settings.')
+    return
+  }
+  startPopupTimeoutTimer(windowId)
+  checkingLast20WindowId.value = windowId
+  allActiveOperations.value = {
+    ...allActiveOperations.value,
+    [windowId]: { type: 'regroup', error: null }
+  }
+  startPollingStatus()
+  try {
+    const payload = { windowId, shiftKey }
+    const res = await chrome.runtime.sendMessage({ action: 'CHECK_LAST_20_TABS', payload })
+    if (res && typeof res === 'object' && 'error' in res) {
+      showError(String(res.error), windowId)
+    }
+    await loadAllPreviews()
+  } catch (err) {
+    showError((err as Error).message, windowId)
+  } finally {
+    checkingLast20WindowId.value = null
+  }
+}
+
 const activePromptWindowId = ref<number | null>(null)
 const activeSortMenuWindowId = ref<number | null>(null)
 const activeMoreMenuWindowId = ref<number | null>(null)
@@ -980,6 +1020,9 @@ function handleDocumentClick(e: MouseEvent) {
   if (!target?.closest('.popover-container')) {
     activeMoreMenuWindowId.value = null
     activeSortMenuWindowId.value = null
+  }
+  if (!target?.closest('.duplicates-popover-container') && !target?.closest('.duplicates-badge-trigger')) {
+    isDuplicatesPopoverOpen.value = false
   }
 }
 
@@ -1118,12 +1161,12 @@ async function handleUngroup(windowId: number) {
 async function handleCleanupGroups(windowId: number) {
   activeMoreMenuWindowId.value = null
   // Programming logic: Prompt user for minimum tab threshold with a default of 3
-  const input = prompt(getMessage('enterMinTabs') || 'Enter minimum tab count for a group:', '3')
+  const input = prompt(getMessage('enterMinTabs') || 'Enter minimum tab count for a group (tabs in smaller groups will be ungrouped):', '3')
   if (input === null) return
   const minTabs = parseInt(input.trim())
   if (isNaN(minTabs) || minTabs <= 0) return
 
-  // Logic: Dissolve tab groups with fewer than minTabs tabs
+  // Logic: Ungroup tab groups with fewer than minTabs tabs
   await chrome.runtime.sendMessage({
     action: 'CLEANUP_GROUPS',
     payload: { windowId, minTabs }
@@ -1282,7 +1325,7 @@ async function openSearchOverlay() {
   }
 }
 
-const activeHoverAction = ref<'group' | 'classify' | null>(null)
+const activeHoverAction = ref<'group' | 'classify' | 'regroup' | null>(null)
 const hoveredActionWindowId = ref<number | null>(null)
 
 function getClassifyPrompt(w: WindowGroupsInfo) {
@@ -1315,7 +1358,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
   <div v-else :style="isStandaloneSearch ? { width: '380px', height: '100%', background: 'var(--bg-primary)' } : { width: Math.max(360, windowWidth) + 'px', height: Math.max(240, Math.min(600, windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->
-    <header class="flex items-center justify-between px-4 py-3 relative z-40" style="box-shadow: 0 0.5px 0 var(--border);">
+    <header class="flex items-center justify-between px-4 py-3 relative z-50" style="box-shadow: 0 0.5px 0 var(--border);">
       <div class="flex items-center gap-2.5 flex-1 min-w-0 flex-wrap py-0.5">
         <img src="/icons/icon-32.png" alt="" class="w-5 h-5 shrink-0" />
         <div class="flex items-center gap-1.5 shrink-0" :title="BUILD_STRING">
@@ -1450,7 +1493,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                         Apply Done
                       </button>
                       <button 
-                        @click.stop="op.type === 'group' ? handleCancelGroup(op.windowId) : handleCancelClassify(op.windowId)" 
+                        @click.stop="op.type === 'group' ? handleCancelGroup(op.windowId) : op.type === 'regroup' ? handleCancelCheckLast20(op.windowId) : handleCancelClassify(op.windowId)" 
                         class="text-red-500 hover:underline font-semibold cursor-pointer"
                       >
                         Cancel
@@ -1601,48 +1644,81 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
           {{ totalTabs }} tabs · {{ totalGroups }} groups · {{ totalWindows }} windows
         </span>
 
-        <div v-if="exactDuplicatesCount > 0 || possibleDuplicatesCount > 0 || duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0" class="relative group flex items-center gap-1 text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm shrink-0" style="color: var(--text-primary); background: rgba(255, 59, 48, 0.15); border: 1px solid rgba(255, 59, 48, 0.3);">
-          <svg class="w-3 h-3" style="color: var(--group-red);" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
-          </svg>
-          <button v-if="exactDuplicatesCount > 0" class="hover:underline focus:outline-none cursor-pointer" @click="closeExactDuplicates" title="Close all exact duplicates">
-            {{ exactDuplicatesCount }} exact dupes
+        <!-- Duplicates Pill Badge & Popover Menu -->
+        <div 
+          v-if="exactDuplicatesCount > 0 || possibleDuplicatesCount > 0 || duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0" 
+          class="relative duplicates-badge-container flex items-center shrink-0"
+        >
+          <button 
+            @click.stop="isDuplicatesPopoverOpen = !isDuplicatesPopoverOpen"
+            class="duplicates-badge-trigger flex items-center gap-1 text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm hover:opacity-90 transition-all cursor-pointer select-none"
+            :class="{ 'ring-1 ring-red-500/50 shadow-xs': isDuplicatesPopoverOpen }"
+            style="color: var(--text-primary); background: rgba(255, 59, 48, 0.15); border: 1px solid rgba(255, 59, 48, 0.35);"
+            title="Click to view and manage duplicate tabs and duplicate groups"
+          >
+            <svg class="w-3 h-3 shrink-0" style="color: var(--group-red);" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+            </svg>
+            <span v-if="exactDuplicatesCount > 0">{{ exactDuplicatesCount }} exact</span>
+            <span v-if="exactDuplicatesCount > 0 && (possibleDuplicatesCount > 0 || duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0)">·</span>
+            <span v-if="possibleDuplicatesCount > 0">{{ possibleDuplicatesCount }} possible dupes</span>
+            <span v-if="possibleDuplicatesCount > 0 && (duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0)">·</span>
+            <span v-if="duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0">{{ duplicateGroupsCount + crossWindowDuplicateGroupsCount }} dup groups</span>
+            <svg class="w-2.5 h-2.5 opacity-60 shrink-0 transition-transform duration-150" :class="{ 'rotate-180': isDuplicatesPopoverOpen }" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+            </svg>
           </button>
-          <span v-if="exactDuplicatesCount > 0 && possibleDuplicatesCount > 0">·</span>
-          <button v-if="possibleDuplicatesCount > 0" class="hover:underline focus:outline-none cursor-pointer" @click="organizePossibleDuplicates" title="Group and view possible duplicates">
-            {{ possibleDuplicatesCount }} possible dupes
-          </button>
-          <span v-if="(exactDuplicatesCount > 0 || possibleDuplicatesCount > 0) && (duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0)">·</span>
-          <span v-if="duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0" class="cursor-default" title="Duplicate group names detected">
-            {{ duplicateGroupsCount + crossWindowDuplicateGroupsCount }} dup groups
-          </span>
 
           <!-- Single Unified Duplicates Popover Card anchored at left-0 of the red pill badge -->
-          <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[320px] max-w-[calc(100vw-32px)] z-50">
-            <div class="p-3 rounded-sm shadow-card text-left whitespace-normal leading-relaxed transition-all duration-200 flex flex-col gap-2.5 max-h-[320px] overflow-y-auto scrollbar-thin" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+          <div 
+            v-if="isDuplicatesPopoverOpen"
+            class="duplicates-popover-container absolute left-0 top-full pt-2 w-[355px] sm:w-[370px] max-w-[calc(100vw-24px)] z-[100] animate-in fade-in zoom-in-95 duration-100"
+          >
+            <div class="p-3 rounded-sm shadow-card text-left whitespace-normal leading-relaxed transition-all duration-200 flex flex-col gap-3 max-h-[460px] overflow-y-auto scrollbar-thin" style="background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border);">
               
+              <!-- Popover Header Bar -->
+              <div class="flex items-center justify-between border-b pb-2" style="border-color: var(--border);">
+                <div class="flex items-center gap-1.5 font-semibold text-xs" style="color: var(--accent);">
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                  </svg>
+                  <span>Duplicates & Variants</span>
+                </div>
+                <button 
+                  @click.stop="isDuplicatesPopoverOpen = false" 
+                  class="w-5 h-5 rounded-sm flex items-center justify-center hover:bg-black/10 dark:hover:bg-white/10 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer"
+                  title="Close Inspector"
+                >
+                  <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                  </svg>
+                </button>
+              </div>
+
               <!-- Exact Duplicates Section -->
-              <div v-if="exactDuplicatesCount > 0">
-                <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" style="color: var(--accent);">
-                  <span>Exact Duplicates ({{ exactDuplicateTabs.length }})</span>
-                  <button @click.stop="closeExactDuplicates" class="text-[9px] px-1.5 py-0.5 rounded-sm font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer">
-                    Close Exact
+              <div v-if="exactDuplicatesCount > 0" class="flex flex-col gap-1.5">
+                <div class="font-semibold text-xs flex items-center justify-between" style="color: var(--accent);">
+                  <span class="flex items-center gap-1.5">
+                    <span>Exact Duplicates</span>
+                    <span class="text-[9.5px] px-1.5 py-0.2 rounded-xs font-medium bg-red-500/20 text-red-500">{{ exactDuplicateTabs.length }}</span>
+                  </span>
+                  <button @click.stop="closeExactDuplicates" class="text-[9px] px-2 py-0.5 rounded-sm font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer" title="Close all exact duplicate copies, keeping original">
+                    Close All Exact
                   </button>
                 </div>
-                <div class="flex flex-col gap-1">
+                <div class="flex flex-col gap-1 rounded-sm p-1 bg-black/5 dark:bg-white/5 border border-dashed" style="border-color: var(--border);">
                   <div 
                     v-for="tab in exactDuplicateTabs" 
                     :key="tab.id" 
-                    class="flex items-center gap-2 text-[10px] p-1.5 rounded-sm cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors border-b border-dashed last:border-b-0 group/tabrow"
-                    style="border-color: var(--border);"
+                    class="flex items-center gap-2 text-[10px] p-1.5 rounded-sm cursor-pointer hover:bg-black/10 dark:hover:bg-white/10 transition-colors group/tabrow"
                     @click="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
                     @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
                   >
                     <img v-if="getOptimalFaviconUrl(tab.url, tab.favIconUrl)" :src="getOptimalFaviconUrl(tab.url, tab.favIconUrl)" alt="" class="w-3.5 h-3.5 rounded-xs shrink-0" />
                     <div v-else class="w-3.5 h-3.5 rounded-xs bg-gray-500/20 shrink-0" />
                     <div class="flex-1 min-w-0">
-                      <div class="font-medium truncate text-[9.5px]" style="color: var(--text-primary);">{{ tab.title }}</div>
-                      <div class="text-[8.5px] truncate" style="color: var(--text-secondary);">{{ tab.url }}</div>
+                      <div class="font-medium truncate text-[9.5px]" style="color: var(--text-primary);" :title="tab.title">{{ tab.title }}</div>
+                      <div class="text-[8.5px] truncate font-mono opacity-70" style="color: var(--text-secondary);" :title="tab.url">{{ tab.url }}</div>
                     </div>
                     <button 
                       v-if="tab.id !== undefined"
@@ -1659,105 +1735,237 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   </div>
                 </div>
               </div>
-              <div v-if="possibleDuplicatesCount > 0">
-                <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" style="color: var(--accent);">
-                  <span>Possible Dupes ({{ possibleDuplicatesCount }})</span>
+
+              <!-- Possible Duplicates Section -->
+              <div v-if="possibleDuplicatesCount > 0" class="flex flex-col gap-2">
+                <div class="font-semibold text-xs flex items-center justify-between" style="color: var(--accent);">
                   <div class="flex items-center gap-1.5">
-                    <button @click.stop="closePossibleDuplicates" class="text-[9px] px-1.5 py-0.5 rounded-sm font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer">
-                      Close Dupes
+                    <span>Possible Dupes</span>
+                    <span class="text-[9.5px] px-1.5 py-0.2 rounded-xs font-medium bg-amber-500/20 text-amber-500">{{ possibleDuplicateClusters.length }} clusters · {{ possibleDuplicatesCount }} variants</span>
+                  </div>
+                  <div class="flex items-center gap-1.5">
+                    <button @click.stop="closePossibleDuplicates" class="text-[9px] px-2 py-0.5 rounded-sm font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer" title="Keep primary in each cluster and close variant copies">
+                      Dedupe All
                     </button>
-                    <button @click.stop="organizePossibleDuplicates" class="text-[9px] px-1.5 py-0.5 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);">
+                    <button @click.stop="organizePossibleDuplicates" class="text-[9px] px-2 py-0.5 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Group all clusters into distinct named tab groups">
                       Group All
                     </button>
                   </div>
                 </div>
-                <div class="flex flex-col gap-2">
-                  <div v-for="cluster in possibleDuplicateClusters" :key="cluster.cleanUrl" class="p-2 rounded-sm bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
-                    <div class="font-medium text-[9.5px] flex items-center justify-between gap-1" style="color: var(--accent);">
-                      <span class="truncate min-w-0">{{ cluster.domain }} <span class="opacity-60 text-[9px]" style="color: var(--text-secondary);">({{ cluster.tabs.length }} variants)</span></span>
+
+                <!-- Cluster Cards List -->
+                <div class="flex flex-col gap-2.5">
+                  <div 
+                    v-for="cluster in possibleDuplicateClusters" 
+                    :key="cluster.cleanUrl" 
+                    class="p-2 rounded-sm bg-black/5 dark:bg-white/5 border border-dashed flex flex-col gap-1.5 text-[10px]" 
+                    style="border-color: var(--border);"
+                  >
+                    <!-- Cluster Header -->
+                    <div class="flex items-center justify-between gap-1.5">
+                      <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                        <img 
+                          v-if="cluster.tabs[0] && getOptimalFaviconUrl(cluster.tabs[0].url || '', cluster.tabs[0].favIconUrl)" 
+                          :src="getOptimalFaviconUrl(cluster.tabs[0].url || '', cluster.tabs[0].favIconUrl)" 
+                          alt="" 
+                          class="w-3.5 h-3.5 rounded-xs shrink-0" 
+                        />
+                        <div class="min-w-0 flex-1">
+                          <div class="font-medium text-[10px] truncate" style="color: var(--text-primary);" :title="cluster.title || cluster.cleanUrl">
+                            {{ cluster.title || cluster.domain }}
+                          </div>
+                          <div class="text-[8.5px] font-mono truncate opacity-60 flex items-center gap-1.5" style="color: var(--text-secondary);" :title="cluster.cleanUrl">
+                            <span>{{ cluster.domain }} · {{ cluster.tabs.length }} variants</span>
+                            <span v-for="tag in cluster.matchReasons" :key="tag" class="px-1 py-0.2 rounded-xs uppercase text-[7px] font-medium bg-black/5 dark:bg-white/10" style="color: var(--text-secondary);">
+                              {{ tag.replace('_', ' ') }}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <!-- Cluster Action Buttons -->
                       <div class="flex items-center gap-1 shrink-0">
-                        <button @click.stop="closeClusterDuplicates(cluster)" class="text-[8.5px] px-1 py-0.2 rounded-sm font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer" title="Keep first, close other variants in this cluster">
+                        <button 
+                          @click.stop="closeClusterDuplicates(cluster)" 
+                          class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors cursor-pointer" 
+                          title="Keep the designated primary tab, close all other variants in this cluster"
+                        >
                           Dedupe
                         </button>
-                        <button @click.stop="groupCluster(cluster)" class="text-[8.5px] px-1 py-0.2 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Group these variants into a tab group">
+                        <button 
+                          @click.stop="groupCluster(cluster)" 
+                          class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" 
+                          style="color: var(--text-primary);" 
+                          title="Group these variants into a tab group"
+                        >
                           Group
                         </button>
                       </div>
                     </div>
+
+                    <!-- Canonical URL snippet with highlighted components -->
                     <div 
-                      v-for="tab in cluster.tabs" 
-                      :key="tab.id"
-                      class="flex items-center gap-1.5 p-1 rounded-sm cursor-pointer hover:bg-black/10 dark:hover:bg-white/10 transition-colors group/tabrow"
-                      @click="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
-                      @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
+                      class="px-2 py-1 rounded-xs text-[8.5px] font-mono select-all flex items-center gap-1.5 overflow-hidden" 
+                      style="background: rgba(0, 122, 255, 0.08); border: 0.5px solid rgba(0, 122, 255, 0.2);" 
+                      :title="`Canonical URL: ${cluster.cleanUrl}`"
                     >
-                      <img v-if="getOptimalFaviconUrl(tab.url || '', tab.favIconUrl)" :src="getOptimalFaviconUrl(tab.url || '', tab.favIconUrl)" alt="" class="w-3 h-3 rounded-xs shrink-0" />
-                      <div v-else class="w-3 h-3 rounded-xs bg-gray-500/20 shrink-0" />
-                      <div class="flex-1 min-w-0">
-                        <div class="truncate text-[9.5px]" style="color: var(--text-primary);">{{ tab.title }}</div>
-                        <div class="truncate text-[8.5px]" style="color: var(--text-secondary);">{{ tab.url }}</div>
+                      <span class="font-semibold uppercase tracking-wider text-[7px] px-1 py-0.2 rounded-xs shrink-0 select-none" style="background: rgba(0, 122, 255, 0.18); color: var(--accent);">
+                        canonical
+                      </span>
+                      
+                      <div class="truncate flex items-center flex-1 min-w-0">
+                        <!-- Protocol and www (dimmed boilerplate) -->
+                        <span class="opacity-35 select-none shrink-0">{{ parseUrlSegments(cluster.cleanUrl).protocol }}</span>
+                        <span v-if="parseUrlSegments(cluster.cleanUrl).subdomainPrefix" class="opacity-35 select-none shrink-0">{{ parseUrlSegments(cluster.cleanUrl).subdomainPrefix }}</span>
+                        
+                        <!-- Domain (context) -->
+                        <span class="opacity-75 shrink-0" style="color: var(--text-secondary);">{{ parseUrlSegments(cluster.cleanUrl).domain }}</span>
+                        
+                        <!-- Pathname (important structure - highlighted bold) -->
+                        <span v-if="parseUrlSegments(cluster.cleanUrl).pathname" class="font-semibold shrink-0" style="color: var(--text-primary);">
+                          {{ parseUrlSegments(cluster.cleanUrl).pathname }}
+                        </span>
+                        
+                        <!-- Search Query (canonical parameters / IDs - highlighted in accent color) -->
+                        <span v-if="parseUrlSegments(cluster.cleanUrl).search" class="font-bold shrink-0 px-1 py-0.2 ml-0.5 rounded-xs" style="color: var(--accent); background: rgba(0, 122, 255, 0.12);">
+                          {{ parseUrlSegments(cluster.cleanUrl).search }}
+                        </span>
+
+                        <!-- Hash fragment if present -->
+                        <span v-if="parseUrlSegments(cluster.cleanUrl).hash" class="font-semibold shrink-0 px-1 py-0.2 ml-0.5 rounded-xs" style="color: var(--group-yellow); background: rgba(255, 159, 10, 0.12);">
+                          {{ parseUrlSegments(cluster.cleanUrl).hash }}
+                        </span>
                       </div>
-                      <button 
-                        v-if="tab.id !== undefined"
-                        @click.stop="closeSingleTab(tab.id)"
+                    </div>
+
+                    <!-- Variant Tabs List -->
+                    <div class="flex flex-col gap-1">
+                      <div 
+                        v-for="tab in cluster.tabs" 
+                        :key="tab.id"
+                        class="flex items-center gap-1.5 p-1 rounded-sm cursor-pointer transition-colors group/tabrow"
+                        :class="[
+                          getClusterKeepTabId(cluster) === tab.id 
+                            ? 'bg-emerald-500/10 border border-emerald-500/30' 
+                            : 'hover:bg-black/10 dark:hover:bg-white/10 border border-transparent'
+                        ]"
+                        @click="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
                         @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
-                        class="w-4 h-4 rounded-sm flex items-center justify-center opacity-0 group-hover/tabrow:opacity-100 hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
-                        style="color: var(--text-tertiary);"
-                        title="Close this tab (or Middle-click row)"
                       >
-                        <svg class="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
-                          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                        </svg>
+                        <img v-if="getOptimalFaviconUrl(tab.url || '', tab.favIconUrl)" :src="getOptimalFaviconUrl(tab.url || '', tab.favIconUrl)" alt="" class="w-3 h-3 rounded-xs shrink-0" />
+                        <div v-else class="w-3 h-3 rounded-xs bg-gray-500/20 shrink-0" />
+                        
+                        <div class="flex-1 min-w-0">
+                          <div class="truncate text-[9px] font-medium" style="color: var(--text-primary);" :title="tab.title">
+                            {{ tab.title }}
+                          </div>
+                          <div class="flex items-center gap-1 truncate text-[8px] font-mono" style="color: var(--text-secondary);">
+                            <span class="truncate" :title="tab.url">{{ tab.url }}</span>
+                            <span 
+                              v-if="tab.isExactDuplicate" 
+                              class="shrink-0 px-1 rounded-xs text-[7.5px] bg-red-500/15 text-red-600 dark:text-red-400 font-medium"
+                              title="Exact duplicate of the designated keeper tab"
+                            >
+                              exact copy
+                            </span>
+                            <template v-else-if="tab.diff && tab.diff.reasons.length > 0">
+                              <span 
+                                v-for="reason in tab.diff.reasons" 
+                                :key="reason"
+                                class="shrink-0 px-1 rounded-xs text-[7.5px] bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                                :title="`Variant difference: ${reason}`"
+                              >
+                                {{ reason }}
+                              </span>
+                            </template>
+                          </div>
+                        </div>
+
+                        <!-- Keep / Variant Pill & Action -->
+                        <div class="flex items-center gap-1 shrink-0">
+                          <span 
+                            v-if="getClusterKeepTabId(cluster) === tab.id" 
+                            class="text-[7.5px] uppercase font-semibold px-1 py-0.2 rounded-xs bg-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                            title="This tab will be retained when deduplicating"
+                          >
+                            Keep
+                          </span>
+                          <button 
+                            v-else-if="tab.id !== undefined"
+                            @click.stop="setClusterKeepTab(cluster.cleanUrl, tab.id)"
+                            class="text-[7.5px] opacity-0 group-hover/tabrow:opacity-100 px-1 py-0.2 rounded-xs hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 transition-opacity cursor-pointer"
+                            title="Set this tab as the one to keep"
+                          >
+                            Keep this
+                          </button>
+
+                          <!-- Close Single Tab -->
+                          <button 
+                            v-if="tab.id !== undefined"
+                            @click.stop="closeSingleTab(tab.id)"
+                            @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
+                            class="w-3.5 h-3.5 rounded-xs flex items-center justify-center opacity-0 group-hover/tabrow:opacity-100 hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
+                            style="color: var(--text-tertiary);"
+                            title="Close this tab (or Middle-click row)"
+                          >
+                            <svg class="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
+                              <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Duplicate Groups Section -->
+              <div v-if="duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0" class="flex flex-col gap-2">
+                <div class="border-t my-0.5" style="border-color: var(--border);" />
+                
+                <div v-if="duplicateGroupsCount > 0" class="flex flex-col gap-1.5">
+                  <div class="font-semibold text-xs flex items-center justify-between" style="color: var(--accent);">
+                    <span class="flex items-center gap-1.5">
+                      <span>Duplicate Groups</span>
+                      <span class="text-[9.5px] px-1.5 py-0.2 rounded-xs font-medium bg-black/10 dark:bg-white/10" style="color: var(--text-secondary);">{{ duplicateGroupsCount }}</span>
+                    </span>
+                    <button @click.stop="mergeAllDuplicateGroups" class="text-[9px] px-2 py-0.5 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);">
+                      Merge All
+                    </button>
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <div v-for="cluster in duplicateGroupClusters" :key="cluster.normalized" class="p-1.5 rounded-sm bg-black/5 dark:bg-white/5 border border-dashed flex items-center justify-between gap-1 text-[10px]" style="border-color: var(--border);">
+                      <span class="truncate min-w-0 font-medium" style="color: var(--text-primary);">
+                        {{ cluster.originalNames[0] }} 
+                        <span class="opacity-60 text-[8.5px]" style="color: var(--text-secondary);">({{ cluster.count }} duplicate groups)</span>
+                      </span>
+                      <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer shrink-0" style="color: var(--text-primary);" title="Merge these duplicate groups into one">
+                        Merge
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="crossWindowDuplicateGroupsCount > 0" class="flex flex-col gap-1.5">
+                  <div class="font-semibold text-xs flex items-center justify-between" style="color: var(--accent);">
+                    <span class="flex items-center gap-1.5">
+                      <span>Duplicate Groups (Cross-Window)</span>
+                      <span class="text-[9.5px] px-1.5 py-0.2 rounded-xs font-medium bg-black/10 dark:bg-white/10" style="color: var(--text-secondary);">{{ crossWindowDuplicateGroupsCount }}</span>
+                    </span>
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <div v-for="cluster in crossWindowDuplicateGroupClusters" :key="'cross_'+cluster.normalized" class="p-1.5 rounded-sm bg-black/5 dark:bg-white/5 border border-dashed flex items-center justify-between gap-1 text-[10px]" style="border-color: var(--border);">
+                      <span class="truncate min-w-0 font-medium" style="color: var(--text-primary);">
+                        {{ cluster.originalNames[0] }} 
+                        <span class="opacity-60 text-[8.5px]" style="color: var(--text-secondary);">({{ cluster.count }} groups across windows)</span>
+                      </span>
+                      <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer shrink-0" style="color: var(--text-primary);" title="Merge these cross-window duplicate groups into one window">
+                        Merge
                       </button>
                     </div>
                   </div>
                 </div>
               </div>
-
-              <!-- Divider if needed -->
-              <div v-if="(exactDuplicatesCount > 0 || possibleDuplicatesCount > 0) && (duplicateGroupsCount > 0 || crossWindowDuplicateGroupsCount > 0)" class="border-t my-0.5" style="border-color: var(--border);" />
-
-              <!-- Duplicate Groups Section -->
-              <div v-if="duplicateGroupsCount > 0">
-                <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" style="color: var(--accent);">
-                  <span>Duplicate Groups ({{ duplicateGroupsCount }})</span>
-                  <button @click.stop="mergeAllDuplicateGroups" class="text-[9px] px-1.5 py-0.5 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);">
-                    Merge All
-                  </button>
-                </div>
-                <div class="flex flex-col gap-2">
-                  <div v-for="cluster in duplicateGroupClusters" :key="cluster.normalized" class="p-2 rounded-sm bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
-                    <div class="font-medium text-[9.5px] flex items-center justify-between gap-1" style="color: var(--accent);">
-                      <span class="truncate min-w-0">{{ cluster.originalNames[0] }} <span class="opacity-60 text-[9px]" style="color: var(--text-secondary);">({{ cluster.count }} duplicate groups)</span></span>
-                      <div class="flex items-center gap-1 shrink-0">
-                        <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1 py-0.2 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Merge these duplicate groups into one">
-                          Merge
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Cross-Window Duplicate Groups Section -->
-              <div v-if="crossWindowDuplicateGroupsCount > 0">
-                <div class="font-semibold mb-1.5 mt-2 text-xs flex items-center justify-between" style="color: var(--accent);">
-                  <span title="These duplicate groups span across multiple windows">Duplicate Groups (Cross-Window) ({{ crossWindowDuplicateGroupsCount }})</span>
-                </div>
-                <div class="flex flex-col gap-2">
-                  <div v-for="cluster in crossWindowDuplicateGroupClusters" :key="'cross_'+cluster.normalized" class="p-2 rounded-sm bg-black/5 dark:bg-white/5 border border-dashed border-border flex flex-col gap-1 text-[10px]" style="border-color: var(--border);">
-                    <div class="font-medium text-[9.5px] flex items-center justify-between gap-1" style="color: var(--accent);">
-                      <span class="truncate min-w-0">{{ cluster.originalNames[0] }} <span class="opacity-60 text-[9px]" style="color: var(--text-secondary);">({{ cluster.count }} duplicate groups across windows)</span></span>
-                      <div class="flex items-center gap-1 shrink-0">
-                        <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1 py-0.2 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);" title="Merge these cross-window duplicate groups into one window">
-                          Merge
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
 
             </div>
           </div>
@@ -2002,18 +2210,23 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   </span>
                 </button>
 
-
-                <!-- Custom Prompt Icon Button -->
+                <!-- Check & Regroup Last 20 Tabs Button -->
                 <button
-                  class="p-[5px] rounded-btn flex items-center justify-center transition-all shrink-0 cursor-pointer"
-                  :style="activePromptWindowId === w.windowId
-                    ? { background: 'var(--accent)', color: '#ffffff' }
+                  v-if="unpinnedTabsCount(w) > 0"
+                  class="p-[5px] rounded-btn flex items-center justify-center transition-all shrink-0 cursor-pointer relative"
+                  :style="checkingLast20WindowId === w.windowId
+                    ? { background: 'var(--group-red)', color: '#ffffff' }
                     : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
-                  @click="toggleOneShotPromptPopover(w.windowId)"
-                  title="One-Shot AI Prompt (Custom tab grouping instruction)"
+                  @click="checkingLast20WindowId === w.windowId ? handleCancelCheckLast20(w.windowId) : handleCheckLast20Tabs(w.windowId, $event.shiftKey)"
+                  @mouseenter="activeHoverAction = 'regroup'; hoveredActionWindowId = w.windowId"
+                  @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
+                  :title="checkingLast20WindowId === w.windowId ? 'Cancel' : getMessage('checkLast20Tooltip')"
                 >
-                  <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.948 5.684a1 1 0 00-1.896 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.896l2.051.683a1 1 0 01.633.633l.683 2.051a1 1 0 001.896 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.896l-2.051-.683a1 1 0 01-.633-.633L6.948 5.684z" />
+                  <span v-if="checkingLast20WindowId === w.windowId" class="inline-flex items-center">
+                    <span class="animate-spin w-3.5 h-3.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
+                  </span>
+                  <svg v-else class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" />
                   </svg>
                 </button>
 
@@ -2119,6 +2332,17 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
                   <div v-if="activeMoreMenuWindowId === w.windowId" class="absolute right-0 top-full mt-1 w-52 p-1 rounded-sm shadow-card z-50 flex flex-col gap-0.5 text-left" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
                     <button
+                      @click="toggleOneShotPromptPopover(w.windowId)"
+                      class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
+                      style="color: var(--text-primary);"
+                      title="One-Shot AI Prompt (Custom tab grouping instruction)"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.948 5.684a1 1 0 00-1.896 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.896l2.051.683a1 1 0 01.633.633l.683 2.051a1 1 0 001.896 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.896l-2.051-.683a1 1 0 01-.633-.633L6.948 5.684z" />
+                      </svg>
+                      <span>{{ getMessage('oneShotPrompt') }}</span>
+                    </button>
+                    <button
                       @click="handleUngroup(w.windowId)"
                       class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
                       style="color: var(--text-primary);"
@@ -2137,6 +2361,17 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                         <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.21-2.35.398a.75.75 0 00-.56.885l.135.539a.75.75 0 00.885.56 25.1 25.1 0 011.89-.37v10.55A2.75 2.75 0 008.75 19h2.5a2.75 2.75 0 002.75-2.75V5.727c.642.096 1.272.22 1.89.37a.75.75 0 00.885-.56l.135-.539a.75.75 0 00-.56-.885 26.6 26.6 0 00-2.35-.398V3.75A2.75 2.75 0 0011.25 1h-2.5zm1.25 1.5c.69 0 1.25.56 1.25 1.25v.266c-.83-.04-1.67-.04-2.5 0V3.75c0-.69.56-1.25 1.25-1.25z" clip-rule="evenodd" />
                       </svg>
                       <span>{{ getMessage('cleanupGroups') }}</span>
+                    </button>
+                    <button
+                      @click="checkingLast20WindowId === w.windowId ? handleCancelCheckLast20(w.windowId) : handleCheckLast20Tabs(w.windowId); activeMoreMenuWindowId = null"
+                      class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
+                      :style="{ color: checkingLast20WindowId === w.windowId ? 'var(--group-red)' : 'var(--text-primary)' }"
+                      :title="checkingLast20WindowId === w.windowId ? 'Cancel' : getMessage('checkLast20Tooltip')"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" />
+                      </svg>
+                      <span>{{ checkingLast20WindowId === w.windowId ? 'Cancel' : getMessage('checkLast20Tabs') }}</span>
                     </button>
                     <button
                       v-if="allWindows.length > 1"
@@ -2185,7 +2420,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
             <!-- Active Operation Progress Status Line -->
             <div 
-              v-if="(groupingWindowId === w.windowId || classifyingWindowId === w.windowId) && allActiveOperations[w.windowId]?.statusText" 
+              v-if="(groupingWindowId === w.windowId || classifyingWindowId === w.windowId || checkingLast20WindowId === w.windowId) && allActiveOperations[w.windowId]?.statusText" 
               class="text-[9.5px] px-1 font-medium flex items-center gap-1.5 transition-all"
               style="color: var(--accent);"
             >
@@ -2242,10 +2477,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             </div>
 
             <!-- Tooltip (Shows on hover of Group Tabs or Classify New inside relative actions container) -->
-            <div v-if="groupingWindowId !== w.windowId && classifyingWindowId !== w.windowId && hoveredActionWindowId === w.windowId && activeHoverAction !== null" class="absolute left-3.5 top-full mt-1.5 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+            <div v-if="groupingWindowId !== w.windowId && classifyingWindowId !== w.windowId && checkingLast20WindowId !== w.windowId && hoveredActionWindowId === w.windowId && activeHoverAction !== null" class="absolute left-3.5 top-full mt-1.5 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
               <template v-if="aiSettings.enabled && aiSettings.apiKey">
                 <div class="font-semibold mb-1" style="color: var(--accent);">
-                  {{ activeHoverAction === 'group' ? 'AI Grouping Preview' : 'AI Classification Preview' }}
+                  {{ activeHoverAction === 'group' ? 'AI Grouping Preview' : activeHoverAction === 'regroup' ? 'AI Check & Regroup Preview' : 'AI Classification Preview' }}
                 </div>
                 <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
                   <span>Model: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeModel }}</span></span>
@@ -2260,14 +2495,14 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 
                 <div class="mb-1 text-[9px] uppercase font-bold tracking-wider" style="color: var(--text-tertiary);">User Prompt</div>
                 <div class="text-[10px] mb-2" style="color: var(--text-secondary);">
-                  {{ activeHoverAction === 'group' ? getGroupingPrompt() : getClassifyPrompt(w) }}
+                  {{ activeHoverAction === 'group' ? getGroupingPrompt() : activeHoverAction === 'regroup' ? 'Review last 20 tabs to verify if in correct groups, and regroup if needed.' : getClassifyPrompt(w) }}
                 </div>
                 
                 <div class="mt-2 pt-2 border-t flex flex-col gap-1.5" style="border-color: var(--border);">
                   <div class="flex items-center justify-between text-[10px]">
                     <span style="color: var(--text-secondary);">
                       Est. Requests: <span class="font-bold tabular-nums" style="color: var(--text-primary);">
-                        {{ activeHoverAction === 'group' ? Math.ceil(unpinnedTabsCount(w) / (aiSettings.batchSize || getAutoBatchSize(aiSettings.maxTokens))) : Math.ceil(newTabsCount(w) / (aiSettings.batchSize || getAutoBatchSize(aiSettings.maxTokens))) }}
+                        {{ activeHoverAction === 'group' ? Math.ceil(unpinnedTabsCount(w) / (aiSettings.batchSize || getAutoBatchSize(aiSettings.maxTokens))) : activeHoverAction === 'regroup' ? Math.ceil(Math.min(unpinnedTabsCount(w), 20) / (aiSettings.batchSize || getAutoBatchSize(aiSettings.maxTokens))) : Math.ceil(newTabsCount(w) / (aiSettings.batchSize || getAutoBatchSize(aiSettings.maxTokens))) }}
                       </span>
                     </span>
                     <span class="font-bold tabular-nums" style="color: var(--text-primary);">{{ estimateCostAndTokens(w, activeHoverAction).costStr }}</span>
@@ -2280,18 +2515,20 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
               </template>
               <template v-else>
                 <div class="font-semibold mb-1" style="color: var(--accent);">
-                  {{ activeHoverAction === 'group' ? 'Rule-based Grouping Preview' : 'Rule-based Classification Preview' }}
+                  {{ activeHoverAction === 'group' ? 'Rule-based Grouping Preview' : activeHoverAction === 'regroup' ? 'AI Check & Regroup' : 'Rule-based Classification Preview' }}
                 </div>
                 <div class="flex items-center gap-1.5 text-[9px] mb-2" style="color: var(--text-tertiary);">
-                  <span>Mode: <span class="font-semibold" style="color: var(--text-secondary);">Local Rule Engine</span></span>
+                  <span>Mode: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeHoverAction === 'regroup' ? 'Requires AI' : 'Local Rule Engine' }}</span></span>
                   <span class="opacity-40">•</span>
-                  <span>Privacy: <span class="font-semibold" style="color: var(--text-secondary);">100% Offline</span></span>
+                  <span>Privacy: <span class="font-semibold" style="color: var(--text-secondary);">{{ activeHoverAction === 'regroup' ? 'AI Cloud' : '100% Offline' }}</span></span>
                 </div>
                 
                 <div class="mb-1 text-[9px] uppercase font-bold tracking-wider mt-2" style="color: var(--text-tertiary);">Description</div>
                 <div class="text-[10px] mb-2 leading-relaxed" style="color: var(--text-secondary);">
                   {{ activeHoverAction === 'group' 
                     ? 'Tabs will be organized instantly using high-performance local heuristics. Priority is given to matching exact domains, parent domains, and tab title keywords.' 
+                    : activeHoverAction === 'regroup'
+                    ? 'Checking if the last 20 tabs are in correct groups requires AI to be enabled and configured with an API key in Settings.'
                     : 'New tabs will be classified instantly into matching existing groups using high-performance local heuristics (domain, parent domain, and keyword match).' }}
                 </div>
                 

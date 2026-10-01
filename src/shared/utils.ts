@@ -112,58 +112,139 @@ export function formatTimeAgo(timestamp: number, now = Date.now()): string {
 }
 
 const TRACKING_PARAMS = new Set([
-  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id', 'utm_source_platform', 'utm_creative_format', 'utm_marketing_tactic',
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id', 'utm_source_platform', 'utm_creative_format', 'utm_marketing_tactic', 'utm_name',
   'fbclid', 'gclid', 'gbraid', 'wbraid', '_gl', 'msclkid', 'mc_cid', 'mc_eid',
-  'ref', 'referrer', 'source', 'feature', 'si', 'igshid', 'fb_action_ids',
-  'twclid', 'ttclid', 'yclid', 'mkt_tok', '_hsenc', '_openstat', 'gad_source',
+  'ref', 'referrer', 'source', 'feature', 'si', 'igshid', 'igsh', 'fb_action_ids', 'fb_action_types', 'fb_source', 'fb_ref', 'mibextid',
+  'twclid', 'ttclid', 'yclid', 'mkt_tok', '_hsenc', '_hsmi', 'hsctatracking', '_openstat', 'gad_source',
   'spm', 'spm_id_from', 'scm', 'pvid', 'algo_pvid', 'algo_exp_id', 'btsid', 'ws_ab_test',
   'origin', 'vd_source', 'callback', '_t', 'from_source', 'from', 'is_from_webapp',
-  'sender_device', 'refer', 'bd_vid', 'kwd', 'search_id', 'cmpid', 'via', 's_kwcid', 'dclid', 'zanpid'
+  'sender_device', 'refer', 'bd_vid', 'kwd', 'search_id', 'cmpid', 'via', 's_kwcid', 'dclid', 'zanpid',
+  'srsltid', 'rdt_cid', 'share_id', 'li_fat_id', 'tt_medium', 'tt_content', 'is_copy_url',
+  'pk_campaign', 'pk_kwd', 'matomo_campaign', 'matomo_keyword', 'piwik_campaign', 'piwik_kwd', 'wt_mc', 'vgo_ee',
+  'aff_id', 'aff_sub', 'affiliate_id', 'click_id', 'subid', 'campaign_id',
+  'session_id', 'phpsessid', 'jsessionid', 'asid', 'ab_channel', 'ref_src', 'ref_url'
 ])
 
-export interface NormalizeUrlOptions {
-  removeHash?: boolean
+const DEFAULT_DOC_REGEX = /\/(index\.(html?|php)|default\.aspx?)$/i
+
+/**
+ * Checks if a parameter key is an analytics/tracking tag or click identifier.
+ * @param {string} key
+ * @returns {boolean}
+ */
+export function isTrackingParam(key: string): boolean {
+  // Logic: Identify advertising, referral, and analytics query parameters
+  const lower = key.toLowerCase()
+  if (TRACKING_PARAMS.has(lower)) return true
+  return (
+    lower.startsWith('utm_') ||
+    lower.startsWith('hsa_') ||
+    lower.startsWith('ga_') ||
+    lower.startsWith('fb_') ||
+    lower.startsWith('mc_') ||
+    lower.startsWith('pk_') ||
+    lower.startsWith('matomo_') ||
+    lower.startsWith('piwik_')
+  )
 }
 
 /**
- * Normalizes a URL by stripping tracking parameters.
+ * Checks if a hash string represents a client-side SPA route rather than a section anchor.
+ * @param {string | undefined} hash
+ * @returns {boolean}
+ */
+export function isSpaHashRoute(hash: string | undefined): boolean {
+  // Logic: SPA hash routes begin with #/ or #!/
+  if (!hash) return false
+  return hash.startsWith('#/') || hash.startsWith('#!/')
+}
+
+/**
+ * Strips default index documents from URL pathname.
+ * @param {string} pathname
+ * @returns {{ path: string; strippedDoc?: string }}
+ */
+export function stripDefaultDocumentFromPath(pathname: string): { path: string; strippedDoc?: string } {
+  // Logic: Remove index.html, index.php, default.aspx from pathname
+  const match = pathname.match(DEFAULT_DOC_REGEX)
+  if (match) {
+    const stripped = pathname.replace(DEFAULT_DOC_REGEX, '')
+    return { path: stripped === '' ? '/' : stripped, strippedDoc: match[1] }
+  }
+  return { path: pathname }
+}
+
+/**
+ * Cleans tracking query parameters and sorts parameters deterministically.
+ * @param {URL} url
+ * @returns {{ strippedParams: string[] }}
+ */
+export function cleanUrlSearchParams(url: URL): { strippedParams: string[] } {
+  // Logic: Remove marketing parameters and sort query string
+  const keysToDelete: string[] = []
+  url.searchParams.forEach((_, key) => {
+    if (isTrackingParam(key)) {
+      keysToDelete.push(key)
+    }
+  })
+
+  let delKey = ''
+  for (let i = 0; i < keysToDelete.length; i++) {
+    delKey = keysToDelete[i]
+    url.searchParams.delete(delKey)
+  }
+
+  url.searchParams.sort()
+  return { strippedParams: keysToDelete }
+}
+
+export interface NormalizeUrlOptions {
+  removeHash?: boolean
+  preserveSpaHashRoutes?: boolean
+  stripWww?: boolean
+  normalizeProtocol?: boolean
+  stripDefaultDocument?: boolean
+}
+
+/**
+ * Normalizes a URL by stripping tracking parameters, protocol variants, and default documents.
  * @param {string} urlString
  * @param {NormalizeUrlOptions} [options]
  * @returns {string}
  */
 export function normalizeUrl(urlString: string, options: NormalizeUrlOptions = {}): string {
-  // Logic: Remove utm_ and other tracking params, sort search params for deduplication
+  // Logic: Canonicalize URL by stripping tracking parameters, protocol, host, and index documents
   if (!urlString) return ''
   try {
     const url = new URL(urlString)
-    
-    // Clean tracking query params
-    const keysToDelete: string[] = []
-    url.searchParams.forEach((_, key) => {
-      const lowerKey = key.toLowerCase()
-      if (TRACKING_PARAMS.has(lowerKey) || lowerKey.startsWith('utm_') || lowerKey.startsWith('hsa_')) {
-        keysToDelete.push(key)
-      }
-    })
-    for (const key of keysToDelete) {
-      url.searchParams.delete(key)
+
+    if (options.normalizeProtocol && (url.protocol === 'http:' || url.protocol === 'https:')) {
+      const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
+      if (!isLocal) url.protocol = 'https:'
     }
 
-    // Sort search parameters for deterministic URL matching
-    url.searchParams.sort()
-
-    // Remove hash fragment if specified (default: true)
-    if (options.removeHash !== false) {
-      url.hash = ''
+    url.hostname = url.hostname.toLowerCase()
+    if (options.stripWww && url.hostname.startsWith('www.')) {
+      url.hostname = url.hostname.slice(4)
     }
 
-    // Normalize trailing slash for path (except root)
+    if (options.stripDefaultDocument) {
+      url.pathname = stripDefaultDocumentFromPath(url.pathname).path
+    }
+
     if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
       url.pathname = url.pathname.slice(0, -1)
     }
 
-    // Convert host to lowercase
-    url.hostname = url.hostname.toLowerCase()
+    cleanUrlSearchParams(url)
+
+    if (options.removeHash !== false) {
+      if (options.preserveSpaHashRoutes !== false && isSpaHashRoute(url.hash)) {
+        // Programming logic: Preserve client-side SPA routing hash
+      } else {
+        url.hash = ''
+      }
+    }
 
     return url.toString()
   } catch {
@@ -177,11 +258,34 @@ export interface MinimalTab {
   title?: string
   favIconUrl?: string
   windowId?: number
+  active?: boolean
+  pinned?: boolean
+  audible?: boolean
+  groupId?: number
+  index?: number
+  diff?: UrlVariantDiff
+  isExactDuplicate?: boolean
 }
 
-interface PossibleDuplicateCluster {
+export interface UrlVariantDiff {
+  strippedParams: string[]
+  hash?: string
+  protocolDiff?: boolean
+  wwwDiff?: boolean
+  defaultDocDiff?: string
+  trailingSlashDiff?: boolean
+  trackingParamCount: number
+  reasons: string[]
+}
+
+export interface PossibleDuplicateCluster {
   cleanUrl: string
   domain: string
+  title?: string
+  primaryTabId?: number
+  matchReasons?: string[]
+  exactCopiesCount?: number
+  variantCopiesCount?: number
   tabs: MinimalTab[]
 }
 
@@ -192,60 +296,399 @@ export interface DuplicateDetectionResult {
   possibleDuplicates: PossibleDuplicateCluster[]
 }
 
+export interface DetectDuplicateOptions {
+  stripWww?: boolean
+  normalizeProtocol?: boolean
+  stripDefaultDocument?: boolean
+  removeHash?: boolean
+  preserveSpaHashRoutes?: boolean
+}
+
+export const DEFAULT_DETECT_OPTIONS: DetectDuplicateOptions = {
+  stripWww: true,
+  normalizeProtocol: true,
+  stripDefaultDocument: true,
+  removeHash: true,
+  preserveSpaHashRoutes: true
+}
+
+export interface ParsedUrlSegments {
+  protocol: string
+  subdomainPrefix: string
+  domain: string
+  pathname: string
+  search: string
+  hash: string
+  searchParamsList: Array<{ key: string; value: string }>
+}
+
 /**
- * Detects exact and possible duplicate tabs.
- * @param {MinimalTab[]} tabs
- * @returns {DuplicateDetectionResult}
+ * Parses a URL into structured segments for visual highlighting and diffing.
+ * @param {string} urlString
+ * @returns {ParsedUrlSegments}
  */
-export function detectDuplicateTabs(tabs: MinimalTab[]): DuplicateDetectionResult {
-  // Logic: Find exact matches by url, and possible matches by normalized url
-  const urlSeen = new Map<string, MinimalTab[]>()
-  const cleanUrlMap = new Map<string, MinimalTab[]>()
-
-  for (const tab of tabs) {
-    if (!tab.url) continue
-
-    // Group exact URLs
-    const exactList = urlSeen.get(tab.url) || []
-    exactList.push(tab)
-    urlSeen.set(tab.url, exactList)
-
-    // Group clean URLs
-    const cleanUrl = normalizeUrl(tab.url)
-    const cleanList = cleanUrlMap.get(cleanUrl) || []
-    cleanList.push(tab)
-    cleanUrlMap.set(cleanUrl, cleanList)
-  }
-
-  // Exact duplicate tabs
-  const exactDuplicates: MinimalTab[] = []
-  let exactDuplicateCount = 0
-  for (const group of urlSeen.values()) {
-    if (group.length > 1) {
-      exactDuplicateCount += group.length - 1
-      exactDuplicates.push(...group.slice(1))
+export function parseUrlSegments(urlString: string): ParsedUrlSegments {
+  // Logic: Split URL into protocol, subdomain, domain, pathname, search params and hash
+  if (!urlString) {
+    return {
+      protocol: '',
+      subdomainPrefix: '',
+      domain: '',
+      pathname: '',
+      search: '',
+      hash: '',
+      searchParamsList: []
     }
   }
 
-  // Possible duplicates
-  const possibleDuplicates: PossibleDuplicateCluster[] = []
-  let possibleDuplicateCount = 0
+  try {
+    const url = new URL(urlString)
+    const protocol = url.protocol ? `${url.protocol}//` : ''
+    const fullHostname = url.hostname || ''
+    
+    let subdomainPrefix = ''
+    let domain = fullHostname
+    if (fullHostname.startsWith('www.')) {
+      subdomainPrefix = 'www.'
+      domain = fullHostname.slice(4)
+    }
 
-  for (const [cleanUrl, group] of cleanUrlMap.entries()) {
+    const searchParamsList: Array<{ key: string; value: string }> = []
+    url.searchParams.forEach((value, key) => {
+      searchParamsList.push({ key, value })
+    })
+
+    const pathname = url.pathname === '/' && (url.search || url.hash) ? '/' : (url.pathname === '/' ? '' : url.pathname)
+
+    return {
+      protocol,
+      subdomainPrefix,
+      domain,
+      pathname,
+      search: url.search || '',
+      hash: url.hash || '',
+      searchParamsList
+    }
+  } catch {
+    return {
+      protocol: '',
+      subdomainPrefix: '',
+      domain: '',
+      pathname: urlString,
+      search: '',
+      hash: '',
+      searchParamsList: []
+    }
+  }
+}
+
+/**
+ * Extracts stripped tracking parameters and hash differences from a raw URL.
+ * @param {string} rawUrl
+ * @param {string} [cleanUrl]
+ * @returns {UrlVariantDiff}
+ */
+export function getUrlVariantDifferences(rawUrl: string, cleanUrl?: string): UrlVariantDiff {
+  // Logic: Identify stripped tracking query parameters, hash differences, protocol, and host differences
+  const strippedParams: string[] = []
+  let hash: string | undefined
+  let protocolDiff = false
+  let wwwDiff = false
+  let defaultDocDiff: string | undefined
+  let trailingSlashDiff = false
+  const reasons: string[] = []
+
+  try {
+    const raw = new URL(rawUrl)
+    if (raw.hash && raw.hash !== '#' && !isSpaHashRoute(raw.hash)) {
+      hash = raw.hash
+      reasons.push(hash.length > 15 ? hash.slice(0, 14) + '…' : hash)
+    }
+
+    raw.searchParams.forEach((_, key) => {
+      if (isTrackingParam(key)) {
+        strippedParams.push(key)
+      }
+    })
+
+    if (strippedParams.length > 0) {
+      reasons.unshift(`+${strippedParams.length} param${strippedParams.length > 1 ? 's' : ''}`)
+    }
+
+    if (cleanUrl) {
+      const clean = new URL(cleanUrl)
+      if (raw.protocol !== clean.protocol) {
+        protocolDiff = true
+        reasons.push(raw.protocol.replace(':', ''))
+      }
+      if (raw.hostname.startsWith('www.') && !clean.hostname.startsWith('www.')) {
+        wwwDiff = true
+        reasons.push('www')
+      }
+      const rawDocMatch = raw.pathname.match(DEFAULT_DOC_REGEX)
+      if (rawDocMatch && !clean.pathname.match(DEFAULT_DOC_REGEX)) {
+        defaultDocDiff = rawDocMatch[1]
+        reasons.push(rawDocMatch[1])
+      }
+      if (raw.pathname.endsWith('/') && !clean.pathname.endsWith('/') && raw.pathname.length > 1) {
+        trailingSlashDiff = true
+      }
+    }
+  } catch {
+    // Ignore parse errors for invalid URLs
+  }
+
+  return {
+    strippedParams,
+    hash,
+    protocolDiff,
+    wwwDiff,
+    defaultDocDiff,
+    trailingSlashDiff,
+    trackingParamCount: strippedParams.length,
+    reasons
+  }
+}
+
+/**
+ * Calculates a priority score to identify the optimal keeper tab within a duplicate cluster.
+ * @param {MinimalTab} tab
+ * @param {string} [cleanUrl]
+ * @returns {number}
+ */
+export function calculateKeeperTabScore(tab: MinimalTab, cleanUrl?: string): number {
+  // Logic: Score tab candidates based on active status, pinned status, audio, and URL cleanliness
+  let score = 0
+  if (tab.active) score += 10000
+  if (tab.pinned) score += 5000
+  if (tab.audible) score += 3000
+  if (typeof tab.groupId === 'number' && tab.groupId > 0) score += 1000
+
+  if (tab.url) {
+    if (cleanUrl && tab.url === cleanUrl) {
+      score += 200
+    } else {
+      const diff = getUrlVariantDifferences(tab.url, cleanUrl)
+      score -= diff.trackingParamCount * 10
+      if (diff.hash && !isSpaHashRoute(diff.hash)) score -= 5
+    }
+  }
+
+  if (tab.title && tab.title.trim() !== '' && tab.title !== 'Untitled' && !tab.title.startsWith('Loading')) {
+    score += 50
+  }
+
+  if (typeof tab.index === 'number') {
+    score -= tab.index * 0.01
+  }
+
+  return score
+}
+
+/**
+ * Groups tabs by exact raw URL and canonical clean URL.
+ * @param {MinimalTab[]} tabs
+ * @param {DetectDuplicateOptions} options
+ * @returns {{ urlSeen: Map<string, MinimalTab[]>; cleanUrlMap: Map<string, MinimalTab[]> }}
+ */
+export function groupTabsByUrl(
+  tabs: MinimalTab[],
+  options: DetectDuplicateOptions
+): { urlSeen: Map<string, MinimalTab[]>; cleanUrlMap: Map<string, MinimalTab[]> } {
+  // Logic: Group tabs into exact matching and canonical clean URL collections
+  const urlSeen = new Map<string, MinimalTab[]>()
+  const cleanUrlMap = new Map<string, MinimalTab[]>()
+  const cleanCache = new Map<string, string>()
+
+  let i = 0
+  let tab: MinimalTab
+  let exactList: MinimalTab[] | undefined
+  let cleanUrl = ''
+  let cleanList: MinimalTab[] | undefined
+
+  for (i = 0; i < tabs.length; i++) {
+    tab = tabs[i]
+    if (!tab.url) continue
+
+    exactList = urlSeen.get(tab.url)
+    if (!exactList) {
+      exactList = []
+      urlSeen.set(tab.url, exactList)
+    }
+    exactList.push(tab)
+
+    cleanUrl = cleanCache.get(tab.url) || ''
+    if (!cleanUrl) {
+      cleanUrl = normalizeUrl(tab.url, options)
+      cleanCache.set(tab.url, cleanUrl)
+    }
+
+    cleanList = cleanUrlMap.get(cleanUrl)
+    if (!cleanList) {
+      cleanList = []
+      cleanUrlMap.set(cleanUrl, cleanList)
+    }
+    cleanList.push(tab)
+  }
+
+  return { urlSeen, cleanUrlMap }
+}
+
+/**
+ * Extracts exact duplicate tabs from exact URL groupings.
+ * @param {Map<string, MinimalTab[]>} urlSeen
+ * @returns {{ exactDuplicates: MinimalTab[]; exactDuplicateCount: number; exactDupIdSet: Set<number> }}
+ */
+export function extractExactDuplicates(
+  urlSeen: Map<string, MinimalTab[]>
+): { exactDuplicates: MinimalTab[]; exactDuplicateCount: number; exactDupIdSet: Set<number> } {
+  // Logic: Identify tabs with identical raw URLs beyond the primary instance
+  const exactDuplicates: MinimalTab[] = []
+  const exactDupIdSet = new Set<number>()
+  let exactDuplicateCount = 0
+  let group: MinimalTab[]
+  let j = 0
+  let t: MinimalTab
+
+  for (group of urlSeen.values()) {
     if (group.length > 1) {
-      const uniqueExactUrls = new Set(group.map(t => t.url))
-      if (uniqueExactUrls.size > 1) {
-        possibleDuplicateCount += group.length - 1
-        const domain = extractDomain(cleanUrl) || (group[0].url ? extractDomain(group[0].url) : 'unknown')
-        possibleDuplicates.push({
-          cleanUrl,
-          domain,
-          tabs: group
-        })
+      exactDuplicateCount += group.length - 1
+      for (j = 1; j < group.length; j++) {
+        t = group[j]
+        exactDuplicates.push(t)
+        if (typeof t.id === 'number') {
+          exactDupIdSet.add(t.id)
+        }
       }
     }
   }
 
+  return { exactDuplicates, exactDuplicateCount, exactDupIdSet }
+}
+
+/**
+ * Aggregates distinct reasons why tabs in the cluster differ from canonical form.
+ * @param {MinimalTab[]} tabs
+ * @returns {string[]}
+ */
+export function buildClusterMatchReasons(tabs: MinimalTab[]): string[] {
+  // Logic: Extract match tags across all variant diffs
+  const reasons = new Set<string>()
+  let k = 0
+  let diff: UrlVariantDiff | undefined
+
+  for (k = 0; k < tabs.length; k++) {
+    diff = tabs[k].diff
+    if (!diff) continue
+    if (diff.trackingParamCount > 0) reasons.add('tracking_params')
+    if (diff.hash) reasons.add('hash_fragment')
+    if (diff.protocolDiff) reasons.add('protocol')
+    if (diff.wwwDiff) reasons.add('subdomain_www')
+    if (diff.defaultDocDiff) reasons.add('default_doc')
+    if (diff.trailingSlashDiff) reasons.add('trailing_slash')
+  }
+
+  return Array.from(reasons)
+}
+
+/**
+ * Builds cluster objects for canonical URL groupings that contain variant duplicates.
+ * @param {Map<string, MinimalTab[]>} cleanUrlMap
+ * @param {Set<number>} exactDupIdSet
+ * @returns {{ possibleDuplicates: PossibleDuplicateCluster[]; possibleDuplicateCount: number }}
+ */
+export function buildPossibleDuplicateClusters(
+  cleanUrlMap: Map<string, MinimalTab[]>,
+  exactDupIdSet: Set<number>
+): { possibleDuplicates: PossibleDuplicateCluster[]; possibleDuplicateCount: number } {
+  // Logic: Construct clusters for clean URLs containing differing URL variants
+  const possibleDuplicates: PossibleDuplicateCluster[] = []
+  let possibleDuplicateCount = 0
+
+  let cleanUrl = ''
+  let group: MinimalTab[]
+  let uniqueExactUrls: Set<string>
+  let keeperTab: MinimalTab
+  let primaryTabId: number | undefined
+  let bestScore = -Infinity
+  let score = 0
+  let tab: MinimalTab
+  let k = 0
+  let domain = ''
+  let representativeTitle = ''
+  let exactInCluster = 0
+  let variantsInCluster = 0
+  let diff: UrlVariantDiff
+
+  for (const entry of cleanUrlMap.entries()) {
+    cleanUrl = entry[0]
+    group = entry[1]
+    if (group.length < 2) continue
+
+    uniqueExactUrls = new Set()
+    for (k = 0; k < group.length; k++) {
+      if (group[k].url) uniqueExactUrls.add(group[k].url!)
+    }
+    if (uniqueExactUrls.size <= 1) continue
+
+    bestScore = -Infinity
+    keeperTab = group[0]
+    for (k = 0; k < group.length; k++) {
+      score = calculateKeeperTabScore(group[k], cleanUrl)
+      if (score > bestScore) {
+        bestScore = score
+        keeperTab = group[k]
+      }
+    }
+    primaryTabId = keeperTab.id
+
+    exactInCluster = 0
+    variantsInCluster = 0
+    for (k = 0; k < group.length; k++) {
+      tab = group[k]
+      diff = getUrlVariantDifferences(tab.url || '', cleanUrl)
+      tab.diff = diff
+      if (tab.id !== primaryTabId) {
+        if (tab.url === keeperTab.url) {
+          tab.isExactDuplicate = true
+          exactInCluster++
+        } else {
+          variantsInCluster++
+          possibleDuplicateCount++
+        }
+      }
+    }
+
+    domain = extractDomain(cleanUrl) || (group[0].url ? extractDomain(group[0].url) : 'unknown')
+    representativeTitle = group.find(t => t.title && t.title.trim() !== '' && t.title !== 'Untitled')?.title || group[0].title || ''
+
+    possibleDuplicates.push({
+      cleanUrl,
+      domain,
+      title: representativeTitle,
+      primaryTabId,
+      exactCopiesCount: exactInCluster,
+      variantCopiesCount: variantsInCluster,
+      matchReasons: buildClusterMatchReasons(group),
+      tabs: group
+    })
+  }
+
+  return { possibleDuplicates, possibleDuplicateCount }
+}
+
+/**
+ * Detects exact and possible duplicate tabs across browser windows.
+ * @param {MinimalTab[]} tabs
+ * @param {DetectDuplicateOptions} [options]
+ * @returns {DuplicateDetectionResult}
+ */
+export function detectDuplicateTabs(tabs: MinimalTab[], options?: DetectDuplicateOptions): DuplicateDetectionResult {
+  // Logic: Identify exact URL duplicates and canonical URL variant clusters
+  const opts = { ...DEFAULT_DETECT_OPTIONS, ...options }
+  const { urlSeen, cleanUrlMap } = groupTabsByUrl(tabs, opts)
+  const { exactDuplicates, exactDuplicateCount, exactDupIdSet } = extractExactDuplicates(urlSeen)
+  const { possibleDuplicates, possibleDuplicateCount } = buildPossibleDuplicateClusters(cleanUrlMap, exactDupIdSet)
 
   return {
     exactDuplicateCount,
