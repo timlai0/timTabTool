@@ -8,12 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **SPA Routing False-Positive Collisions**: Introduced `isSpaHashRoute` guard to strictly preserve client-side hash routes (`#/dashboard` vs `#/settings`) during URL normalization, preventing accidental clustering and closure of distinct web application views.
+- **Metric Inflation & Double-Counting in Duplicate Clusters**: Resolved an issue where exact duplicate copies inside mixed clusters were counted towards both exact and possible duplicate counts, standardizing cluster accounting.
 - **Action Badge Lifecycle & Stuck "AI" Icon**: Resolved an issue where the extension badge remained permanently stuck on `"AI"` after service worker suspension, browser restart, unhandled abort, or window closure.
 - **Orphaned Badge & Background State Reconciliation**: Added startup and wake-up validation across `chrome.runtime.onStartup`, `chrome.runtime.onInstalled`, and service worker initialization to reconcile in-memory tasks and reset stale `"AI"` badges.
 - **Multi-Window Badge Synchronization**: Added active AI task set tracking (`activeAIOperationWindows`) and window focus/activation listeners (`chrome.windows.onFocusChanged`, `chrome.tabs.onActivated`) to ensure background tasks in other windows do not prematurely wipe or desynchronize duplicate tab badge indicators.
 - **Operation Type Cleanup in `splitGroup` and `mergeGroup`**: Fixed incorrect operation type comparison checks in `finally` cleanup blocks that previously prevented active operation state clearing.
+- **Gemini Reasoning Separation & Fallback**: Corrected candidate part segregation in `chatGemini` to ensure thought parts are not inadvertently treated as completion text when text parts are absent.
 
 ### Added
+- **Comprehensive Possible Duplication Detection**: Multi-stage URL canonicalization supporting modern tracking parameter stripping (`srsltid`, `rdt_cid`, `igsh`, `mibextid`), protocol normalization (`http:` to `https:`), `www.` host canonicalization, default index document normalization (`/index.html`, `/index.php`, `/default.aspx`), and section anchor matching.
+- **Intelligent Keeper Tab Scoring (`calculateKeeperTabScore`)**: Priority ranking that automatically evaluates candidate tabs in a cluster based on active focus (+10,000), pinned state (+5,000), audio playback (+3,000), group membership (+1,000), and clean canonical URL form (+200), ensuring user-focused tabs are safely retained.
+- **Visual Variant Differences & Badges**: Precalculated diff badges (`+N params`, `#anchor`, `http`, `www`, default doc) and match reason summaries in the popup duplicates popover, with dedicated indicators for exact duplicate copies in mixed clusters.
+- **High-Throughput Batch Performance Benchmark**: Added dedicated 5,000-tab benchmark achieving sub-100ms execution times.
+- **Google Gemini Live Reasoning Streaming**: Integrated `:streamGenerateContent?alt=sse` into `chatGemini` with Server-Sent Events decoding, live thought/reasoning token delta extraction (`part.thought`), and throttled real-time progress updates matching the OpenRouter experience across the active ops popover, search overlay toast, and chat views.
+- **Google Gemini Schema Recovery & Model Presets**: Added automated HTTP 400 Bad Request recovery to strip `thinkingConfig` when targeting models without reasoning support, alongside 1-click popular presets for Gemini models in Settings (`gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-3.5-flash`).
+
 - OpenRouter advanced routing strategies (`openrouterSort`): support for `price` (lowest price), `throughput` (highest completion speed), and `latency` (lowest time to first token) routing preferences.
 - OpenRouter data collection privacy policy (`openrouterDataCollection`): support for `deny` to strictly enforce zero data retention upstream routing.
 - OpenRouter automated model fallback chain (`openrouterFallbackModels`) with `models: [...]` array injection for high availability and automated failover.

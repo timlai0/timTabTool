@@ -1,7 +1,7 @@
 {
   "name": "timtabtool",
   "private": true,
-  "version": "1.2.0.3",
+  "version": "1.2.0.20",
   "type": "module",
   "scripts": {
     "dev": "vite",

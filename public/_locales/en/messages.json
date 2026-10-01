@@ -267,6 +267,18 @@
     "message": "Classifying...",
     "description": "Button state while classifying new tabs"
   },
+  "checkLast20Tabs": {
+    "message": "Check & Regroup Last 20 Tabs",
+    "description": "Button to check if the last 20 tabs are in correct groups and regroup them if needed"
+  },
+  "checkingLast20Tabs": {
+    "message": "Checking Last 20...",
+    "description": "Button state while checking and regrouping the last 20 tabs"
+  },
+  "checkLast20Tooltip": {
+    "message": "Check if the last 20 tabs are in correct groups, and regroup them if needed. Hold Shift + click to save a detailed verbose log in Settings.",
+    "description": "Tooltip for check and regroup last 20 tabs button"
+  },
   "fallbackToSort": {
     "message": "When AI fails, sort with fallback",
     "description": "Toggle in settings to physically sort tabs by domain and title on AI grouping failure"
@@ -300,11 +312,11 @@
     "description": "Prompt message when cleaning up small groups"
   },
   "contextMenuOpenSearch": {
-    "message": "Open Search",
+    "message": "Quick Search Overlay",
     "description": "Context menu item to open search overlay"
   },
   "contextMenuOpenSearchWindow": {
-    "message": "Open Search in New Window",
+    "message": "Search in New Window",
     "description": "Context menu item to open search page in a new window"
   },
   "sort": {
@@ -338,5 +350,57 @@
   "mergeAllWindowsIntoThis": {
     "message": "Merge all windows into this one",
     "description": "Button label in overflow menu to merge all other windows into this window"
+  },
+  "restorableClosedTabs": {
+    "message": "Restorable Closed Tabs",
+    "description": "Section header for tabs closed by this extension"
+  },
+  "restorableClosedTabsDesc": {
+    "message": "Tabs closed by TabPilot actions (such as duplicate cleanups or closing groups) can be reopened here.",
+    "description": "Description for restorable closed tabs section"
+  },
+  "restoreAll": {
+    "message": "Restore All",
+    "description": "Button to restore all closed tabs"
+  },
+  "restoreTab": {
+    "message": "Restore",
+    "description": "Button to restore an individual closed tab"
+  },
+  "restoreBatch": {
+    "message": "Restore Batch",
+    "description": "Button to restore an entire batch of closed tabs"
+  },
+  "clearClosedTabs": {
+    "message": "Clear History",
+    "description": "Button to clear the list of closed tabs"
+  },
+  "noClosedTabs": {
+    "message": "No tabs closed by TabPilot yet.",
+    "description": "Empty state message for closed tabs section"
+  },
+  "contextMenuSearchTabs": {
+    "message": "Search Tabs",
+    "description": "Context menu parent item for tab search"
+  },
+  "contextMenuOpenSearchTab": {
+    "message": "Search in New Tab",
+    "description": "Context menu item to open search in new tab"
+  },
+  "contextMenuGroupAll": {
+    "message": "Group Tabs (AI)",
+    "description": "Context menu item to group tabs using AI"
+  },
+  "contextMenuCleanupGroups": {
+    "message": "Clean Up Tab Groups",
+    "description": "Context menu item to clean up small tab groups"
+  },
+  "contextMenuUngroupAll": {
+    "message": "Ungroup All Tabs",
+    "description": "Context menu item to ungroup all tabs"
+  },
+  "contextMenuMoveToOtherWindow": {
+    "message": "Move Tab to Other Window",
+    "description": "Context menu item to move current tab to another window"
   }
 }

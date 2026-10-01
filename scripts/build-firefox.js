@@ -16,9 +16,12 @@ try {
   const manifestData = fs.readFileSync(manifestPath, 'utf8');
   const manifest = JSON.parse(manifestData);
 
-  // 1. Modify permissions (remove Chrome-specific "favicon" permission)
+  // 1. Modify permissions (remove Chrome-specific "favicon" permission, ensure Firefox "menus" permission)
   if (manifest.permissions) {
     manifest.permissions = manifest.permissions.filter(p => p !== 'favicon');
+    if (!manifest.permissions.includes('menus')) {
+      manifest.permissions.push('menus');
+    }
   }
 
   // 2. Modify web_accessible_resources (remove Chrome-specific _favicon resource)
