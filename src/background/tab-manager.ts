@@ -5,7 +5,8 @@ import { extractDomain, normalizeUrl, detectDuplicateTabs } from '../shared/util
 import { getMessage } from '../shared/i18n'
 import { AIClient, SYSTEM_PROMPT } from '../shared/ai-client'
 import { AILogger, setActivityCallback } from '../shared/ai-logger'
-import type { GroupCategory, GroupedTabs, TabInfo, ExtensionSettings, ChromeTabGroupColor, LastAIResult, OperationStatusInfo, OperationStage, AIProgressUpdate, OperationRetryInfo } from '../shared/types'
+import { recordClosedTabs, recordTabIdsBeforeClose } from '../shared/closed-tabs-manager'
+import type { GroupCategory, GroupedTabs, TabInfo, ExtensionSettings, ChromeTabGroupColor, LastAIResult, OperationStatusInfo, OperationStage, AIProgressUpdate, OperationRetryInfo, RegroupLast20Result, ReviewAndRegroupDecision, ReviewAndRegroupTabInput } from '../shared/types'
 
 function isTabGroupsSupported(): boolean {
   return typeof chrome !== 'undefined' && typeof chrome.tabGroups !== 'undefined'
@@ -230,13 +231,15 @@ export function updateOperationProgress(
 
   activeOperationsMap.set(windowId, updated)
 
-  chrome.runtime.sendMessage({
-    action: 'AI_OPERATION_PROGRESS',
-    payload: {
-      windowId,
-      status: updated,
-    }
-  }).catch(() => {})
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    chrome.runtime.sendMessage({
+      action: 'AI_OPERATION_PROGRESS',
+      payload: {
+        windowId,
+        status: updated,
+      }
+    }).catch(() => {})
+  }
 
   if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
     chrome.runtime.sendMessage({
@@ -246,7 +249,7 @@ export function updateOperationProgress(
   }
 }
 
-export function setActiveOperation(windowId: number, type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | null, error: string | null = null): void {
+export function setActiveOperation(windowId: number, type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup' | null, error: string | null = null): void {
   if (type === null && error === null) {
     activeOperationsMap.delete(windowId)
     operationStartTimestamps.delete(windowId)
@@ -402,6 +405,7 @@ function chromeTabToTabInfo(tab: chrome.tabs.Tab): TabInfo | null {
     index: tab.index,
     active: tab.active,
     pinned: tab.pinned,
+    audible: tab.audible,
     lastAccessed: tab.lastAccessed,
     createdAt: tabCreatedTimesMap.get(tab.id) ?? tab.lastAccessed,
   }
@@ -706,19 +710,8 @@ export async function updateNewTabsBadge(windowId?: number): Promise<void> {
       }
     }
 
-    const urlCounts = new Map<string, number>()
-    for (const t of tabs) {
-      if (t.url) {
-        urlCounts.set(t.url, (urlCounts.get(t.url) || 0) + 1)
-      }
-    }
-
-    let duplicateCount = 0
-    for (const count of urlCounts.values()) {
-      if (count > 1) {
-        duplicateCount += count - 1
-      }
-    }
+    const result = detectDuplicateTabs(tabs)
+    const duplicateCount = result.exactDuplicateCount
 
     await chrome.action.setBadgeText({ text: duplicateCount > 0 ? String(duplicateCount) : '' })
     await chrome.action.setBadgeBackgroundColor({ color: duplicateCount > 0 ? 'red' : '#6B7280' })
@@ -1655,10 +1648,455 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
 }
 
 /**
+ * Select the last 20 unpinned tabs in a window.
+ */
+function getLast20UnpinnedTabs(tabs: chrome.tabs.Tab[]): chrome.tabs.Tab[] {
+  const unpinned = tabs
+    .filter((t) => !t.pinned && t.id !== undefined)
+    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+  return unpinned.slice(-20)
+}
+
+/**
+ * Build mapping of group names and IDs for existing groups.
+ */
+function buildExistingGroupsMap(allGroups: chrome.tabGroups.TabGroup[]): {
+  groupNameToId: Map<string, number>
+  groupIdToName: Map<number, string>
+  existingGroupNames: string[]
+} {
+  const groupNameToId = new Map<string, number>()
+  const groupIdToName = new Map<number, string>()
+  for (const g of allGroups) {
+    const rawName = groupTitleMap.get(g.id) || g.title
+    const name = (rawName && rawName.trim().length > 0) ? rawName.trim() : `Group ${g.id}`
+    groupNameToId.set(name, g.id)
+    groupIdToName.set(g.id, name)
+  }
+  return {
+    groupNameToId,
+    groupIdToName,
+    existingGroupNames: [...groupNameToId.keys()],
+  }
+}
+
+interface RegroupPlan {
+  existingGroupUpdates: Map<number, number[]>
+  newGroupUpdates: Map<string, { tabIds: number[]; color: ChromeTabGroupColor }>
+  tabsToUngroup: number[]
+  unchangedCount: number
+  regroupedCount: number
+}
+
+function addTabToExistingGroup(
+  tabId: number,
+  targetGid: number,
+  currentGid: number | undefined,
+  plan: RegroupPlan
+): void {
+  if (currentGid === targetGid) {
+    plan.unchangedCount++
+  } else {
+    if (!plan.existingGroupUpdates.has(targetGid)) plan.existingGroupUpdates.set(targetGid, [])
+    plan.existingGroupUpdates.get(targetGid)!.push(tabId)
+    plan.regroupedCount++
+  }
+}
+
+function addTabToNewGroup(
+  tabId: number,
+  newName: string,
+  color: ChromeTabGroupColor,
+  currentName: string,
+  plan: RegroupPlan
+): void {
+  if (currentName && currentName.toLowerCase() === newName.toLowerCase()) {
+    plan.unchangedCount++
+  } else {
+    if (!plan.newGroupUpdates.has(newName)) plan.newGroupUpdates.set(newName, { tabIds: [], color })
+    plan.newGroupUpdates.get(newName)!.tabIds.push(tabId)
+    plan.regroupedCount++
+  }
+}
+
+function categorizeTabDecision(
+  tab: chrome.tabs.Tab,
+  decision: ReviewAndRegroupDecision,
+  groupNameToId: Map<string, number>,
+  groupIdToName: Map<number, string>,
+  plan: RegroupPlan
+): void {
+  const currentGid = tab.groupId !== undefined && tab.groupId !== TAB_GROUP_ID_NONE ? tab.groupId : undefined
+  const currentName = currentGid !== undefined ? (groupIdToName.get(currentGid) || '') : ''
+
+  if (decision.group === 'KEEP') {
+    plan.unchangedCount++
+    return
+  }
+  if (decision.group === '_ungrouped_' || decision.group === 'UNGROUPED') {
+    if (currentGid !== undefined) {
+      plan.tabsToUngroup.push(tab.id!)
+      plan.regroupedCount++
+    } else {
+      plan.unchangedCount++
+    }
+    return
+  }
+
+  const targetGid = groupNameToId.get(decision.group) ?? (decision.newGroupName ? groupNameToId.get(decision.newGroupName) : undefined)
+  if (targetGid !== undefined) {
+    addTabToExistingGroup(tab.id!, targetGid, currentGid, plan)
+    return
+  }
+
+  const newName = decision.newGroupName || decision.group || 'New Group'
+  const color = (decision.newGroupColor as ChromeTabGroupColor) || 'grey'
+  addTabToNewGroup(tab.id!, newName, color, currentName, plan)
+}
+
+function buildRegroupPlan(
+  targetTabs: chrome.tabs.Tab[],
+  decisions: ReviewAndRegroupDecision[],
+  groupNameToId: Map<string, number>,
+  groupIdToName: Map<number, string>
+): RegroupPlan {
+  const plan: RegroupPlan = {
+    existingGroupUpdates: new Map<number, number[]>(),
+    newGroupUpdates: new Map<string, { tabIds: number[]; color: ChromeTabGroupColor }>(),
+    tabsToUngroup: [],
+    unchangedCount: 0,
+    regroupedCount: 0,
+  }
+
+  const decisionsByTab = new Map<number, ReviewAndRegroupDecision>()
+  for (const d of decisions) {
+    decisionsByTab.set(d.index, d)
+  }
+
+  for (let idx = 0; idx < targetTabs.length; idx++) {
+    const tab = targetTabs[idx]
+    if (!tab?.id) continue
+    const decision = decisionsByTab.get(idx) || { index: idx, group: 'KEEP' }
+    categorizeTabDecision(tab, decision, groupNameToId, groupIdToName, plan)
+  }
+
+  return plan
+}
+
+async function applyExistingGroupMoves(
+  existingGroupUpdates: Map<number, number[]>,
+  currentTabIdsSet: Set<number>,
+  signal?: AbortSignal
+): Promise<void> {
+  for (const [groupId, tabIds] of existingGroupUpdates) {
+    if (signal?.aborted) return
+    const valid = tabIds.filter((id) => currentTabIdsSet.has(id))
+    if (valid.length === 0) continue
+
+    const groupTabs = await chrome.tabs.query({ groupId })
+    if (groupTabs.length > 0) {
+      groupTabs.sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+      const targetIndex = (groupTabs[groupTabs.length - 1].index ?? 0) + 1
+      await retryTabOperation(() =>
+        chrome.tabs.move(valid, { index: targetIndex })
+      )
+    }
+    await retryTabOperation(() => chrome.tabs.group({ tabIds: valid as [number, ...number[]], groupId }))
+  }
+}
+
+async function applyNewGroupCreations(
+  newGroupUpdates: Map<string, { tabIds: number[]; color: ChromeTabGroupColor }>,
+  currentTabIdsSet: Set<number>,
+  windowId: number,
+  hideTitles: boolean,
+  signal?: AbortSignal
+): Promise<string[]> {
+  const createdNames: string[] = []
+  for (const [name, { tabIds, color }] of newGroupUpdates) {
+    if (signal?.aborted) return createdNames
+    const valid = tabIds.filter((id) => currentTabIdsSet.has(id))
+    if (valid.length === 0) continue
+
+    const newGid = await retryTabOperation(() =>
+      chrome.tabs.group({
+        tabIds: valid as [number, ...number[]],
+        createProperties: { windowId },
+      })
+    )
+    if (newGid !== undefined) {
+      groupTitleMap.set(newGid, name)
+      createdNames.push(name)
+      await retryTabOperation(() =>
+        chrome.tabGroups.update(newGid, {
+          title: hideTitles ? '' : name,
+          color: color || 'grey',
+        })
+      )
+    }
+  }
+  return createdNames
+}
+
+async function applyUngroupMoves(
+  tabsToUngroup: number[],
+  currentTabIdsSet: Set<number>,
+  signal?: AbortSignal
+): Promise<void> {
+  if (tabsToUngroup.length === 0 || signal?.aborted) return
+  const valid = tabsToUngroup.filter((id) => currentTabIdsSet.has(id))
+  if (valid.length > 0) {
+    await retryTabOperation(() => chrome.tabs.ungroup(valid as [number, ...number[]]))
+  }
+}
+
+async function applyRegroupPlan(
+  plan: RegroupPlan,
+  windowId: number,
+  hideTitles: boolean,
+  signal?: AbortSignal
+): Promise<string[]> {
+  const currentTabs = await chrome.tabs.query({ windowId })
+  const currentTabIdsSet = new Set(currentTabs.map((t) => t.id).filter((id): id is number => id !== undefined))
+
+  await applyExistingGroupMoves(plan.existingGroupUpdates, currentTabIdsSet, signal)
+  const createdNames = await applyNewGroupCreations(plan.newGroupUpdates, currentTabIdsSet, windowId, hideTitles, signal)
+  await applyUngroupMoves(plan.tabsToUngroup, currentTabIdsSet, signal)
+
+  return createdNames
+}
+
+async function recordRegroupCompleted(
+  windowId: number,
+  targetTabsCount: number,
+  groupsBefore: number,
+  createdNames: string[],
+  summary: string,
+  logger?: AILogger
+): Promise<void> {
+  const finalGroups = isTabGroupsSupported() ? await chrome.tabGroups.query({ windowId }) : []
+  if (logger) {
+    await logger.markCompleted({
+      createdGroupsCount: createdNames.length,
+      createdGroupNames: createdNames,
+      groupsBefore,
+      groupsAfter: finalGroups.length,
+      summary,
+    })
+  }
+
+  const lastResult: LastAIResult = {
+    timestamp: Date.now(),
+    actionType: 'regroup',
+    actionTitle: 'Check & Regroup Last 20 Tabs',
+    windowId,
+    tabsProcessed: targetTabsCount,
+    groupsBefore,
+    groupsAfter: finalGroups.length,
+    createdGroupNames: createdNames,
+    summary,
+  }
+  await chrome.storage.local.set({ [STORAGE_KEYS.LAST_AI_RESULT]: lastResult })
+  chrome.runtime.sendMessage({ action: 'LAST_AI_RESULT_UPDATED', payload: lastResult }).catch(() => {})
+}
+
+function initRegroupOperation(windowId: number): AbortController {
+  const existing = activeAbortControllers.get(windowId)
+  if (existing) existing.abort()
+
+  const controller = new AbortController()
+  setupOperationTimeout(windowId, controller)
+  activeAbortControllers.set(windowId, controller)
+  activeOperationsMap.set(windowId, { type: 'regroup', error: null })
+  activeAIOperationWindows.add(windowId)
+  return controller
+}
+
+async function resolveAISettings(aiOverrides?: Partial<ExtensionSettings['ai']>): Promise<ExtensionSettings> {
+  let settings = await getSettings()
+  if (aiOverrides) {
+    settings = {
+      ...settings,
+      ai: { ...settings.ai, ...aiOverrides },
+    }
+  }
+  if (!settings.ai.enabled || !settings.ai.apiKey) {
+    throw new Error('AI is not configured. Please enable AI and set an API key in Settings.')
+  }
+  return settings
+}
+
+function finishEmptyRegroup(windowId: number): RegroupLast20Result {
+  activeOperationsMap.delete(windowId)
+  operationStartTimestamps.delete(windowId)
+  return { checkedCount: 0, regroupedCount: 0, unchangedCount: 0, summary: 'No unpinned tabs found to check.' }
+}
+
+async function initRegroupLogger(
+  windowId: number,
+  aiConfig: ExtensionSettings['ai'],
+  targetTabs: chrome.tabs.Tab[],
+  existingGroupNames: string[],
+  aiOverrides?: Partial<ExtensionSettings['ai']>
+): Promise<AILogger | undefined> {
+  const alwaysLog = aiConfig.alwaysLogAIOperations ?? true
+  const isShift = Boolean(aiOverrides && ((aiOverrides as any).shiftKey || (aiOverrides as any).verboseLog))
+  if (!alwaysLog && !isShift) return undefined
+
+  const logger = await AILogger.create({
+    actionType: 'CHECK_LAST_20_TABS',
+    triggeredWithShift: isShift,
+    config: aiConfig,
+    tabsInput: targetTabs.map((t, idx) => ({ index: idx + 1, title: t.title || '', url: t.url, groupId: t.groupId })),
+    prompts: {
+      systemPrompt: SYSTEM_PROMPT,
+      userPrompt: 'Check if the last 20 tabs are in correct groups, and regroup them if needed.',
+    },
+    windowId,
+  })
+  const est = AIClient.estimateCostAndTokens(aiConfig, targetTabs.length, 'regroup', undefined, undefined, existingGroupNames)
+  logger.recordTokenEstimate(est.tokens, 0, est.costStr)
+  registerTimeoutLogger(windowId, logger)
+  return logger
+}
+
+async function queryAIDecisions(
+  windowId: number,
+  aiConfig: ExtensionSettings['ai'],
+  targetTabs: chrome.tabs.Tab[],
+  groupIdToName: Map<number, string>,
+  existingGroupNames: string[],
+  controller: AbortController,
+  logger?: AILogger
+): Promise<ReviewAndRegroupDecision[]> {
+  await setAIBadge(windowId)
+  operationStartTimestamps.set(windowId, Date.now())
+  const modelName = aiConfig.model || DEFAULT_MODELS[aiConfig.provider] || 'default'
+
+  updateOperationProgress(windowId, {
+    type: 'regroup',
+    error: null,
+    stage: 'preparing',
+    statusText: `Checking ${targetTabs.length} tab${targetTabs.length === 1 ? '' : 's'} for correct group assignment...`,
+    totalTabs: targetTabs.length,
+    processedTabs: 0,
+    model: modelName,
+    provider: aiConfig.provider,
+  })
+
+  const client = new AIClient(aiConfig, controller.signal, logger)
+  const tabInputs: ReviewAndRegroupTabInput[] = targetTabs.map((t) => ({
+    url: t.url || '',
+    title: t.title || '',
+    currentGroup: t.groupId !== undefined && t.groupId !== TAB_GROUP_ID_NONE ? (groupIdToName.get(t.groupId) || '') : undefined,
+    lastAccessed: t.lastAccessed,
+    createdAt: t.id !== undefined ? tabCreatedTimesMap.get(t.id) ?? t.lastAccessed : t.lastAccessed,
+  }))
+
+  return client.reviewAndRegroupTabs(tabInputs, existingGroupNames, false, (update: AIProgressUpdate) => {
+    updateOperationProgress(windowId, update)
+  })
+}
+
+async function executeRegroupDecisions(
+  windowId: number,
+  targetTabs: chrome.tabs.Tab[],
+  decisions: ReviewAndRegroupDecision[],
+  groupNameToId: Map<string, number>,
+  groupIdToName: Map<number, string>,
+  groupsBefore: number,
+  controller: AbortController,
+  logger?: AILogger
+): Promise<RegroupLast20Result> {
+  const plan = buildRegroupPlan(targetTabs, decisions, groupNameToId, groupIdToName)
+  const hideTitles = titlesHiddenMap.get(windowId) ?? false
+
+  let createdNames: string[] = []
+  if (plan.regroupedCount > 0) {
+    updateOperationProgress(windowId, {
+      stage: 'applying',
+      statusText: `Regrouping ${plan.regroupedCount} tab${plan.regroupedCount === 1 ? '' : 's'}...`,
+      totalTabs: targetTabs.length,
+      processedTabs: plan.unchangedCount,
+    })
+    createdNames = await applyRegroupPlan(plan, windowId, hideTitles, controller.signal)
+    invalidatePreviewCache(windowId)
+    await updateNewTabsBadge(windowId)
+  }
+
+  const summary = plan.regroupedCount > 0
+    ? `Checked ${targetTabs.length} tabs: regrouped ${plan.regroupedCount} (${plan.unchangedCount} already correct)`
+    : `Checked ${targetTabs.length} tabs: all tabs are already in correct groups`
+
+  await recordRegroupCompleted(windowId, targetTabs.length, groupsBefore, createdNames, summary, logger)
+  return { checkedCount: targetTabs.length, regroupedCount: plan.regroupedCount, unchangedCount: plan.unchangedCount, summary }
+}
+
+function cleanupRegroupOperation(windowId: number, controller: AbortController): void {
+  activeAIOperationWindows.delete(windowId)
+  clearOperationTimeout(windowId)
+  if (activeAbortControllers.get(windowId) === controller) {
+    activeAbortControllers.delete(windowId)
+  }
+  if (activeOperationsMap.get(windowId)?.type === 'regroup') {
+    activeOperationsMap.delete(windowId)
+  }
+  operationStartTimestamps.delete(windowId)
+}
+
+/**
+ * Check if the last 20 tabs are in correct groups, and regroup them if needed.
+ * @param {number} windowId - The ID of the target window.
+ * @param {Partial<ExtensionSettings['ai']>} [aiOverrides] - Optional AI configuration overrides.
+ * @returns {Promise<RegroupLast20Result>} The result of checking and regrouping.
+ */
+export async function checkAndRegroupLast20Tabs(
+  windowId: number,
+  aiOverrides?: Partial<ExtensionSettings['ai']>
+): Promise<RegroupLast20Result> {
+  if (!isTabGroupsSupported()) {
+    throw new Error('Tab grouping is not supported in this browser.')
+  }
+  const controller = initRegroupOperation(windowId)
+
+  try {
+    const settings = await resolveAISettings(aiOverrides)
+    const allTabs = await chrome.tabs.query({ windowId })
+    const allGroups = await chrome.tabGroups.query({ windowId })
+    const targetTabs = getLast20UnpinnedTabs(allTabs)
+
+    if (targetTabs.length === 0) {
+      return finishEmptyRegroup(windowId)
+    }
+
+    const { groupNameToId, groupIdToName, existingGroupNames } = buildExistingGroupsMap(allGroups)
+    const logger = await initRegroupLogger(windowId, settings.ai, targetTabs, existingGroupNames, aiOverrides)
+
+    const decisions = await queryAIDecisions(windowId, settings.ai, targetTabs, groupIdToName, existingGroupNames, controller, logger)
+    if (controller.signal.aborted) {
+      return { checkedCount: targetTabs.length, regroupedCount: 0, unchangedCount: targetTabs.length, summary: 'Operation aborted' }
+    }
+
+    return await executeRegroupDecisions(windowId, targetTabs, decisions, groupNameToId, groupIdToName, allGroups.length, controller, logger)
+  } catch (err: any) {
+    if (controller.signal.aborted) {
+      return { checkedCount: 0, regroupedCount: 0, unchangedCount: 0, summary: 'Operation aborted by user' }
+    }
+    activeOperationsMap.set(windowId, { type: null, error: (err as Error).message })
+    throw err
+  } finally {
+    cleanupRegroupOperation(windowId, controller)
+    await updateNewTabsBadge(windowId).catch(console.error)
+  }
+}
+
+/**
  * Close all tabs in a group by their IDs and remove them from cache.
  */
 export async function closeGroupTabs(tabIds: number[]): Promise<void> {
   if (tabIds.length === 0) return
+  markTabIdsClosedByExtension(tabIds)
+  await recordTabIdsBeforeClose(tabIds, 'Group')
   try {
     await chrome.tabs.remove(tabIds)
   } catch (err: any) {
@@ -2246,6 +2684,8 @@ export function handleTabGroupRemoved(groupId: number): void {
 
 export async function closeDuplicateTabs(windowId?: number, explicitTabIds?: number[]): Promise<void> {
   if (Array.isArray(explicitTabIds) && explicitTabIds.length > 0) {
+    markTabIdsClosedByExtension(explicitTabIds)
+    await recordTabIdsBeforeClose(explicitTabIds, 'Duplicates')
     await chrome.tabs.remove(explicitTabIds)
     for (const id of explicitTabIds) cacheRemoveTab(id)
     return
@@ -2256,6 +2696,8 @@ export async function closeDuplicateTabs(windowId?: number, explicitTabIds?: num
   const dupIds = result.exactDuplicates.map(t => t.id).filter((id): id is number => id !== undefined)
 
   if (dupIds.length > 0) {
+    markTabIdsClosedByExtension(dupIds)
+    await recordClosedTabs(result.exactDuplicates, 'Duplicates')
     await chrome.tabs.remove(dupIds)
     for (const id of dupIds) cacheRemoveTab(id)
   }
@@ -2263,6 +2705,8 @@ export async function closeDuplicateTabs(windowId?: number, explicitTabIds?: num
 
 export async function closePossibleDuplicateTabs(windowId?: number, explicitTabIds?: number[]): Promise<void> {
   if (Array.isArray(explicitTabIds) && explicitTabIds.length > 0) {
+    markTabIdsClosedByExtension(explicitTabIds)
+    await recordTabIdsBeforeClose(explicitTabIds, 'Possible Duplicates')
     await chrome.tabs.remove(explicitTabIds)
     for (const id of explicitTabIds) cacheRemoveTab(id)
     return
@@ -2271,16 +2715,26 @@ export async function closePossibleDuplicateTabs(windowId?: number, explicitTabI
   const tabs = await chrome.tabs.query(queryInfo)
   const result = detectDuplicateTabs(tabs)
   const dupIds: number[] = []
+  const tabsToClose: Array<{ id?: number; url?: string; title?: string; favIconUrl?: string; windowId?: number }> = []
 
-  for (const cluster of result.possibleDuplicates) {
-    // Keep the first tab, remove all subsequent variant tabs
-    for (let i = 1; i < cluster.tabs.length; i++) {
-      const id = cluster.tabs[i].id
-      if (id !== undefined) dupIds.push(id)
+  let cluster: (typeof result.possibleDuplicates)[0]
+  let keepId: number | undefined
+  let tab: (typeof cluster.tabs)[0]
+
+  for (cluster of result.possibleDuplicates) {
+    keepId = cluster.primaryTabId ?? cluster.tabs.find(t => (t as any).active)?.id ?? cluster.tabs[0]?.id
+
+    for (tab of cluster.tabs) {
+      if (tab.id !== undefined && tab.id !== keepId) {
+        dupIds.push(tab.id)
+        tabsToClose.push(tab)
+      }
     }
   }
 
   if (dupIds.length > 0) {
+    markTabIdsClosedByExtension(dupIds)
+    await recordClosedTabs(tabsToClose, 'Possible Duplicates')
     await chrome.tabs.remove(dupIds)
     for (const id of dupIds) cacheRemoveTab(id)
   }
@@ -2295,6 +2749,14 @@ export async function organizePossibleDuplicateGroups(targetWindowId?: number): 
 
   const colors: ChromeTabGroupColor[] = ['orange', 'yellow', 'pink', 'purple', 'cyan', 'blue']
   let colorIdx = 0
+
+  const usedTitles = new Set<string>()
+  if (isTabGroupsSupported()) {
+    const existingTabGroups = await chrome.tabGroups.query({}).catch(() => [])
+    for (const eg of existingTabGroups) {
+      if (eg.title) usedTitles.add(eg.title.toLowerCase().trim())
+    }
+  }
 
   for (const cluster of result.possibleDuplicates) {
     const tabIds = cluster.tabs.map(t => t.id).filter((id): id is number => id !== undefined)
@@ -2313,7 +2775,17 @@ export async function organizePossibleDuplicateGroups(targetWindowId?: number): 
           }
         }
         const groupId = (await chrome.tabs.group({ tabIds: tabIds as [number, ...number[]] })) as unknown as number
-        const groupTitle = `Dupes: ${cluster.domain || 'Cluster'}`
+        
+        // Generate distinct, clean group title based on representative title or domain
+        const titleSnippet = cluster.title ? cluster.title.trim().slice(0, 24) : ''
+        const baseTitle = titleSnippet ? `Dupes: ${titleSnippet}` : `Dupes: ${cluster.domain || 'Cluster'}`
+        let groupTitle = baseTitle
+        let counter = 2
+        while (usedTitles.has(groupTitle.toLowerCase())) {
+          groupTitle = `${baseTitle} (${counter++})`
+        }
+        usedTitles.add(groupTitle.toLowerCase())
+
         const groupColor = colors[colorIdx % colors.length]
         colorIdx++
 
@@ -2335,14 +2807,18 @@ export async function closeDomainTabs(windowId: number): Promise<void> {
   const activeDomain = extractDomain(activeTab.url)
   if (!activeDomain) return
   const tabs = await chrome.tabs.query({ windowId })
+  const tabsToClose: chrome.tabs.Tab[] = []
   const toClose: number[] = []
   for (const tab of tabs) {
     if (tab.id === undefined || !tab.url) continue
     if (extractDomain(tab.url) === activeDomain) {
       toClose.push(tab.id)
+      tabsToClose.push(tab)
     }
   }
   if (toClose.length > 0) {
+    markTabIdsClosedByExtension(toClose)
+    await recordClosedTabs(tabsToClose, 'Domain')
     await chrome.tabs.remove(toClose)
     for (const id of toClose) cacheRemoveTab(id)
   }
@@ -2528,10 +3004,11 @@ export async function closeLeftTabs(windowId: number): Promise<void> {
   const [activeTab] = await chrome.tabs.query({ active: true, windowId })
   if (!activeTab || activeTab.index === undefined) return
   const tabs = await chrome.tabs.query({ windowId })
-  const toClose = tabs
-    .filter((t) => t.index !== undefined && t.index < activeTab.index && t.id !== undefined && !t.pinned)
-    .map((t) => t.id!)
-  if (toClose.length > 0) {
+  const tabsToClose = tabs.filter((t) => t.index !== undefined && t.index < activeTab.index && t.id !== undefined && !t.pinned)
+  if (tabsToClose.length > 0) {
+    const toClose = tabsToClose.map((t) => t.id!)
+    markTabIdsClosedByExtension(toClose)
+    await recordClosedTabs(tabsToClose, 'Tabs to Left')
     await chrome.tabs.remove(toClose)
     for (const id of toClose) cacheRemoveTab(id)
   }
@@ -2541,10 +3018,11 @@ export async function closeRightTabs(windowId: number): Promise<void> {
   const [activeTab] = await chrome.tabs.query({ active: true, windowId })
   if (!activeTab || activeTab.index === undefined) return
   const tabs = await chrome.tabs.query({ windowId })
-  const toClose = tabs
-    .filter((t) => t.index !== undefined && t.index > activeTab.index && t.id !== undefined && !t.pinned)
-    .map((t) => t.id!)
-  if (toClose.length > 0) {
+  const tabsToClose = tabs.filter((t) => t.index !== undefined && t.index > activeTab.index && t.id !== undefined && !t.pinned)
+  if (tabsToClose.length > 0) {
+    const toClose = tabsToClose.map((t) => t.id!)
+    markTabIdsClosedByExtension(toClose)
+    await recordClosedTabs(tabsToClose, 'Tabs to Right')
     await chrome.tabs.remove(toClose)
     for (const id of toClose) cacheRemoveTab(id)
   }
@@ -2574,14 +3052,199 @@ export async function cleanupTabGroups(windowId: number, minTabs: number): Promi
     }
   }
 
-  // Logic: Iterate through all tab groups and dissolve (close) those that contain fewer than minTabs tabs
-  // Programming logic: Loop through groups and remove tabs for groups with fewer tabs than minTabs
+  // Logic: Iterate through all tab groups and dissolve (ungroup) those that contain fewer than minTabs tabs
+  // Programming logic: Loop through groups and ungroup tabs for groups with fewer tabs than minTabs
   for (const [groupId, count] of groupCounts.entries()) {
     if (count < minTabs) {
       const tabIds = groupTabs.get(groupId)
       if (tabIds && tabIds.length > 0) {
-        await retryTabOperation(() => chrome.tabs.remove(tabIds))
+        await retryTabOperation(() => chrome.tabs.ungroup(tabIds as [number, ...number[]]))
       }
     }
   }
 }
+
+// --- Live Tab Tracking & Mass Close Detection ---
+
+export interface CachedLiveTab {
+  id: number
+  url?: string
+  title?: string
+  favIconUrl?: string
+  windowId?: number
+  groupId?: number
+  index?: number
+}
+
+const liveTabMap = new Map<number, CachedLiveTab>()
+const extensionClosingTabIds = new Set<number>()
+let extensionClosingCleanupTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Mark tab IDs as explicitly closed by TabPilot extension actions to avoid duplicate recording.
+ */
+export function markTabIdsClosedByExtension(tabIds: number[]): void {
+  for (const id of tabIds) {
+    if (id !== undefined && id > 0) {
+      extensionClosingTabIds.add(id)
+    }
+  }
+  if (extensionClosingCleanupTimer) {
+    clearTimeout(extensionClosingCleanupTimer)
+  }
+  extensionClosingCleanupTimer = setTimeout(() => {
+    extensionClosingTabIds.clear()
+    extensionClosingCleanupTimer = null
+  }, 10_000)
+}
+
+/**
+ * Checks if a tab was marked as closed by the extension and consumes the mark.
+ */
+export function isTabClosedByExtension(tabId: number): boolean {
+  if (extensionClosingTabIds.has(tabId)) {
+    extensionClosingTabIds.delete(tabId)
+    return true
+  }
+  return false
+}
+
+/**
+ * Initialize live tab cache by querying all open tabs.
+ */
+export async function initLiveTabTracker(): Promise<void> {
+  if (typeof chrome === 'undefined' || !chrome.tabs?.query) return
+  try {
+    const tabs = await chrome.tabs.query({})
+    if (!Array.isArray(tabs)) return
+    liveTabMap.clear()
+    for (const tab of tabs) {
+      trackLiveTab(tab)
+    }
+  } catch (err) {
+    console.error('[timTabTool] Failed to initialize live tab tracker:', err)
+  }
+}
+
+/**
+ * Update the in-memory cache for a single tab.
+ */
+export function trackLiveTab(tab: chrome.tabs.Tab): void {
+  if (tab.id === undefined || tab.id <= 0) return
+  liveTabMap.set(tab.id, {
+    id: tab.id,
+    url: tab.url,
+    title: tab.title,
+    favIconUrl: tab.favIconUrl,
+    windowId: tab.windowId,
+    groupId: tab.groupId,
+    index: tab.index,
+  })
+}
+
+/**
+ * Remove a tab from in-memory live tracking and return its cached metadata.
+ */
+export function untrackLiveTab(tabId: number): CachedLiveTab | undefined {
+  const cached = liveTabMap.get(tabId)
+  liveTabMap.delete(tabId)
+  return cached
+}
+
+export interface TabRemoveInfo {
+  windowId?: number
+  isWindowClosing?: boolean
+}
+
+interface PendingMassCloseItem {
+  tab: CachedLiveTab
+  removeInfo: TabRemoveInfo
+}
+
+const pendingMassCloseItems: PendingMassCloseItem[] = []
+let massCloseDebounceTimer: ReturnType<typeof setTimeout> | null = null
+const MASS_CLOSE_DEBOUNCE_MS = 400
+
+/**
+ * Handle tab removal event to detect accidental mass tab or window closures.
+ */
+export function handleTabRemovalForMassClose(tabId: number, removeInfo: TabRemoveInfo): void {
+  // Logic: Ignore closures initiated by the extension
+  // Programming logic: If tab was marked by extension, untrack and skip
+  if (isTabClosedByExtension(tabId)) {
+    untrackLiveTab(tabId)
+    return
+  }
+
+  const cached = untrackLiveTab(tabId)
+  if (!cached || !cached.url) return
+
+  pendingMassCloseItems.push({ tab: cached, removeInfo })
+
+  if (massCloseDebounceTimer) {
+    clearTimeout(massCloseDebounceTimer)
+  }
+
+  massCloseDebounceTimer = setTimeout(() => {
+    massCloseDebounceTimer = null
+    flushPendingClosedTabs().catch((err) => {
+      console.error('[timTabTool] Failed to flush pending mass close tabs:', err)
+    })
+  }, MASS_CLOSE_DEBOUNCE_MS)
+}
+
+/**
+ * Flush pending closed tabs and record batches if 2+ tabs closed together or window closed.
+ */
+export async function flushPendingClosedTabs(): Promise<void> {
+  if (pendingMassCloseItems.length === 0) return
+
+  const items = pendingMassCloseItems.splice(0, pendingMassCloseItems.length)
+  const byWindow = new Map<number, PendingMassCloseItem[]>()
+
+  for (const item of items) {
+    const wid = item.tab.windowId ?? item.removeInfo.windowId ?? 0
+    const list = byWindow.get(wid) ?? []
+    list.push(item)
+    byWindow.set(wid, list)
+  }
+
+  for (const [windowId, winItems] of byWindow.entries()) {
+    const isWindowClosing = winItems.some((i) => i.removeInfo.isWindowClosing)
+    if (winItems.length >= 2 || isWindowClosing) {
+      const batchId = `batch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
+      const source = isWindowClosing
+        ? `Closed Window (${winItems.length} tabs)`
+        : `Mass Close (${winItems.length} tabs)`
+
+      const tabsToRecord = winItems.map((i) => ({
+        url: i.tab.url,
+        title: i.tab.title || i.tab.url,
+        favIconUrl: i.tab.favIconUrl,
+        windowId,
+        batchId,
+      }))
+
+      await recordClosedTabs(tabsToRecord, source)
+    }
+  }
+}
+
+export function getLiveTabCount(): number {
+  return liveTabMap.size
+}
+
+export function clearLiveTabs(): void {
+  liveTabMap.clear()
+  extensionClosingTabIds.clear()
+  pendingMassCloseItems.length = 0
+  if (massCloseDebounceTimer) {
+    clearTimeout(massCloseDebounceTimer)
+    massCloseDebounceTimer = null
+  }
+  if (extensionClosingCleanupTimer) {
+    clearTimeout(extensionClosingCleanupTimer)
+    extensionClosingCleanupTimer = null
+  }
+}
+

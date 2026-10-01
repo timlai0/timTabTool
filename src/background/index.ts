@@ -8,6 +8,7 @@ import {
   ungroupGroupTabs,
   closeGroupTabs,
   classifyNewTabs,
+  checkAndRegroupLast20Tabs,
   autoGroupNewTab,
   expandAllGroups,
   collapseAllGroups,
@@ -49,6 +50,10 @@ import {
   updateNewTabsBadge,
   debouncedUpdateNewTabsBadge,
   isAnyAIOperationRunning,
+  initLiveTabTracker,
+  trackLiveTab,
+  handleTabRemovalForMassClose,
+  markTabIdsClosedByExtension,
 } from './tab-manager'
 import { searchTabs } from './searcher'
 import { recordTabVisit, getHistoryEntries } from './storage'
@@ -56,6 +61,16 @@ import { STORAGE_KEYS, DEFAULT_SETTINGS } from '../shared/constants'
 import type { ExtensionMessage, TabInfo, ExtensionSettings, WindowGroupsInfo } from '../shared/types'
 import { initMCPBridge, getMCPStatus, reconnectMCP } from './mcp-bridge'
 import { AILogger } from '../shared/ai-logger'
+import {
+  recordTabIdsBeforeClose,
+  getClosedTabs,
+  restoreClosedTab,
+  restoreAllClosedTabs,
+  removeClosedTab,
+  clearClosedTabs,
+  restoreClosedBatch,
+  removeClosedBatch,
+} from '../shared/closed-tabs-manager'
 
 const TAB_GROUP_ID_NONE = typeof chrome !== 'undefined' && typeof chrome.tabGroups !== 'undefined'
   ? chrome.tabGroups.TAB_GROUP_ID_NONE
@@ -65,10 +80,13 @@ console.log('[timTabTool] Service worker started')
 
 // Logic: Reconcile badge state and clear any orphaned AI badge on service worker startup
 updateNewTabsBadge().catch(console.error)
+initLiveTabTracker().catch(console.error)
 
 if (typeof chrome !== 'undefined' && chrome.runtime?.onStartup) {
   chrome.runtime.onStartup.addListener(() => {
     updateNewTabsBadge().catch(console.error)
+    setupContextMenus()
+    initLiveTabTracker().catch(console.error)
   })
 }
 
@@ -79,58 +97,126 @@ chrome.storage.local.get(STORAGE_KEYS.SETTINGS).then((data) => {
   }
 }).catch(console.error)
 
+/**
+ * Setup extension context menus safely across both Chrome and Firefox.
+ * Logic: Clears existing menus before recreating to avoid duplicate ID errors.
+ * Ensures the top-level items on the action context stay within the browser limit (max 6).
+ */
+export function setupContextMenus(): void {
+  const menus = typeof chrome !== 'undefined' && chrome.contextMenus ? chrome.contextMenus : null
+  if (!menus || typeof menus.removeAll !== 'function' || typeof menus.create !== 'function') {
+    return
+  }
+
+  menus.removeAll(() => {
+    if (chrome.runtime?.lastError) {
+      console.debug('[timTabTool] Error clearing context menus:', chrome.runtime.lastError.message)
+    }
+
+    const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('firefox')
+
+    const createSafe = (properties: chrome.contextMenus.CreateProperties) => {
+      try {
+        menus.create(properties, () => {
+          if (chrome.runtime?.lastError) {
+            console.debug(`[timTabTool] contextMenu create (${properties.id}):`, chrome.runtime.lastError.message)
+          }
+        })
+      } catch (err) {
+        console.debug(`[timTabTool] contextMenu create exception (${properties.id}):`, err)
+      }
+    }
+
+    const getMsg = (key: string, fallback: string) => {
+      try {
+        return (typeof chrome !== 'undefined' && chrome.i18n?.getMessage)
+          ? chrome.i18n.getMessage(key) || fallback
+          : fallback
+      } catch {
+        return fallback
+      }
+    }
+
+    // Top-level item 1: Search parent (action context)
+    createSafe({
+      id: 'search-parent',
+      title: getMsg('contextMenuSearchTabs', 'Search Tabs'),
+      contexts: ['action']
+    })
+
+    // Submenu items under search-parent
+    createSafe({
+      id: 'open-search-menu',
+      parentId: 'search-parent',
+      title: getMsg('contextMenuOpenSearch', 'Quick Search Overlay'),
+      contexts: ['action']
+    })
+
+    createSafe({
+      id: 'open-search-window',
+      parentId: 'search-parent',
+      title: getMsg('contextMenuOpenSearchWindow', 'Search in New Window'),
+      contexts: ['action']
+    })
+
+    createSafe({
+      id: 'open-search-tab',
+      parentId: 'search-parent',
+      title: getMsg('contextMenuOpenSearchTab', 'Search in New Tab'),
+      contexts: ['action']
+    })
+
+    // Quick Search on in-page context menu
+    createSafe({
+      id: 'open-search-page',
+      title: getMsg('contextMenuOpenSearch', 'Quick Search Overlay'),
+      contexts: ['page']
+    })
+
+    // Top-level item 2: Group all tabs (AI)
+    createSafe({
+      id: 'group-all',
+      title: getMsg('contextMenuGroupAll', 'Group Tabs (AI)'),
+      contexts: ['action']
+    })
+
+    // Top-level item 3: Clean up tab groups
+    createSafe({
+      id: 'cleanup-groups',
+      title: getMsg('contextMenuCleanupGroups', 'Clean Up Tab Groups'),
+      contexts: ['action']
+    })
+
+    // Top-level item 4: Ungroup all tabs
+    createSafe({
+      id: 'ungroup-all',
+      title: getMsg('contextMenuUngroupAll', 'Ungroup All Tabs'),
+      contexts: ['action']
+    })
+
+    // Top-level item 5 (Firefox only): Move tab to other window
+    if (isFirefox) {
+      createSafe({
+        id: 'move-to-other-window',
+        title: getMsg('contextMenuMoveToOtherWindow', 'Move Tab to Other Window'),
+        contexts: ['action']
+      })
+    }
+  })
+}
+
+// Logic: Initialize context menus on background script startup (essential for Firefox background scripts)
+setupContextMenus()
+
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[timTabTool] Extension installed')
   updateNewTabsBadge().catch(console.error)
-  // Programming logic: Create context menu items to open search (in-page and window)
-  chrome.contextMenus.create({
-    id: 'open-search-menu',
-    title: chrome.i18n.getMessage('contextMenuOpenSearch') || 'Open Search',
-    contexts: ['action', 'page']
-  })
-  chrome.contextMenus.create({
-    id: 'open-search-window',
-    title: chrome.i18n.getMessage('contextMenuOpenSearchWindow') || 'Open Search in New Window',
-    contexts: ['action', 'page']
-  })
-  chrome.contextMenus.create({
-    id: 'open-search-tab',
-    title: chrome.i18n.getMessage('contextMenuOpenSearchTab') || 'Open Search in New Tab',
-    contexts: ['action']
-  })
-  chrome.contextMenus.create({
-    id: 'separator-1',
-    type: 'separator',
-    contexts: ['action']
-  })
-  chrome.contextMenus.create({
-    id: 'group-all',
-    title: chrome.i18n.getMessage('contextMenuGroupAll') || 'Group Tabs (AI)',
-    contexts: ['action']
-  })
-  chrome.contextMenus.create({
-    id: 'cleanup-groups',
-    title: chrome.i18n.getMessage('contextMenuCleanupGroups') || 'Clean Up Tab Groups',
-    contexts: ['action']
-  })
-  chrome.contextMenus.create({
-    id: 'ungroup-all',
-    title: chrome.i18n.getMessage('contextMenuUngroupAll') || 'Ungroup All Tabs',
-    contexts: ['action']
-  })
-
-  const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('firefox')
-  if (isFirefox) {
-    chrome.contextMenus.create({
-      id: 'move-to-other-window',
-      title: chrome.i18n.getMessage('contextMenuMoveToOtherWindow') || 'Move Tab to Other Window',
-      contexts: ['action']
-    })
-  }
+  setupContextMenus()
+  initLiveTabTracker().catch(console.error)
 })
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === 'open-search-menu') {
+  if (info.menuItemId === 'open-search-menu' || info.menuItemId === 'open-search-page') {
     await toggleSearchOverlay()
   } else if (info.menuItemId === 'open-search-window') {
     if (!(await focusExistingSearchTabOrWindow())) {
@@ -149,15 +235,18 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   } else if (info.menuItemId === 'cleanup-groups') {
     const windowId = tab?.windowId ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.windowId
     if (windowId !== undefined) await cleanupTabGroups(windowId, 3)
-  } else if (info.menuItemId === 'move-to-other-window' && tab?.id) {
-    const windows = await chrome.windows.getAll({ windowTypes: ['normal'] })
-    const otherWindows = windows.filter(w => w.id !== undefined && w.id !== tab.windowId)
-    if (otherWindows.length > 0) {
-      await chrome.tabs.move(tab.id, { windowId: otherWindows[0].id!, index: -1 })
-      await chrome.windows.update(otherWindows[0].id!, { focused: true })
-      await chrome.tabs.update(tab.id, { active: true })
-    } else {
-      await chrome.windows.create({ tabId: tab.id, type: 'normal', focused: true })
+  } else if (info.menuItemId === 'move-to-other-window') {
+    const currentTab = tab ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]
+    if (currentTab?.id) {
+      const windows = await chrome.windows.getAll({ windowTypes: ['normal'] })
+      const otherWindows = windows.filter(w => w.id !== undefined && w.id !== currentTab.windowId)
+      if (otherWindows.length > 0) {
+        await chrome.tabs.move(currentTab.id, { windowId: otherWindows[0].id!, index: -1 })
+        await chrome.windows.update(otherWindows[0].id!, { focused: true })
+        await chrome.tabs.update(currentTab.id, { active: true })
+      } else {
+        await chrome.windows.create({ tabId: currentTab.id, type: 'normal', focused: true })
+      }
     }
   }
 })
@@ -166,10 +255,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 chrome.tabs.onCreated.addListener((tab) => {
   if (tab.id !== undefined) recordTabCreatedTime(tab.id)
   cacheAddTab(tab)
+  trackLiveTab(tab)
   if (tab.windowId !== undefined) debouncedCacheRebuild(tab.windowId)
 })
 
 chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+  trackLiveTab(tab)
   if (changeInfo.status === 'complete' && tab.url && tab.title) {
     recordTabVisit(tab.url, tab.title, tab.favIconUrl)
     cacheUpdateTab(tab)
@@ -182,9 +273,10 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
   if (tab.windowId !== undefined) debouncedCacheRebuild(tab.windowId)
 })
 
-chrome.tabs.onRemoved.addListener((tabId) => {
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   removeTabCreatedTime(tabId)
   cacheRemoveTab(tabId)
+  handleTabRemovalForMassClose(tabId, removeInfo)
 })
 
 chrome.windows.onRemoved.addListener(async (windowId) => {
@@ -676,7 +768,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       // Programming logic: Resolve windowId and minTabs parameter from payload
       const windowId = await resolveWindowId(message.payload)
       const minTabs = (message.payload as { minTabs?: number })?.minTabs ?? 3
-      // Logic: Dissolve tab groups with fewer than minTabs tabs in the specified window
+      // Logic: Ungroup tab groups with fewer than minTabs tabs in the specified window
       await cleanupTabGroups(windowId, minTabs)
       invalidatePreviewCache(windowId)
       return { ok: true }
@@ -777,6 +869,21 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
         return { error: err.message || String(err) }
       }
       return { ok: true }
+    }
+
+    case 'CHECK_LAST_20_TABS': {
+      const windowId = await resolveWindowId(message.payload)
+      setActiveOperation(windowId, 'regroup')
+      await broadcastAIStart(windowId, 'CHECK_LAST_20_TABS')
+      try {
+        const overrides = getAIOverrides(message.payload)
+        const result = await checkAndRegroupLast20Tabs(windowId, overrides)
+        await broadcastAIComplete(windowId, 'CHECK_LAST_20_TABS')
+        return { ok: true, result }
+      } catch (err: any) {
+        await broadcastAIFailed(windowId, 'CHECK_LAST_20_TABS', err.message || String(err))
+        return { error: err.message || String(err) }
+      }
     }
 
     case 'GROUP_TABS_SINGLE': {
@@ -1062,7 +1169,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     }
 
     case 'SEARCH_TABS': {
-      const payload = message.payload as { query: string; windowId?: number } | undefined
+      const payload = message.payload as { query: string; windowId?: number; includeClosedWhenEmpty?: boolean } | undefined
       const query = payload?.query ?? ''
       const currentWindowId = payload?.windowId ?? sender?.tab?.windowId
       const tabs = await chrome.tabs.query({})
@@ -1095,7 +1202,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
           }
         })
       const history = await getHistoryEntries()
-      return searchTabs(query, openTabs, history, currentWindowId)
+      return searchTabs(query, openTabs, history, currentWindowId, payload?.includeClosedWhenEmpty)
     }
 
     case 'GET_SETTINGS': {
@@ -1145,6 +1252,8 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     case 'CLOSE_TAB': {
       const tabId = (message.payload as { tabId: number })?.tabId
       if (tabId) {
+        markTabIdsClosedByExtension([tabId])
+        await recordTabIdsBeforeClose([tabId], 'Single Tab')
         try {
           await chrome.tabs.remove(tabId)
         } catch (err: any) {
@@ -1154,6 +1263,54 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
           }
         }
       }
+      return { ok: true }
+    }
+
+    case 'GET_CLOSED_TABS': {
+      const tabs = await getClosedTabs()
+      return { ok: true, tabs }
+    }
+
+    case 'RESTORE_CLOSED_TAB': {
+      const id = (message.payload as { id?: string })?.id
+      const windowId = (message.payload as { windowId?: number })?.windowId
+      if (!id) return { error: 'Missing closed tab id' }
+      const tab = await restoreClosedTab(id, windowId)
+      return { ok: true, tab }
+    }
+
+    case 'RESTORE_CLOSED_BATCH': {
+      const batchId = (message.payload as { batchId?: string })?.batchId
+      const windowId = (message.payload as { windowId?: number })?.windowId
+      if (!batchId) return { error: 'Missing closed batch id' }
+      const count = await restoreClosedBatch(batchId, windowId)
+      return { ok: true, count }
+    }
+
+    case 'RESTORE_ALL_CLOSED_TABS': {
+      const windowId = (message.payload as { windowId?: number })?.windowId
+      const count = await restoreAllClosedTabs(windowId)
+      return { ok: true, count }
+    }
+
+    case 'DELETE_CLOSED_TAB': {
+      const id = (message.payload as { id?: string })?.id
+      if (id) {
+        await removeClosedTab(id)
+      }
+      return { ok: true }
+    }
+
+    case 'DELETE_CLOSED_BATCH': {
+      const batchId = (message.payload as { batchId?: string })?.batchId
+      if (batchId) {
+        await removeClosedBatch(batchId)
+      }
+      return { ok: true }
+    }
+
+    case 'CLEAR_CLOSED_TABS': {
+      await clearClosedTabs()
       return { ok: true }
     }
 

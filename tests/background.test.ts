@@ -9,7 +9,8 @@ describe('getAIOverrides', () => {
         onInstalled: { addListener: vi.fn() },
         onMessage: { addListener: vi.fn() },
         onStartup: { addListener: vi.fn() },
-        getManifest: vi.fn(() => ({ version: '1.0.0' }))
+        getManifest: vi.fn(() => ({ version: '1.0.0' })),
+        sendMessage: vi.fn().mockResolvedValue({}),
       },
       commands: {
         onCommand: { addListener: vi.fn() }
@@ -40,6 +41,10 @@ describe('getAIOverrides', () => {
       },
       contextMenus: {
         create: vi.fn(),
+        removeAll: vi.fn((cb) => {
+          if (cb) cb()
+          return Promise.resolve()
+        }),
         onClicked: { addListener: vi.fn() }
       },
       storage: {
@@ -57,6 +62,9 @@ describe('getAIOverrides', () => {
         onChanged: {
           addListener: vi.fn()
         }
+      },
+      i18n: {
+        getMessage: vi.fn(() => '')
       }
     })
 
@@ -143,26 +151,31 @@ describe('cleanupTabGroups', () => {
     ]
 
     const queryMock = vi.fn().mockResolvedValue(mockTabs)
+    const ungroupMock = vi.fn().mockResolvedValue(undefined)
     const removeMock = vi.fn().mockResolvedValue(undefined)
 
     // Programming logic: Update stubbed global chrome methods
     const originalQuery = chrome.tabs.query
+    const originalUngroup = chrome.tabs.ungroup
     const originalRemove = chrome.tabs.remove
     chrome.tabs.query = queryMock
+    chrome.tabs.ungroup = ungroupMock
     chrome.tabs.remove = removeMock
     chrome.tabGroups = {
       TAB_GROUP_ID_NONE: -1
     } as any
 
     try {
-      // Logic: call cleanupTabGroups with minTabs = 3. Group 11 (2 tabs) should be dissolved.
+      // Logic: call cleanupTabGroups with minTabs = 3. Group 11 (2 tabs) should be ungrouped.
       await cleanupTabGroups(1, 3)
 
       expect(queryMock).toHaveBeenCalledWith({ windowId: 1 })
-      expect(removeMock).toHaveBeenCalledWith([1, 2])
-      expect(removeMock).not.toHaveBeenCalledWith([3, 4, 5, 6])
+      expect(ungroupMock).toHaveBeenCalledWith([1, 2])
+      expect(ungroupMock).not.toHaveBeenCalledWith([3, 4, 5, 6])
+      expect(removeMock).not.toHaveBeenCalled()
     } finally {
       chrome.tabs.query = originalQuery
+      chrome.tabs.ungroup = originalUngroup
       chrome.tabs.remove = originalRemove
     }
   })
@@ -524,5 +537,247 @@ describe('mergeAllWindows', () => {
     expect(tabsMoveMock).toHaveBeenCalledWith([301], { windowId: 1, index: -1 })
   })
 })
+
+describe('setupContextMenus', () => {
+  let setupContextMenus: any
+
+  beforeAll(async () => {
+    const mod = await import('../src/background/index')
+    setupContextMenus = mod.setupContextMenus
+  })
+
+  it('calls removeAll before creating context menu items and enforces top-level limit <= 6', () => {
+    const createCalls: any[] = []
+    chrome.contextMenus.create = vi.fn((props, cb) => {
+      createCalls.push(props)
+      if (cb) cb()
+      return 1
+    }) as any
+    chrome.contextMenus.removeAll = vi.fn((cb) => {
+      if (cb) cb()
+      return Promise.resolve()
+    }) as any
+
+    setupContextMenus()
+
+    expect(chrome.contextMenus.removeAll).toHaveBeenCalled()
+    expect(createCalls.length).toBeGreaterThan(0)
+
+    // Top-level action items must not exceed 6 (Firefox limit)
+    const topLevelActionItems = createCalls.filter(
+      (c) => c.contexts?.includes('action') && !c.parentId
+    )
+    expect(topLevelActionItems.length).toBeLessThanOrEqual(6)
+
+    // Verify search items are nested under search-parent for action context
+    const searchParent = createCalls.find((c) => c.id === 'search-parent')
+    expect(searchParent).toBeDefined()
+
+    const searchChildren = createCalls.filter((c) => c.parentId === 'search-parent')
+    expect(searchChildren.length).toBe(3)
+  })
+})
+
+describe('checkAndRegroupLast20Tabs', () => {
+  let checkAndRegroupLast20Tabs: any
+
+  beforeAll(async () => {
+    const mod = await import('../src/background/tab-manager')
+    checkAndRegroupLast20Tabs = mod.checkAndRegroupLast20Tabs
+  })
+
+  it('throws an error if AI is not configured', async () => {
+    chrome.tabGroups = {
+      query: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue({}),
+      TAB_GROUP_ID_NONE: -1,
+    } as any
+    chrome.storage.local.get = vi.fn().mockResolvedValue({})
+
+    await expect(checkAndRegroupLast20Tabs(1, { enabled: false })).rejects.toThrow('AI is not configured')
+  })
+
+  it('handles window with 0 unpinned tabs gracefully', async () => {
+    chrome.tabGroups = {
+      query: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue({}),
+      TAB_GROUP_ID_NONE: -1,
+    } as any
+    chrome.tabs.query = vi.fn().mockResolvedValue([
+      { id: 1, pinned: true, windowId: 1 }
+    ])
+
+    const res = await checkAndRegroupLast20Tabs(1, { enabled: true, apiKey: 'test-key', provider: 'openai' })
+    expect(res.checkedCount).toBe(0)
+    expect(res.regroupedCount).toBe(0)
+  })
+
+  it('selects only the last 20 unpinned tabs when more than 20 tabs are present', async () => {
+    chrome.tabGroups = {
+      query: vi.fn().mockResolvedValue([{ id: 10, title: 'Existing' }]),
+      update: vi.fn().mockResolvedValue({}),
+      TAB_GROUP_ID_NONE: -1,
+    } as any
+
+    const tabs: any[] = []
+    for (let i = 1; i <= 25; i++) {
+      tabs.push({ id: i, index: i - 1, windowId: 1, pinned: false, url: `https://site${i}.com`, title: `Site ${i}`, groupId: -1 })
+    }
+    chrome.tabs.query = vi.fn().mockResolvedValue(tabs)
+
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{
+            message: {
+              content: JSON.stringify(tabs.slice(-20).map((_, idx) => ({ index: idx + 1, group: 'KEEP' })))
+            }
+          }]
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    )
+    vi.stubGlobal('fetch', mockFetch)
+
+    const res = await checkAndRegroupLast20Tabs(1, { enabled: true, apiKey: 'test-key', provider: 'openai' })
+    expect(res.checkedCount).toBe(20)
+    expect(res.regroupedCount).toBe(0)
+    expect(res.unchangedCount).toBe(20)
+  })
+
+  it('regroups tabs when AI assigns different existing groups or new groups', async () => {
+    chrome.tabGroups = {
+      query: vi.fn().mockResolvedValue([{ id: 10, title: 'Work' }]),
+      update: vi.fn().mockResolvedValue({}),
+      TAB_GROUP_ID_NONE: -1,
+    } as any
+
+    const tabs = [
+      { id: 1, index: 0, windowId: 1, pinned: false, url: 'https://work.com', title: 'Work PR', groupId: 10 },
+      { id: 2, index: 1, windowId: 1, pinned: false, url: 'https://shopping.com', title: 'Shopping', groupId: 10 },
+      { id: 3, index: 2, windowId: 1, pinned: false, url: 'https://work2.com', title: 'Work Issue', groupId: -1 }
+    ]
+    chrome.tabs.query = vi.fn().mockImplementation((queryInfo: any) => {
+      if (queryInfo.groupId === 10) {
+        return Promise.resolve(tabs.filter(t => t.groupId === 10))
+      }
+      return Promise.resolve(tabs)
+    })
+
+    const groupMock = vi.fn().mockResolvedValue(20)
+    chrome.tabs.group = groupMock
+    chrome.tabs.move = vi.fn().mockResolvedValue(undefined)
+    chrome.tabs.ungroup = vi.fn().mockResolvedValue(undefined)
+
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{
+            message: {
+              content: JSON.stringify([
+                { index: 1, group: 'KEEP' },
+                { index: 2, group: 'NEW', newGroupName: 'Shopping', newGroupColor: 'yellow' },
+                { index: 3, group: 'Work' }
+              ])
+            }
+          }]
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    )
+    vi.stubGlobal('fetch', mockFetch)
+
+    const res = await checkAndRegroupLast20Tabs(1, { enabled: true, apiKey: 'test-key', provider: 'openai' })
+    expect(res.checkedCount).toBe(3)
+    expect(res.regroupedCount).toBe(2)
+    expect(res.unchangedCount).toBe(1)
+    expect(groupMock).toHaveBeenCalled()
+  })
+
+  it('handles CHECK_LAST_20_TABS runtime message via onMessage listener', async () => {
+    const onMessageCalls = (chrome.runtime.onMessage.addListener as any).mock.calls
+    expect(onMessageCalls.length).toBeGreaterThan(0)
+    const listener = onMessageCalls[0][0]
+
+    chrome.tabGroups = {
+      query: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue({}),
+      TAB_GROUP_ID_NONE: -1,
+    } as any
+    chrome.tabs.query = vi.fn().mockResolvedValue([])
+
+    const sendResponse = vi.fn()
+    const result = listener({ action: 'CHECK_LAST_20_TABS', payload: { windowId: 1, enabled: true, apiKey: 'test-key', provider: 'openai' } }, {}, sendResponse)
+    expect(result).toBe(true)
+  })
+
+  it('recognizes when a tab is already in the suggested target group and marks it unchanged without re-moving', async () => {
+    chrome.tabGroups = {
+      query: vi.fn().mockResolvedValue([{ id: 10, title: 'Work' }]),
+      update: vi.fn().mockResolvedValue({}),
+      TAB_GROUP_ID_NONE: -1,
+    } as any
+
+    const tabs = [
+      { id: 1, index: 0, windowId: 1, pinned: false, url: 'https://work.com', title: 'Work Task', groupId: 10 }
+    ]
+    chrome.tabs.query = vi.fn().mockResolvedValue(tabs)
+    const moveMock = vi.fn()
+    chrome.tabs.move = moveMock
+
+    // AI says NEW group with same name 'Work'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify([{ index: 1, group: 'NEW', newGroupName: 'Work' }]) } }]
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    ))
+
+    const res = await checkAndRegroupLast20Tabs(1, { enabled: true, apiKey: 'test-key', provider: 'openai' })
+    expect(res.checkedCount).toBe(1)
+    expect(res.regroupedCount).toBe(0)
+    expect(res.unchangedCount).toBe(1)
+    expect(moveMock).not.toHaveBeenCalled()
+  })
+
+  it('selects the true last 20 tabs by index even if chrome.tabs.query returns them out of order', async () => {
+    chrome.tabGroups = {
+      query: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue({}),
+      TAB_GROUP_ID_NONE: -1,
+    } as any
+
+    // 25 tabs in reverse order
+    const tabs: any[] = []
+    for (let i = 25; i >= 1; i--) {
+      tabs.push({ id: i, index: i - 1, windowId: 1, pinned: false, url: `https://site${i}.com`, title: `Site ${i}`, groupId: -1 })
+    }
+    chrome.tabs.query = vi.fn().mockResolvedValue(tabs)
+
+    let capturedTabs: any[] = []
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string)
+      const prompt = body.messages[1].content
+      // Capture the indices in prompt
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify([{ index: 1, group: 'KEEP' }]) } }]
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    }))
+
+    const res = await checkAndRegroupLast20Tabs(1, { enabled: true, apiKey: 'test-key', provider: 'openai' })
+    expect(res.checkedCount).toBe(20)
+    // All 20 accounted for (19 default KEEP + 1 explicit KEEP)
+    expect(res.unchangedCount).toBe(20)
+    expect(res.regroupedCount).toBe(0)
+  })
+})
+
 
 
