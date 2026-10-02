@@ -1075,6 +1075,67 @@
   flex-shrink: 0;
 }
 
+.atm-progress-thinking {
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(0, 122, 255, 0.05);
+  border: 0.5px solid rgba(0, 122, 255, 0.2);
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin-top: 4px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.atm-progress-thinking-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 600;
+  color: #007AFF;
+  user-select: none;
+}
+
+.atm-progress-thinking-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.atm-progress-thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #007AFF;
+  animation: atm-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes atm-pulse {
+  0% { transform: scale(0.9); opacity: 0.5; }
+  50% { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.5; }
+}
+
+.atm-progress-thinking-chars {
+  font-size: 9px;
+  font-weight: normal;
+  opacity: 0.7;
+}
+
+.atm-progress-thinking-body {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #3A3A3C;
+  max-height: 90px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  scrollbar-width: thin;
+}
+
 /* Dark mode overrides for progress container */
 @media (prefers-color-scheme: dark) {
   .atm-progress-container {
@@ -1098,6 +1159,19 @@
   }
   .atm-progress-detail {
     color: #98989D;
+  }
+  .atm-progress-thinking {
+    background: rgba(10, 132, 255, 0.1);
+    border-color: rgba(10, 132, 255, 0.28);
+  }
+  .atm-progress-thinking-header {
+    color: #0A84FF;
+  }
+  .atm-progress-thinking-dot {
+    background-color: #0A84FF;
+  }
+  .atm-progress-thinking-body {
+    color: #D1D1D6;
   }
   .atm-progress-hide-btn {
     color: #E5E5EA;
@@ -1167,6 +1241,23 @@
 
 :host([data-theme="dark"]) .atm-progress-detail {
   color: #98989D;
+}
+
+:host([data-theme="dark"]) .atm-progress-thinking {
+  background: rgba(10, 132, 255, 0.1);
+  border-color: rgba(10, 132, 255, 0.28);
+}
+
+:host([data-theme="dark"]) .atm-progress-thinking-header {
+  color: #0A84FF;
+}
+
+:host([data-theme="dark"]) .atm-progress-thinking-dot {
+  background-color: #0A84FF;
+}
+
+:host([data-theme="dark"]) .atm-progress-thinking-body {
+  color: #D1D1D6;
 }
 
 :host([data-theme="dark"]) .atm-progress-hide-btn {
@@ -1280,3 +1371,25 @@
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.2);
 }
+
+.atm-concurrent-ops-badge {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 2px;
+  font-weight: 600;
+  background: rgba(147, 52, 230, 0.12);
+  color: #9334E6;
+  border: 0.5px solid rgba(147, 52, 230, 0.25);
+  user-select: none;
+  white-space: nowrap;
+}
+
+:host([data-theme="dark"]) .atm-concurrent-ops-badge {
+  background: rgba(215, 174, 239, 0.15);
+  color: #D7AEEF;
+  border-color: rgba(215, 174, 239, 0.3);
+}
+

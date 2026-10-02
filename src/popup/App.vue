@@ -34,9 +34,38 @@ watch(currentView, (newView) => {
 const allWindows = shallowRef<WindowGroupsInfo[]>([])
 const loading = ref(true)
 const tabGroupsSupported = typeof chrome !== 'undefined' && typeof chrome.tabGroups !== 'undefined'
-const groupingWindowId = ref<number | null>(null)
-const classifyingWindowId = ref<number | null>(null)
-const checkingLast20WindowId = ref<number | null>(null)
+const allActiveOperations = ref<Record<number, OperationStatusInfo>>({})
+const showActiveOperationsTray = ref(false)
+
+function isWindowGrouping(wid: number): boolean {
+  return allActiveOperations.value[wid]?.type === 'group'
+}
+function isWindowClassifying(wid: number): boolean {
+  return allActiveOperations.value[wid]?.type === 'classify'
+}
+function isWindowRegrouping(wid: number): boolean {
+  return allActiveOperations.value[wid]?.type === 'regroup'
+}
+function isWindowOperating(wid: number): boolean {
+  const type = allActiveOperations.value[wid]?.type
+  return Boolean(type && type !== null)
+}
+const isAnyAIOperating = computed(() => {
+  return Object.values(allActiveOperations.value).some(op => Boolean(op?.type))
+})
+
+const groupingWindowId = computed(() => {
+  const entry = Object.entries(allActiveOperations.value).find(([_, op]) => op?.type === 'group')
+  return entry ? Number(entry[0]) : null
+})
+const classifyingWindowId = computed(() => {
+  const entry = Object.entries(allActiveOperations.value).find(([_, op]) => op?.type === 'classify')
+  return entry ? Number(entry[0]) : null
+})
+const checkingLast20WindowId = computed(() => {
+  const entry = Object.entries(allActiveOperations.value).find(([_, op]) => op?.type === 'regroup')
+  return entry ? Number(entry[0]) : null
+})
 const currentWindowId = ref<number | null>(null)
 const indicatorStyle = ref<GroupIndicatorStyle>(DEFAULT_SETTINGS.groupIndicatorStyle)
 const windowWidth = ref(DEFAULT_SETTINGS.windowWidth)
@@ -533,8 +562,6 @@ async function jumpToMostRecentTab(windowId?: number) {
 
 const isDarkActive = computed(() => document.documentElement.classList.contains('dark'))
 
-const allActiveOperations = ref<Record<number, OperationStatusInfo>>({})
-
 function formatTimer(ms?: number): string {
   if (!ms || ms <= 0) return '0s'
   const totalSec = Math.round(ms / 1000)
@@ -638,36 +665,16 @@ async function loadAllPreviews(showLoading = false) {
     // Process active operations and errors immediately
     if (activeOps && typeof activeOps === 'object') {
       allActiveOperations.value = activeOps as Record<number, OperationStatusInfo>
-      let isAnyGrouping = false
-      let isAnyClassifying = false
-      let isAnyRegrouping = false
-
       for (const [widStr, status] of Object.entries(activeOps)) {
         const wid = Number(widStr)
-        const opStatus = status as { type: 'group' | 'classify' | 'regroup' | null; error: string | null }
-
-        if (opStatus.type === 'group') {
-          groupingWindowId.value = wid
-          isAnyGrouping = true
-        } else if (opStatus.type === 'classify') {
-          classifyingWindowId.value = wid
-          isAnyClassifying = true
-        } else if (opStatus.type === 'regroup') {
-          checkingLast20WindowId.value = wid
-          isAnyRegrouping = true
-        }
-
+        const opStatus = status as OperationStatusInfo
         if (opStatus.error) {
-          showError(opStatus.error)
+          showError(opStatus.error, wid)
           chrome.runtime.sendMessage({ action: 'CLEAR_OPERATION_ERROR', payload: { windowId: wid } }).catch(() => {})
         }
       }
 
-      if (!isAnyGrouping) groupingWindowId.value = null
-      if (!isAnyClassifying) classifyingWindowId.value = null
-      if (!isAnyRegrouping) checkingLast20WindowId.value = null
-
-      if (isAnyGrouping || isAnyClassifying || isAnyRegrouping) {
+      if (isAnyAIOperating.value) {
         startPollingStatus()
       }
     } else {
@@ -702,11 +709,8 @@ function handleRuntimeMessage(msg: any) {
     lastAIResult.value = msg.payload
   } else if (msg?.action === 'ACTIVE_OPERATIONS_UPDATED' && msg.payload) {
     allActiveOperations.value = msg.payload
-    for (const [widStr, status] of Object.entries(msg.payload)) {
-      const wid = Number(widStr)
-      const opStatus = status as OperationStatusInfo
-      if (opStatus.type === 'group') groupingWindowId.value = wid
-      if (opStatus.type === 'classify') classifyingWindowId.value = wid
+    if (isAnyAIOperating.value) {
+      startPollingStatus()
     }
   } else if (msg?.action === 'AI_OPERATION_PROGRESS' && msg.payload) {
     const { windowId, status } = msg.payload
@@ -720,6 +724,9 @@ function handleRuntimeMessage(msg: any) {
     chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' }).then((ops) => {
       if (ops && typeof ops === 'object') {
         allActiveOperations.value = ops
+        if (isAnyAIOperating.value) {
+          startPollingStatus()
+        }
       }
     }).catch(() => {})
   } else if (msg?.action === 'AI_OPERATION_COMPLETE' || msg?.action === 'AI_OPERATION_FAILED') {
@@ -734,66 +741,44 @@ function handleRuntimeMessage(msg: any) {
 
 let pollInterval: number | null = null
 
-function startPollingStatus() {
-  if (pollInterval) return
-  pollInterval = window.setInterval(async () => {
-    if (groupingWindowId.value !== null || classifyingWindowId.value !== null || checkingLast20WindowId.value !== null) {
-      try {
-        const activeOps = await chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' })
-        if (activeOps && typeof activeOps === 'object') {
-          allActiveOperations.value = activeOps as Record<number, OperationStatusInfo>
-          let isAnyGrouping = false
-          let isAnyClassifying = false
-          let isAnyRegrouping = false
-
-          for (const [widStr, status] of Object.entries(activeOps)) {
-            const wid = Number(widStr)
-            const opStatus = status as { type: 'group' | 'classify' | 'regroup' | null; error: string | null }
-
-            if (opStatus.type === 'group') {
-              groupingWindowId.value = wid
-              isAnyGrouping = true
-            } else if (opStatus.type === 'classify') {
-              classifyingWindowId.value = wid
-              isAnyClassifying = true
-            } else if (opStatus.type === 'regroup') {
-              checkingLast20WindowId.value = wid
-              isAnyRegrouping = true
-            }
-
-            if (opStatus.error) {
-              showError(opStatus.error)
-              await chrome.runtime.sendMessage({ action: 'CLEAR_OPERATION_ERROR', payload: { windowId: wid } })
-            }
-          }
-
-          if (!isAnyGrouping && groupingWindowId.value !== null) {
-            groupingWindowId.value = null
-            await loadAllPreviews()
-          }
-          if (!isAnyClassifying && classifyingWindowId.value !== null) {
-            classifyingWindowId.value = null
-            await loadAllPreviews()
-          }
-          if (!isAnyRegrouping && checkingLast20WindowId.value !== null) {
-            checkingLast20WindowId.value = null
-            await loadAllPreviews()
-          }
-        }
-      } catch (err) {
-        console.error('Polling failed:', err)
-      }
-    } else {
-      stopPollingStatus()
-    }
-  }, 1500)
-}
-
 function stopPollingStatus() {
   if (pollInterval) {
     clearInterval(pollInterval)
     pollInterval = null
   }
+}
+
+function startPollingStatus() {
+  if (pollInterval) return
+  pollInterval = window.setInterval(async () => {
+    if (!isAnyAIOperating.value) {
+      stopPollingStatus()
+      return
+    }
+    try {
+      const activeOps = await chrome.runtime.sendMessage({ action: 'GET_ACTIVE_OPERATIONS' })
+      if (activeOps && typeof activeOps === 'object') {
+        const prevOpsCount = Object.values(allActiveOperations.value).filter(o => Boolean(o?.type)).length
+        allActiveOperations.value = activeOps as Record<number, OperationStatusInfo>
+        const currOpsCount = Object.values(allActiveOperations.value).filter(o => Boolean(o?.type)).length
+
+        for (const [widStr, status] of Object.entries(activeOps)) {
+          const wid = Number(widStr)
+          const opStatus = status as OperationStatusInfo
+          if (opStatus.error) {
+            showError(opStatus.error, wid)
+            await chrome.runtime.sendMessage({ action: 'CLEAR_OPERATION_ERROR', payload: { windowId: wid } }).catch(() => {})
+          }
+        }
+
+        if (prevOpsCount > currOpsCount) {
+          await loadAllPreviews().catch(() => {})
+        }
+      }
+    } catch (err) {
+      console.error('Polling failed:', err)
+    }
+  }, 1000)
 }
 
 function windowLabel(w: WindowGroupsInfo, idx: number): string {
@@ -915,22 +900,20 @@ async function handleStopAndApply(windowId: number) {
 }
 
 async function handleClassifyNew(windowId: number, shiftKey = false) {
-  classifyingWindowId.value = windowId
+  startPopupTimeoutTimer(windowId)
   allActiveOperations.value = {
     ...allActiveOperations.value,
-    [windowId]: { type: 'classify', error: null }
+    [windowId]: { type: 'classify', error: null, stage: 'preparing', statusText: 'Classifying tabs...' }
   }
   startPollingStatus()
   try {
     const res = await chrome.runtime.sendMessage({ action: 'CLASSIFY_NEW_TABS', payload: { windowId, shiftKey } })
     if (res && typeof res === 'object' && 'error' in res) {
-      showError(String(res.error))
+      showError(String(res.error), windowId)
     }
     await loadAllPreviews()
   } catch (err) {
-    showError((err as Error).message)
-  } finally {
-    classifyingWindowId.value = null
+    showError((err as Error).message, windowId)
   }
 }
 
@@ -948,10 +931,9 @@ async function handleCheckLast20Tabs(windowId: number, shiftKey = false) {
     return
   }
   startPopupTimeoutTimer(windowId)
-  checkingLast20WindowId.value = windowId
   allActiveOperations.value = {
     ...allActiveOperations.value,
-    [windowId]: { type: 'regroup', error: null }
+    [windowId]: { type: 'regroup', error: null, stage: 'preparing', statusText: 'Analyzing last 20 tabs...' }
   }
   startPollingStatus()
   try {
@@ -963,8 +945,6 @@ async function handleCheckLast20Tabs(windowId: number, shiftKey = false) {
     await loadAllPreviews()
   } catch (err) {
     showError((err as Error).message, windowId)
-  } finally {
-    checkingLast20WindowId.value = null
   }
 }
 
@@ -1075,10 +1055,9 @@ async function runOneShotPrompt(windowId: number, customPrompt?: string, shiftKe
 
 async function handleGroup(windowId: number, customPrompt?: string, bypassSafeguards = false, shiftKey = false) {
   startPopupTimeoutTimer(windowId)
-  groupingWindowId.value = windowId
   allActiveOperations.value = {
     ...allActiveOperations.value,
-    [windowId]: { type: 'group', error: null }
+    [windowId]: { type: 'group', error: null, stage: 'preparing', statusText: 'Preparing AI grouping...' }
   }
   startPollingStatus()
   try {
@@ -1096,8 +1075,6 @@ async function handleGroup(windowId: number, customPrompt?: string, bypassSafegu
     await loadAllPreviews()
   } catch (err) {
     showError((err as Error).message, windowId)
-  } finally {
-    groupingWindowId.value = null
   }
 }
 
@@ -1368,8 +1345,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
         <!-- Running AI Operations Indicator -->
         <span v-if="activeAIOperationsCount > 0" class="relative group shrink-0">
           <span 
-            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm flex items-center gap-1.5 cursor-pointer shadow-xs transition-all animate-pulse text-white" 
+            @click.stop="showActiveOperationsTray = !showActiveOperationsTray"
+            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm flex items-center gap-1.5 cursor-pointer shadow-xs transition-all animate-pulse text-white select-none" 
             style="background: var(--accent); border: 1px solid var(--accent);"
+            title="Click to toggle active operations panel"
           >
             <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
             <span>{{ activeAIOperationsCount }} AI op{{ activeAIOperationsCount > 1 ? 's' : '' }} running</span>
@@ -1378,7 +1357,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             </svg>
           </span>
 
-          <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[320px] max-w-[calc(100vw-24px)] z-50">
+          <div 
+            :class="showActiveOperationsTray ? 'block' : 'hidden group-hover:block'"
+            class="absolute left-0 top-full pt-2 w-[340px] max-w-[calc(100vw-24px)] z-50"
+          >
             <div class="p-3 rounded-sm shadow-card text-left leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
               <div class="font-semibold mb-2 text-xs flex items-center justify-between" style="color: var(--accent);">
                 <span class="flex items-center gap-1.5">
@@ -2166,17 +2148,17 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 <!-- Group Tabs Hero Button -->
                 <button
                   class="px-2.5 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap text-white"
-                  :style="groupingWindowId === w.windowId
+                  :style="isWindowGrouping(w.windowId)
                     ? { background: 'var(--group-red)' }
                     : { background: 'var(--accent)' }"
-                  @click="groupingWindowId === w.windowId ? handleCancelGroup(w.windowId) : handleGroup(w.windowId, undefined, false, $event.shiftKey)"
+                  @click="isWindowGrouping(w.windowId) ? handleCancelGroup(w.windowId) : handleGroup(w.windowId, undefined, false, $event.shiftKey)"
                   @mouseenter="activeHoverAction = 'group'; hoveredActionWindowId = w.windowId"
                   @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
                   title="Group Tabs (AI). Hold Shift + click to save a detailed verbose log in Settings."
                 >
-                  <span v-if="groupingWindowId === w.windowId" class="inline-flex items-center gap-1">
+                  <span v-if="isWindowGrouping(w.windowId)" class="inline-flex items-center gap-1">
                     <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
-                    <span>Grouping...</span>
+                    <span>Cancel</span>
                   </span>
                   <span v-else class="flex items-center gap-1">
                     <svg class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
@@ -2190,17 +2172,17 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 <button
                   v-if="newTabsCount(w) > 0"
                   class="px-2 py-[4px] text-[11px] font-medium rounded-btn flex items-center gap-1 transition-all group whitespace-nowrap shrink-0"
-                  :style="classifyingWindowId === w.windowId
+                  :style="isWindowClassifying(w.windowId)
                     ? { background: 'var(--group-red)', color: '#ffffff' }
                     : { background: 'var(--accent-soft)', color: 'var(--accent)' }"
-                  @click="classifyingWindowId === w.windowId ? handleCancelClassify(w.windowId) : handleClassifyNew(w.windowId, $event.shiftKey)"
+                  @click="isWindowClassifying(w.windowId) ? handleCancelClassify(w.windowId) : handleClassifyNew(w.windowId, $event.shiftKey)"
                   @mouseenter="activeHoverAction = 'classify'; hoveredActionWindowId = w.windowId"
                   @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
                   title="Classify New Tabs. Hold Shift + click to save a detailed verbose log in Settings."
                 >
-                  <span v-if="classifyingWindowId === w.windowId" class="inline-flex items-center gap-1">
+                  <span v-if="isWindowClassifying(w.windowId)" class="inline-flex items-center gap-1">
                     <span class="animate-spin w-2.5 h-2.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
-                    <span>Classifying...</span>
+                    <span>Cancel</span>
                   </span>
                   <span v-else class="flex items-center gap-1">
                     <svg class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
@@ -2214,15 +2196,15 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                 <button
                   v-if="unpinnedTabsCount(w) > 0"
                   class="p-[5px] rounded-btn flex items-center justify-center transition-all shrink-0 cursor-pointer relative"
-                  :style="checkingLast20WindowId === w.windowId
+                  :style="isWindowRegrouping(w.windowId)
                     ? { background: 'var(--group-red)', color: '#ffffff' }
                     : { color: 'var(--text-secondary)', background: 'var(--hover)' }"
-                  @click="checkingLast20WindowId === w.windowId ? handleCancelCheckLast20(w.windowId) : handleCheckLast20Tabs(w.windowId, $event.shiftKey)"
+                  @click="isWindowRegrouping(w.windowId) ? handleCancelCheckLast20(w.windowId) : handleCheckLast20Tabs(w.windowId, $event.shiftKey)"
                   @mouseenter="activeHoverAction = 'regroup'; hoveredActionWindowId = w.windowId"
                   @mouseleave="activeHoverAction = null; hoveredActionWindowId = null"
-                  :title="checkingLast20WindowId === w.windowId ? 'Cancel' : getMessage('checkLast20Tooltip')"
+                  :title="isWindowRegrouping(w.windowId) ? 'Cancel' : getMessage('checkLast20Tooltip')"
                 >
-                  <span v-if="checkingLast20WindowId === w.windowId" class="inline-flex items-center">
+                  <span v-if="isWindowRegrouping(w.windowId)" class="inline-flex items-center">
                     <span class="animate-spin w-3.5 h-3.5 border border-white/60 border-t-transparent rounded-full shrink-0" />
                   </span>
                   <svg v-else class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -2363,15 +2345,16 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                       <span>{{ getMessage('cleanupGroups') }}</span>
                     </button>
                     <button
-                      @click="checkingLast20WindowId === w.windowId ? handleCancelCheckLast20(w.windowId) : handleCheckLast20Tabs(w.windowId); activeMoreMenuWindowId = null"
+                      @click="isWindowRegrouping(w.windowId) ? handleCancelCheckLast20(w.windowId) : handleCheckLast20Tabs(w.windowId); activeMoreMenuWindowId = null"
                       class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer"
-                      :style="{ color: checkingLast20WindowId === w.windowId ? 'var(--group-red)' : 'var(--text-primary)' }"
-                      :title="checkingLast20WindowId === w.windowId ? 'Cancel' : getMessage('checkLast20Tooltip')"
+                      :style="{ color: isWindowRegrouping(w.windowId) ? 'var(--group-red)' : 'var(--text-primary)' }"
+                      :title="isWindowRegrouping(w.windowId) ? 'Cancel' : getMessage('checkLast20Tooltip')"
                     >
-                      <svg class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+                      <span v-if="isWindowRegrouping(w.windowId)" class="animate-spin w-3.5 h-3.5 border border-current border-t-transparent rounded-full shrink-0" />
+                      <svg v-else class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 20 20" fill="currentColor">
                         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" />
                       </svg>
-                      <span>{{ checkingLast20WindowId === w.windowId ? 'Cancel' : getMessage('checkLast20Tabs') }}</span>
+                      <span>{{ isWindowRegrouping(w.windowId) ? 'Cancel' : getMessage('checkLast20Tabs') }}</span>
                     </button>
                     <button
                       v-if="allWindows.length > 1"
@@ -2420,12 +2403,26 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
             <!-- Active Operation Progress Status Line -->
             <div 
-              v-if="(groupingWindowId === w.windowId || classifyingWindowId === w.windowId || checkingLast20WindowId === w.windowId) && allActiveOperations[w.windowId]?.statusText" 
-              class="text-[9.5px] px-1 font-medium flex items-center gap-1.5 transition-all"
-              style="color: var(--accent);"
+              v-if="isWindowOperating(w.windowId) && allActiveOperations[w.windowId]?.statusText" 
+              class="flex flex-col gap-1 px-1 transition-all"
             >
-              <span class="animate-spin w-2 h-2 border border-current border-t-transparent rounded-full shrink-0" />
-              <span class="truncate">{{ allActiveOperations[w.windowId]?.statusText }}</span>
+              <div 
+                class="text-[9.5px] font-medium flex items-center gap-1.5"
+                style="color: var(--accent);"
+              >
+                <span class="animate-spin w-2 h-2 border border-current border-t-transparent rounded-full shrink-0" />
+                <span class="truncate">{{ allActiveOperations[w.windowId]?.statusText }}</span>
+              </div>
+              <div 
+                v-if="allActiveOperations[w.windowId]?.totalTabs && (allActiveOperations[w.windowId]?.totalTabs || 0) > 0"
+                class="w-full h-1 rounded-full overflow-hidden bg-black/10 dark:bg-white/10"
+              >
+                <div 
+                  class="h-full rounded-full transition-all duration-300"
+                  style="background: var(--accent);"
+                  :style="{ width: `${Math.min(100, Math.round(((allActiveOperations[w.windowId]?.processedTabs || 0) / (allActiveOperations[w.windowId]?.totalTabs || 1)) * 100))}%` }"
+                />
+              </div>
             </div>
 
             <!-- One-Shot Prompt Popover -->
@@ -2477,7 +2474,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             </div>
 
             <!-- Tooltip (Shows on hover of Group Tabs or Classify New inside relative actions container) -->
-            <div v-if="groupingWindowId !== w.windowId && classifyingWindowId !== w.windowId && checkingLast20WindowId !== w.windowId && hoveredActionWindowId === w.windowId && activeHoverAction !== null" class="absolute left-3.5 top-full mt-1.5 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
+            <div v-if="!isWindowOperating(w.windowId) && hoveredActionWindowId === w.windowId && activeHoverAction !== null" class="absolute left-3.5 top-full mt-1.5 block w-[280px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
               <template v-if="aiSettings.enabled && aiSettings.apiKey">
                 <div class="font-semibold mb-1" style="color: var(--accent);">
                   {{ activeHoverAction === 'group' ? 'AI Grouping Preview' : activeHoverAction === 'regroup' ? 'AI Check & Regroup Preview' : 'AI Classification Preview' }}

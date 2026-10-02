@@ -54,6 +54,8 @@ import {
   trackLiveTab,
   handleTabRemovalForMassClose,
   markTabIdsClosedByExtension,
+  registerOperationTab,
+  unregisterOperationTab,
 } from './tab-manager'
 import { searchTabs } from './searcher'
 import { recordTabVisit, getHistoryEntries } from './storage'
@@ -369,33 +371,36 @@ async function ensureContentScriptLoaded(tabId: number): Promise<boolean> {
   return false
 }
 
+async function findBroadcastTargetTab(windowId: number): Promise<chrome.tabs.Tab | undefined> {
+  const tabs = await chrome.tabs.query({ active: true, windowId })
+  let targetTab: chrome.tabs.Tab | undefined = tabs[0]
+  if (!targetTab || !targetTab.url || isRestrictedUrl(targetTab.url)) {
+    const winTabs = await chrome.tabs.query({ windowId })
+    targetTab = winTabs.find(t => t.id && t.url && !isRestrictedUrl(t.url))
+  }
+  return targetTab
+}
+
 async function broadcastAIStart(windowId: number, action: string) {
   try {
-    // Clear stale AI results from storage and notify UI
-    await chrome.storage.local.remove(STORAGE_KEYS.LAST_AI_RESULT)
-    chrome.runtime.sendMessage({ action: 'LAST_AI_RESULT_UPDATED', payload: null }).catch(() => {})
-
-    // Broadcast to internal extension views (e.g. search.html)
-    chrome.runtime.sendMessage({
-      action: 'START_AI_PROGRESS',
-      payload: { commandAction: action }
-    }).catch(() => {})
-
-    const tabs = await chrome.tabs.query({ active: true, windowId })
-    let targetTab: chrome.tabs.Tab | undefined = tabs[0]
-    if (!targetTab || !targetTab.url || isRestrictedUrl(targetTab.url)) {
-      const winTabs = await chrome.tabs.query({ windowId })
-      targetTab = winTabs.find(t => t.id && t.url && !isRestrictedUrl(t.url))
+    const prevResultData = await chrome.storage.local.get(STORAGE_KEYS.LAST_AI_RESULT).catch(() => ({}))
+    const prevResult = prevResultData?.[STORAGE_KEYS.LAST_AI_RESULT]
+    if (prevResult && prevResult.windowId === windowId) {
+      await chrome.storage.local.remove(STORAGE_KEYS.LAST_AI_RESULT)
+      chrome.runtime.sendMessage({ action: 'LAST_AI_RESULT_UPDATED', payload: null }).catch(() => {})
     }
+    chrome.runtime.sendMessage({ action: 'START_AI_PROGRESS', payload: { windowId, commandAction: action } }).catch(() => {})
 
+    const targetTab = await findBroadcastTargetTab(windowId)
     if (targetTab?.id && targetTab.url) {
+      registerOperationTab(windowId, targetTab.id)
       const loaded = await ensureContentScriptLoaded(targetTab.id)
-      if (!loaded) return
-
-      await chrome.tabs.sendMessage(targetTab.id, {
-        action: 'START_AI_PROGRESS',
-        payload: { commandAction: action }
-      }).catch(() => {})
+      if (loaded) {
+        await chrome.tabs.sendMessage(targetTab.id, {
+          action: 'START_AI_PROGRESS',
+          payload: { windowId, commandAction: action }
+        }).catch(() => {})
+      }
     }
   } catch {
     // Non-critical progress broadcast error
@@ -404,27 +409,18 @@ async function broadcastAIStart(windowId: number, action: string) {
 
 async function broadcastAIComplete(windowId: number, action: string) {
   try {
-    // Broadcast to internal extension views
-    chrome.runtime.sendMessage({
-      action: 'AI_OPERATION_COMPLETE',
-      payload: { commandAction: action }
-    }).catch(() => {})
-
-    const tabs = await chrome.tabs.query({ active: true, windowId })
-    let targetTab: chrome.tabs.Tab | undefined = tabs[0]
-    if (!targetTab || !targetTab.url || isRestrictedUrl(targetTab.url)) {
-      const winTabs = await chrome.tabs.query({ windowId })
-      targetTab = winTabs.find(t => t.id && t.url && !isRestrictedUrl(t.url))
-    }
-
+    chrome.runtime.sendMessage({ action: 'AI_OPERATION_COMPLETE', payload: { windowId, commandAction: action } }).catch(() => {})
+    const targetTab = await findBroadcastTargetTab(windowId)
     if (targetTab?.id && targetTab.url) {
       await chrome.tabs.sendMessage(targetTab.id, {
         action: 'AI_OPERATION_COMPLETE',
-        payload: { commandAction: action }
+        payload: { windowId, commandAction: action }
       }).catch(() => {})
     }
   } catch {
     // Non-critical progress broadcast error
+  } finally {
+    unregisterOperationTab(windowId)
   }
 }
 
@@ -441,28 +437,19 @@ async function broadcastAIFailed(windowId: number, action: string, errorMsg: str
     }
     await chrome.storage.local.set({ [STORAGE_KEYS.LAST_AI_RESULT]: lastResult })
     chrome.runtime.sendMessage({ action: 'LAST_AI_RESULT_UPDATED', payload: lastResult }).catch(() => {})
+    chrome.runtime.sendMessage({ action: 'AI_OPERATION_FAILED', payload: { windowId, commandAction: action, error: errorMsg } }).catch(() => {})
 
-    // Broadcast to internal extension views
-    chrome.runtime.sendMessage({
-      action: 'AI_OPERATION_FAILED',
-      payload: { commandAction: action, error: errorMsg }
-    }).catch(() => {})
-
-    const tabs = await chrome.tabs.query({ active: true, windowId })
-    let targetTab: chrome.tabs.Tab | undefined = tabs[0]
-    if (!targetTab || !targetTab.url || isRestrictedUrl(targetTab.url)) {
-      const winTabs = await chrome.tabs.query({ windowId })
-      targetTab = winTabs.find(t => t.id && t.url && !isRestrictedUrl(t.url))
-    }
-
+    const targetTab = await findBroadcastTargetTab(windowId)
     if (targetTab?.id && targetTab.url) {
       await chrome.tabs.sendMessage(targetTab.id, {
         action: 'AI_OPERATION_FAILED',
-        payload: { commandAction: action, error: errorMsg }
+        payload: { windowId, commandAction: action, error: errorMsg }
       }).catch(() => {})
     }
   } catch {
     // Non-critical progress broadcast error
+  } finally {
+    unregisterOperationTab(windowId)
   }
 }
 
@@ -567,11 +554,12 @@ chrome.runtime.onMessage.addListener(
 )
 
 /**
- * Resolve window ID from message payload or last focused window (for popup context).
+ * Resolve window ID from message payload, message sender, or last focused window.
  * @param {unknown} payload - The message payload containing an optional windowId.
+ * @param {chrome.runtime.MessageSender} [sender] - The message sender.
  * @returns {Promise<number>} The resolved window ID.
  */
-export async function resolveWindowId(payload: unknown): Promise<number> {
+export async function resolveWindowId(payload: unknown, sender?: chrome.runtime.MessageSender): Promise<number> {
   if (typeof payload === 'number' && Number.isInteger(payload) && payload > 0) {
     return payload
   }
@@ -580,6 +568,9 @@ export async function resolveWindowId(payload: unknown): Promise<number> {
     if (typeof wid === 'number' && Number.isInteger(wid) && wid > 0) {
       return wid
     }
+  }
+  if (sender?.tab?.windowId && sender.tab.windowId > 0) {
+    return sender.tab.windowId
   }
   // Logic: fallback to last focused normal window if no windowId provided
   const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null)
@@ -699,6 +690,9 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
  * @returns {Promise<unknown>} The response payload.
  */
 async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.MessageSender): Promise<unknown> {
+  if (sender?.tab?.id && sender?.tab?.windowId) {
+    registerOperationTab(sender.tab.windowId, sender.tab.id)
+  }
   // Logic: switch over message actions to handle backend requests
   switch (message.action) {
     case 'GET_AI_LOGS': {
@@ -1327,7 +1321,7 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
     }
 
     case 'GET_SEARCH_OVERLAY_METRICS': {
-      const windowId = await resolveWindowId(message.payload)
+      const windowId = await resolveWindowId(message.payload, sender)
       const tabs = await chrome.tabs.query({ windowId })
       const unpinnedTabsCount = tabs.filter(t => !t.pinned).length
       
@@ -1362,11 +1356,13 @@ async function handleMessage(message: ExtensionMessage, sender?: chrome.runtime.
       const activeOperation = activeOps[windowId] || null
 
       return {
+        windowId,
         unpinnedTabsCount,
         currentGroupTabsCount,
         newTabsCount,
         aiSettings,
         activeOperation,
+        activeOperations: activeOps,
       }
     }
 

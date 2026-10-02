@@ -318,6 +318,18 @@ describe('resolveWindowId', () => {
     const res = await resolveWindowId(undefined)
     expect(res).toBe(999)
   })
+
+  it('extracts windowId from sender.tab.windowId when payload is empty', async () => {
+    const sender = { tab: { windowId: 777 } } as chrome.runtime.MessageSender
+    const res = await resolveWindowId(undefined, sender)
+    expect(res).toBe(777)
+  })
+
+  it('prefers explicit payload windowId over sender.tab.windowId', async () => {
+    const sender = { tab: { windowId: 777 } } as chrome.runtime.MessageSender
+    const res = await resolveWindowId({ windowId: 888 }, sender)
+    expect(res).toBe(888)
+  })
 })
 
 describe('closeDuplicateTabs & closePossibleDuplicateTabs', () => {
@@ -777,7 +789,112 @@ describe('checkAndRegroupLast20Tabs', () => {
     expect(res.unchangedCount).toBe(20)
     expect(res.regroupedCount).toBe(0)
   })
+
+  it('matches existing groups case-insensitively during regrouping', async () => {
+    chrome.tabGroups = {
+      query: vi.fn().mockResolvedValue([{ id: 10, title: 'Development' }]),
+      update: vi.fn().mockResolvedValue({}),
+      TAB_GROUP_ID_NONE: -1,
+    } as any
+
+    const tabs = [
+      { id: 101, index: 0, windowId: 1, pinned: false, url: 'https://github.com', title: 'GitHub', groupId: -1 }
+    ]
+    chrome.tabs.query = vi.fn().mockResolvedValue(tabs)
+
+    const groupMock = vi.fn().mockResolvedValue(10)
+    chrome.tabs.group = groupMock
+    chrome.tabs.move = vi.fn().mockResolvedValue({})
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify([{ index: 1, group: 'development' }]) } }]
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    ))
+
+    const res = await checkAndRegroupLast20Tabs(1, { enabled: true, apiKey: 'test-key', provider: 'openai' })
+    expect(res.checkedCount).toBe(1)
+    expect(res.regroupedCount).toBe(1)
+    expect(groupMock).toHaveBeenCalledWith(expect.objectContaining({ groupId: 10 }))
+  })
 })
+
+describe('Multi-Window Concurrent AI Operations and Progress State', () => {
+  let setActiveOperation: any
+  let getActiveOperations: any
+  let updateOperationProgress: any
+  let cancelActiveOperation: any
+  let isAnyAIOperationRunning: any
+  let clearWindowCache: any
+
+  beforeAll(async () => {
+    const managerModule = await import('../src/background/tab-manager')
+    setActiveOperation = managerModule.setActiveOperation
+    getActiveOperations = managerModule.getActiveOperations
+    updateOperationProgress = managerModule.updateOperationProgress
+    cancelActiveOperation = managerModule.cancelActiveOperation
+    isAnyAIOperationRunning = managerModule.isAnyAIOperationRunning
+    clearWindowCache = managerModule.clearWindowCache
+  })
+
+  it('tracks concurrent AI operations across distinct windows without collisions', () => {
+    clearWindowCache(101)
+    clearWindowCache(102)
+    clearWindowCache(103)
+
+    setActiveOperation(101, 'group')
+    setActiveOperation(102, 'classify')
+    setActiveOperation(103, 'regroup')
+
+    expect(isAnyAIOperationRunning()).toBe(true)
+
+    const activeOps = getActiveOperations()
+    expect(activeOps[101]?.type).toBe('group')
+    expect(activeOps[102]?.type).toBe('classify')
+    expect(activeOps[103]?.type).toBe('regroup')
+
+    updateOperationProgress(101, {
+      statusText: 'Analyzing 40 tabs...',
+      processedTabs: 10,
+      totalTabs: 40,
+      batchCurrent: 1,
+      batchTotal: 2,
+    })
+
+    updateOperationProgress(102, {
+      statusText: 'Classifying 5 new tabs...',
+      processedTabs: 3,
+      totalTabs: 5,
+      batchCurrent: 1,
+      batchTotal: 1,
+    })
+
+    const updatedOps = getActiveOperations()
+    expect(updatedOps[101].statusText).toBe('Analyzing 40 tabs...')
+    expect(updatedOps[101].processedTabs).toBe(10)
+    expect(updatedOps[102].statusText).toBe('Classifying 5 new tabs...')
+    expect(updatedOps[102].processedTabs).toBe(3)
+    expect(updatedOps[103].statusText).toBeUndefined()
+
+    // Cancel window 102 independently
+    cancelActiveOperation(102)
+    const afterCancelOps = getActiveOperations()
+    expect(afterCancelOps[102]).toBeUndefined()
+    expect(afterCancelOps[101]?.type).toBe('group')
+    expect(afterCancelOps[103]?.type).toBe('regroup')
+    expect(isAnyAIOperationRunning()).toBe(true)
+
+    // Complete remaining windows
+    cancelActiveOperation(101)
+    cancelActiveOperation(103)
+    expect(isAnyAIOperationRunning()).toBe(false)
+    expect(Object.keys(getActiveOperations())).toHaveLength(0)
+  })
+})
+
 
 
 

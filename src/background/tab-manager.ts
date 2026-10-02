@@ -26,6 +26,15 @@ const cacheIsAIGroupedMap = new Map<number, boolean>()
 const activeAbortControllers = new Map<number, AbortController>()
 const activeTimeoutIds = new Map<number, ReturnType<typeof setTimeout>>()
 const activeTimeoutLoggers = new Map<number, AILogger | undefined>()
+const activeOperationTabIds = new Map<number, number>()
+
+export function registerOperationTab(windowId: number, tabId: number): void {
+  activeOperationTabIds.set(windowId, tabId)
+}
+
+export function unregisterOperationTab(windowId: number): void {
+  activeOperationTabIds.delete(windowId)
+}
 
 /** Tracks which windows currently have an active AI operation running. */
 const activeAIOperationWindows = new Set<number>()
@@ -35,12 +44,14 @@ const activeAIOperationWindows = new Set<number>()
  */
 export function isAnyAIOperationRunning(): boolean {
   if (activeAIOperationWindows.size > 0) return true
-  for (const [windowId, controller] of activeAbortControllers.entries()) {
+  for (const op of activeOperationsMap.values()) {
+    if (op && op.type !== null && op.stage !== 'completed' && op.stage !== 'failed') {
+      return true
+    }
+  }
+  for (const [, controller] of activeAbortControllers.entries()) {
     if (!controller.signal.aborted) {
-      const op = activeOperationsMap.get(windowId)
-      if (op && op.type !== null && op.stage !== 'completed' && op.stage !== 'failed') {
-        return true
-      }
+      return true
     }
   }
   return false
@@ -230,22 +241,45 @@ export function updateOperationProgress(
   }
 
   activeOperationsMap.set(windowId, updated)
+  broadcastOperationProgress(windowId, updated)
+}
 
-  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+function broadcastOperationProgress(windowId: number, status: OperationStatus): void {
+  if (typeof chrome === 'undefined') return
+
+  if (chrome.runtime?.sendMessage) {
     chrome.runtime.sendMessage({
       action: 'AI_OPERATION_PROGRESS',
-      payload: {
-        windowId,
-        status: updated,
-      }
+      payload: { windowId, status },
+    }).catch(() => {})
+
+    chrome.runtime.sendMessage({
+      action: 'ACTIVE_OPERATIONS_UPDATED',
+      payload: getActiveOperations(),
     }).catch(() => {})
   }
 
-  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-    chrome.runtime.sendMessage({
-      action: 'ACTIVE_OPERATIONS_UPDATED',
-      payload: getActiveOperations()
-    }).catch(() => {})
+  if (chrome.tabs?.sendMessage) {
+    const cachedTabId = activeOperationTabIds.get(windowId)
+    if (cachedTabId !== undefined) {
+      chrome.tabs.sendMessage(cachedTabId, {
+        action: 'AI_OPERATION_PROGRESS',
+        payload: { windowId, status },
+      }).catch(() => {
+        activeOperationTabIds.delete(windowId)
+      })
+    } else {
+      chrome.tabs.query({ active: true, windowId }).then((tabs) => {
+        const activeTab = tabs[0]
+        if (activeTab?.id) {
+          activeOperationTabIds.set(windowId, activeTab.id)
+          chrome.tabs.sendMessage(activeTab.id, {
+            action: 'AI_OPERATION_PROGRESS',
+            payload: { windowId, status },
+          }).catch(() => {})
+        }
+      }).catch(() => {})
+    }
   }
 }
 
@@ -253,7 +287,13 @@ export function setActiveOperation(windowId: number, type: 'group' | 'classify' 
   if (type === null && error === null) {
     activeOperationsMap.delete(windowId)
     operationStartTimestamps.delete(windowId)
+    activeAIOperationWindows.delete(windowId)
   } else {
+    if (type !== null) {
+      activeAIOperationWindows.add(windowId)
+    } else {
+      activeAIOperationWindows.delete(windowId)
+    }
     const startTs = operationStartTimestamps.get(windowId) ?? Date.now()
     const endTs = timeoutEndTimestamps.get(windowId) ?? (Date.now() + OPERATION_TIMEOUT_MS)
     const remainingSec = Math.max(0, Math.round((endTs - Date.now()) / 1000))
@@ -1719,6 +1759,17 @@ function addTabToNewGroup(
   }
 }
 
+function findGroupIdByName(name: string | undefined, groupNameToId: Map<string, number>): number | undefined {
+  if (!name) return undefined
+  const exact = groupNameToId.get(name)
+  if (exact !== undefined) return exact
+  const lower = name.toLowerCase()
+  for (const [key, id] of groupNameToId) {
+    if (key.toLowerCase() === lower) return id
+  }
+  return undefined
+}
+
 function categorizeTabDecision(
   tab: chrome.tabs.Tab,
   decision: ReviewAndRegroupDecision,
@@ -1743,7 +1794,7 @@ function categorizeTabDecision(
     return
   }
 
-  const targetGid = groupNameToId.get(decision.group) ?? (decision.newGroupName ? groupNameToId.get(decision.newGroupName) : undefined)
+  const targetGid = findGroupIdByName(decision.group, groupNameToId) ?? findGroupIdByName(decision.newGroupName, groupNameToId)
   if (targetGid !== undefined) {
     addTabToExistingGroup(tab.id!, targetGid, currentGid, plan)
     return
@@ -1926,10 +1977,33 @@ async function resolveAISettings(aiOverrides?: Partial<ExtensionSettings['ai']>)
   return settings
 }
 
-function finishEmptyRegroup(windowId: number): RegroupLast20Result {
+async function finishEmptyRegroup(windowId: number, logger?: AILogger): Promise<RegroupLast20Result> {
   activeOperationsMap.delete(windowId)
   operationStartTimestamps.delete(windowId)
-  return { checkedCount: 0, regroupedCount: 0, unchangedCount: 0, summary: 'No unpinned tabs found to check.' }
+  const summary = 'No unpinned tabs found to check.'
+  if (logger) {
+    await logger.markCompleted({
+      createdGroupsCount: 0,
+      createdGroupNames: [],
+      groupsBefore: 0,
+      groupsAfter: 0,
+      summary,
+    })
+  }
+  const lastResult: LastAIResult = {
+    timestamp: Date.now(),
+    actionType: 'regroup',
+    actionTitle: 'Check & Regroup Last 20 Tabs',
+    windowId,
+    tabsProcessed: 0,
+    groupsBefore: 0,
+    groupsAfter: 0,
+    createdGroupNames: [],
+    summary,
+  }
+  await chrome.storage.local.set({ [STORAGE_KEYS.LAST_AI_RESULT]: lastResult })
+  chrome.runtime.sendMessage({ action: 'LAST_AI_RESULT_UPDATED', payload: lastResult }).catch(() => {})
+  return { checkedCount: 0, regroupedCount: 0, unchangedCount: 0, summary }
 }
 
 async function initRegroupLogger(
@@ -2035,6 +2109,7 @@ async function executeRegroupDecisions(
 function cleanupRegroupOperation(windowId: number, controller: AbortController): void {
   activeAIOperationWindows.delete(windowId)
   clearOperationTimeout(windowId)
+  unregisterOperationTab(windowId)
   if (activeAbortControllers.get(windowId) === controller) {
     activeAbortControllers.delete(windowId)
   }
@@ -2058,6 +2133,7 @@ export async function checkAndRegroupLast20Tabs(
     throw new Error('Tab grouping is not supported in this browser.')
   }
   const controller = initRegroupOperation(windowId)
+  let logger: AILogger | undefined
 
   try {
     const settings = await resolveAISettings(aiOverrides)
@@ -2065,20 +2141,26 @@ export async function checkAndRegroupLast20Tabs(
     const allGroups = await chrome.tabGroups.query({ windowId })
     const targetTabs = getLast20UnpinnedTabs(allTabs)
 
-    if (targetTabs.length === 0) {
-      return finishEmptyRegroup(windowId)
-    }
-
     const { groupNameToId, groupIdToName, existingGroupNames } = buildExistingGroupsMap(allGroups)
-    const logger = await initRegroupLogger(windowId, settings.ai, targetTabs, existingGroupNames, aiOverrides)
+    logger = await initRegroupLogger(windowId, settings.ai, targetTabs, existingGroupNames, aiOverrides)
+
+    if (targetTabs.length === 0) {
+      return await finishEmptyRegroup(windowId, logger)
+    }
 
     const decisions = await queryAIDecisions(windowId, settings.ai, targetTabs, groupIdToName, existingGroupNames, controller, logger)
     if (controller.signal.aborted) {
-      return { checkedCount: targetTabs.length, regroupedCount: 0, unchangedCount: targetTabs.length, summary: 'Operation aborted' }
+      if (logger) {
+        await logger.markFailed(new Error('Operation aborted by user'))
+      }
+      return { checkedCount: targetTabs.length, regroupedCount: 0, unchangedCount: targetTabs.length, summary: 'Operation aborted by user' }
     }
 
     return await executeRegroupDecisions(windowId, targetTabs, decisions, groupNameToId, groupIdToName, allGroups.length, controller, logger)
   } catch (err: any) {
+    if (logger) {
+      await logger.markFailed(err)
+    }
     if (controller.signal.aborted) {
       return { checkedCount: 0, regroupedCount: 0, unchangedCount: 0, summary: 'Operation aborted by user' }
     }

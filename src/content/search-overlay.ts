@@ -79,10 +79,17 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   let progressCloseBtn: HTMLButtonElement | null = null
   let progressStopApplyBtn: HTMLButtonElement | null = null
   let progressHideBtn: HTMLButtonElement | null = null
+  let concurrentOpsBadge: HTMLSpanElement | null = null
   let progressFill: HTMLDivElement | null = null
   let progressDetail: HTMLDivElement | null = null
   let progressDetailText: HTMLSpanElement | null = null
   let progressThinkingPopover: HTMLDivElement | null = null
+  let progressThinkingContainer: HTMLDivElement | null = null
+  let progressThinkingChars: HTMLSpanElement | null = null
+  let progressThinkingBody: HTMLDivElement | null = null
+  let currentOverlayWindowId: number | null = null
+  let concurrentBackgroundOpsCount = 0
+  let aiActionTitle = ''
   let isAIOperating = false
   let isExternalAI = false
   let aiProgressInterval: ReturnType<typeof setInterval> | null = null
@@ -126,9 +133,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
 
   /**
    * Starts tracking AI progress for ETA and percentage remaining estimations.
+   * @param {string} [actionTitle] - Title of the action being executed.
    * @param {string} [initialStatus] - Initial status message to display.
    */
-  function startAIProgressTracking(initialStatus: string = 'Processing...'): void {
+  function startAIProgressTracking(actionTitle = '', initialStatus = 'Processing...'): void {
     aiStartTime = Date.now()
     aiBatchStartTime = Date.now()
     lastTrackedBatch = 0
@@ -136,12 +144,17 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     smoothedRemainingSec = null
     aiBatchCurrent = 0
     aiBatchTotal = 0
+    aiActionTitle = actionTitle
     aiStatusText = initialStatus
     aiModel = ''
     aiDiscoveredGroups = []
     aiLiveReasoning = ''
     aiReasoningSnippet = ''
     aiRetryText = ''
+
+    if (progressThinkingContainer) {
+      progressThinkingContainer.style.display = 'none'
+    }
 
     if (aiProgressTicker) {
       clearInterval(aiProgressTicker)
@@ -175,6 +188,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     aiReasoningSnippet = ''
     aiRetryText = ''
     aiModel = ''
+    aiActionTitle = ''
+    if (progressThinkingContainer) {
+      progressThinkingContainer.style.display = 'none'
+    }
   }
 
   function setProgressDetail(text: string, isError = false): void {
@@ -193,6 +210,90 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
   }
 
+  function calculateProgressPercent(elapsedSec: number): number {
+    if (aiBatchTotal > 1) {
+      if (aiBatchCurrent > aiBatchTotal) {
+        aiStatusText = 'Applying groups to browser...'
+        return 98
+      }
+      if (aiBatchCurrent > 0) {
+        const batchBase = ((aiBatchCurrent - 1) / aiBatchTotal) * 90
+        const batchSpan = (1 / aiBatchTotal) * 90
+        const batchElapsed = aiBatchStartTime ? (Date.now() - aiBatchStartTime) / 1000 : elapsedSec
+        const timeFactor = 1 - Math.exp(-batchElapsed / 30)
+        const targetPercent = Math.round(batchBase + (timeFactor * batchSpan * 0.9))
+        return Math.max(lastRecordedPercent, Math.min(95, Math.max(5, targetPercent)))
+      }
+      return 5
+    }
+    if (aiStatusText.includes('Applying groups')) return 98
+    const target = Math.round(5 + (1 - Math.exp(-elapsedSec / 20)) * 85)
+    return Math.max(lastRecordedPercent, Math.min(90, Math.max(5, target)))
+  }
+
+  function calculateEtaString(percent: number, elapsedSec: number): string {
+    if (percent <= 5 || percent >= 100 || elapsedSec <= 1) return 'Calculating ETA...'
+    let rawRemaining = 0
+    if (aiBatchTotal > 1 && aiBatchCurrent > 1) {
+      const completedBatches = aiBatchCurrent - 1
+      const avgBatchSec = elapsedSec / completedBatches
+      const batchElapsed = aiBatchStartTime ? (Date.now() - aiBatchStartTime) / 1000 : 0
+      const remainingBatches = aiBatchTotal - completedBatches
+      rawRemaining = Math.max(1, Math.round(remainingBatches * avgBatchSec - batchElapsed))
+    } else {
+      const estimatedTotalSec = elapsedSec / Math.max(0.05, percent / 100)
+      rawRemaining = Math.max(1, Math.round(estimatedTotalSec - elapsedSec))
+    }
+    smoothedRemainingSec = smoothedRemainingSec === null ? rawRemaining : Math.round(smoothedRemainingSec * 0.85 + rawRemaining * 0.15)
+    return formatEtaSeconds(smoothedRemainingSec)
+  }
+
+  function renderProgressDetailText(etaString: string): void {
+    if (!progressDetail) return
+    const parts: string[] = []
+    if (aiRetryText) parts.push(aiRetryText)
+
+    const cleanStatus = (aiStatusText || '').trim()
+    const headerText = (progressStatus?.textContent || '').trim()
+    const isRedundant = !cleanStatus ||
+      cleanStatus === 'Executing AI Command...' ||
+      cleanStatus === 'Processing...' ||
+      cleanStatus === 'AI Command' ||
+      cleanStatus === aiActionTitle ||
+      cleanStatus === headerText ||
+      headerText.startsWith(cleanStatus)
+
+    if (!isRedundant) parts.push(cleanStatus)
+    parts.push(`Est. time: ${etaString}`)
+
+    if (aiDiscoveredGroups.length > 0) {
+      const sample = aiDiscoveredGroups.slice(0, 3).join(', ')
+      const extra = aiDiscoveredGroups.length > 3 ? ` (+${aiDiscoveredGroups.length - 3} more)` : ''
+      parts.push(`Discovered: [${sample}${extra}]`)
+    }
+
+    const detail = parts.join(' • ')
+    if (progressDetailText) {
+      progressDetailText.textContent = detail
+    } else {
+      progressDetail.textContent = detail
+    }
+  }
+
+  function renderThinkingStreamUI(): void {
+    const rawThought = (aiLiveReasoning || aiReasoningSnippet || '').trim()
+    if (!progressThinkingContainer || !progressThinkingBody || !progressThinkingChars) return
+
+    if (rawThought) {
+      progressThinkingContainer.style.display = 'flex'
+      progressThinkingChars.textContent = `(${rawThought.length} chars)`
+      progressThinkingBody.textContent = rawThought
+      progressThinkingBody.scrollTop = progressThinkingBody.scrollHeight
+    } else {
+      progressThinkingContainer.style.display = 'none'
+    }
+  }
+
   /**
    * Recalculates progress percentage, percentage remaining, and estimated time remaining,
    * then updates the overlay DOM elements synchronously.
@@ -206,95 +307,21 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
 
     const elapsedSec = aiStartTime ? (Date.now() - aiStartTime) / 1000 : 0
-    let percent = 5
-
-    if (aiBatchTotal > 1) {
-      if (aiBatchCurrent > aiBatchTotal) {
-        percent = 98
-        aiStatusText = 'Applying groups to browser...'
-      } else if (aiBatchCurrent > 0) {
-        const batchBase = ((aiBatchCurrent - 1) / aiBatchTotal) * 90
-        const batchSpan = (1 / aiBatchTotal) * 90
-        const batchElapsed = aiBatchStartTime ? (Date.now() - aiBatchStartTime) / 1000 : elapsedSec
-        const timeFactor = 1 - Math.exp(-batchElapsed / 30)
-        const targetPercent = Math.round(batchBase + (timeFactor * batchSpan * 0.9))
-        percent = Math.max(lastRecordedPercent, Math.min(95, Math.max(5, targetPercent)))
-      }
-    } else {
-      if (aiStatusText.includes('Applying groups')) {
-        percent = 98
-      } else {
-        const targetPercent = Math.round(5 + (1 - Math.exp(-elapsedSec / 20)) * 85)
-        percent = Math.max(lastRecordedPercent, Math.min(90, Math.max(5, targetPercent)))
-      }
-    }
-
+    const percent = calculateProgressPercent(elapsedSec)
     lastRecordedPercent = percent
-    const remainingPercent = Math.max(0, 100 - percent)
-
-    let etaString = 'Calculating ETA...'
-    if (percent > 5 && percent < 100 && elapsedSec > 1) {
-      let rawRemaining = 0
-      if (aiBatchTotal > 1 && aiBatchCurrent > 1) {
-        const completedBatches = aiBatchCurrent - 1
-        const avgBatchSec = elapsedSec / completedBatches
-        const batchElapsed = aiBatchStartTime ? (Date.now() - aiBatchStartTime) / 1000 : 0
-        const remainingBatches = aiBatchTotal - completedBatches
-        rawRemaining = Math.max(1, Math.round(remainingBatches * avgBatchSec - batchElapsed))
-      } else {
-        const estimatedTotalSec = elapsedSec / Math.max(0.05, percent / 100)
-        rawRemaining = Math.max(1, Math.round(estimatedTotalSec - elapsedSec))
-      }
-      smoothedRemainingSec = smoothedRemainingSec === null ? rawRemaining : Math.round(smoothedRemainingSec * 0.85 + rawRemaining * 0.15)
-      etaString = formatEtaSeconds(smoothedRemainingSec)
-    }
+    const etaString = calculateEtaString(percent, elapsedSec)
 
     if (progressPercent) {
-      progressPercent.textContent = `${percent}% (${remainingPercent}% remaining)`
+      progressPercent.textContent = `${percent}% (${Math.max(0, 100 - percent)}% remaining)`
     }
     if (progressFill) {
       progressFill.style.width = `${percent}%`
       progressFill.classList.remove('atm-indeterminate')
     }
-    if (progressDetail) {
-      let detail = `${aiStatusText} • Est. time: ${etaString}`
-      if (aiRetryText) {
-        detail = `${aiRetryText} • ${detail}`
-      }
-      const rawThought = (aiLiveReasoning || aiReasoningSnippet || '').trim()
-      if (rawThought) {
-        const thoughtPreview = rawThought.length > 120 ? '...' + rawThought.slice(-120).trim() : rawThought
-        detail += ` • Thinking: "${thoughtPreview.replace(/\s+/g, ' ')}" (hover to view full)`
-        progressDetail.classList.add('has-thinking')
-        progressDetail.title = `Model Thinking (Full Stream):\n\n${rawThought}`
-        if (progressThinkingPopover) {
-          progressThinkingPopover.innerHTML = ''
-          const header = document.createElement('div')
-          header.className = 'atm-progress-thinking-popover-header'
-          header.textContent = `Model Thinking Stream (${rawThought.length} chars)`
-          const body = document.createElement('div')
-          body.textContent = rawThought
-          progressThinkingPopover.appendChild(header)
-          progressThinkingPopover.appendChild(body)
-        }
-      } else {
-        progressDetail.classList.remove('has-thinking')
-        progressDetail.title = ''
-        if (progressThinkingPopover) {
-          progressThinkingPopover.innerHTML = ''
-        }
-      }
-      if (aiDiscoveredGroups.length > 0) {
-        const sample = aiDiscoveredGroups.slice(0, 3).join(', ')
-        const extra = aiDiscoveredGroups.length > 3 ? ` (+${aiDiscoveredGroups.length - 3} more)` : ''
-        detail += ` • Discovered: [${sample}${extra}]`
-      }
-      if (progressDetailText) {
-        progressDetailText.textContent = detail
-      } else {
-        progressDetail.textContent = detail
-      }
-    }
+
+    renderProgressDetailText(etaString)
+    renderThinkingStreamUI()
+
     if (progressStopApplyBtn) {
       const canApplyPartial = isAIOperating && (aiBatchCurrent > 1 || aiDiscoveredGroups.length > 0)
       progressStopApplyBtn.style.display = canApplyPartial ? 'inline-flex' : 'none'
@@ -380,6 +407,18 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       title: 'Classify New Tabs',
       description: 'Classify ungrouped tabs into existing groups using AI',
       action: 'CLASSIFY_NEW_TABS'
+    },
+    {
+      key: '/verify',
+      title: 'Check & Regroup Tabs',
+      description: 'Verify if the last 20 tabs are in correct groups and regroup them using AI',
+      action: 'CHECK_LAST_20_TABS'
+    },
+    {
+      key: '/regroup',
+      title: 'Check & Regroup Tabs',
+      description: 'Verify if the last 20 tabs are in correct groups and regroup them using AI',
+      action: 'CHECK_LAST_20_TABS'
     },
     {
       key: '/expand',
@@ -480,6 +519,10 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     { cmd: '/split -full', action: 'SPLIT_CURRENT_GROUP', name: 'Split Current Group (Full URL)', descPrefix: 'Split current group with full URLs using', sendFullUrl: true },
     { cmd: '/merge', action: 'MERGE_CURRENT_GROUP', name: 'Merge Current Group', descPrefix: 'Merge current group using' },
     { cmd: '/merge -full', action: 'MERGE_CURRENT_GROUP', name: 'Merge Current Group (Full URL)', descPrefix: 'Merge current group with full URLs using', sendFullUrl: true },
+    { cmd: '/verify', action: 'CHECK_LAST_20_TABS', name: 'Check & Regroup Tabs', descPrefix: 'Check and regroup last 20 tabs using' },
+    { cmd: '/verify -full', action: 'CHECK_LAST_20_TABS', name: 'Check & Regroup Tabs (Full URL)', descPrefix: 'Check and regroup last 20 tabs with full URLs using', sendFullUrl: true },
+    { cmd: '/regroup', action: 'CHECK_LAST_20_TABS', name: 'Check & Regroup Tabs', descPrefix: 'Check and regroup last 20 tabs using' },
+    { cmd: '/regroup -full', action: 'CHECK_LAST_20_TABS', name: 'Check & Regroup Tabs (Full URL)', descPrefix: 'Check and regroup last 20 tabs with full URLs using', sendFullUrl: true },
   ]
 
   for (const { cmd, action, name, descPrefix, sendFullUrl } of AI_ACTIONS) {
@@ -599,34 +642,90 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
   }
 
+  function updateConcurrentOpsFromMap(ops?: Record<number, any>): void {
+    if (!ops || typeof ops !== 'object') return
+    let count = 0
+    for (const [widStr, status] of Object.entries(ops)) {
+      const wid = Number(widStr)
+      if (status && status.type && (currentOverlayWindowId === null || wid !== currentOverlayWindowId)) {
+        count++
+      }
+    }
+    concurrentBackgroundOpsCount = count
+    if (concurrentOpsBadge) {
+      if (count > 0) {
+        concurrentOpsBadge.style.display = 'inline-flex'
+        concurrentOpsBadge.textContent = `⚡ ${count} bg AI op${count > 1 ? 's' : ''}`
+        concurrentOpsBadge.title = `${count} background AI operation${count > 1 ? 's' : ''} running in other windows`
+      } else {
+        concurrentOpsBadge.style.display = 'none'
+      }
+    }
+  }
+
+  function applyProgressStatusUpdate(status: any): void {
+    if (!status) return
+    aiBatchCurrent = status.batchCurrent || 0
+    aiBatchTotal = status.batchTotal || 0
+    if (status.statusText) aiStatusText = status.statusText
+    if (status.model) {
+      aiModel = status.model
+      const currentDisp = MODEL_NAMES[status.model] || status.model
+      if (progressStatus && !progressStatus.textContent?.includes(currentDisp)) {
+        const baseTitle = aiActionTitle || 'AI Command'
+        progressStatus.textContent = baseTitle.includes(currentDisp) ? baseTitle : `${baseTitle} (${currentDisp})`
+      }
+    }
+    if (Array.isArray(status.discoveredGroupNames)) aiDiscoveredGroups = status.discoveredGroupNames
+    if (status.liveReasoning) aiLiveReasoning = status.liveReasoning
+    if (status.reasoningSnippet) aiReasoningSnippet = status.reasoningSnippet
+    aiRetryText = status.retry
+      ? `Rate limit / retry in ${(status.retry.delayMs / 1000).toFixed(0)}s (Attempt ${status.retry.attempt}/${status.retry.maxRetries})`
+      : ''
+    if (status.batchTotal && status.batchTotal > 1) {
+      const current = status.batchCurrent || 1
+      aiStatusText = current > status.batchTotal
+        ? 'Applying groups to browser...'
+        : `${status.statusText || 'Processing...'} (Batch ${current} of ${status.batchTotal})`
+    }
+    updateAIProgressUI()
+  }
+
   async function loadMetrics() {
     try {
-      const res = await chrome.runtime.sendMessage({
-        action: 'GET_SEARCH_OVERLAY_METRICS'
-      })
+      const res = await chrome.runtime.sendMessage({ action: 'GET_SEARCH_OVERLAY_METRICS' })
       if (res && typeof res === 'object') {
         overlayMetrics = res
+        if (typeof res.windowId === 'number') currentOverlayWindowId = res.windowId
+        if (res.activeOperations) updateConcurrentOpsFromMap(res.activeOperations)
 
-        // Restore active AI operation progress state if running
         if (res.activeOperation && res.activeOperation.type && !isAIOperating) {
           isExternalAI = true
           const titleMap: Record<string, string> = {
-            'group': 'Group Tabs',
-            'classify': 'Classify New Tabs'
+            'group': 'AI Group Tabs',
+            'classify': 'Classify New Tabs',
+            'regroup': 'Check & Regroup Tabs',
+            'split': 'Split Current Group',
+            'merge': 'Merge Current Group',
+            'sort': 'Sort Tabs'
           }
           const actionMap: Record<string, string> = {
             'group': 'GROUP_TABS',
-            'classify': 'CLASSIFY_NEW_TABS'
+            'classify': 'CLASSIFY_NEW_TABS',
+            'regroup': 'CHECK_LAST_20_TABS',
+            'split': 'SPLIT_CURRENT_GROUP',
+            'merge': 'MERGE_CURRENT_GROUP',
+            'sort': 'SORT_TABS'
           }
           const commandAction = actionMap[res.activeOperation.type] || 'GROUP_TABS'
-          
           runAICommand({
             tab: { title: titleMap[res.activeOperation.type] || 'AI Command', url: 'Executing from Background...' },
             score: 0,
             isOpen: false,
             isCommand: true,
-            commandAction: commandAction
+            commandAction
           })
+          applyProgressStatusUpdate(res.activeOperation)
         }
       }
     } catch (err) {
@@ -874,7 +973,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     hostEl = document.createElement('div')
     hostEl.id = 'atm-search-host'
     hostEl.style.display = 'none'
-    const isStandalone = window.location.protocol.includes('-extension:') && window.location.pathname.includes('search.html')
+    const isStandalone = Boolean(window.location?.protocol?.includes('-extension:') && window.location?.pathname?.includes('search.html'))
     if (isStandalone) {
       // Logic: Set standalone attribute and styles for styling adjustments
       // Programming logic: Set standalone attribute and styles for layout adjustments
@@ -1054,9 +1153,36 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     progressDetailText.textContent = 'Ready'
     progressDetail.appendChild(progressDetailText)
 
-    progressThinkingPopover = document.createElement('div')
-    progressThinkingPopover.className = 'atm-progress-thinking-popover'
-    progressDetail.appendChild(progressThinkingPopover)
+    progressThinkingContainer = document.createElement('div')
+    progressThinkingContainer.className = 'atm-progress-thinking'
+
+    const thinkingHeader = document.createElement('div')
+    thinkingHeader.className = 'atm-progress-thinking-header'
+
+    const thinkingLabel = document.createElement('div')
+    thinkingLabel.className = 'atm-progress-thinking-label'
+
+    const thinkingDot = document.createElement('span')
+    thinkingDot.className = 'atm-progress-thinking-dot'
+
+    const thinkingTitle = document.createElement('span')
+    thinkingTitle.textContent = 'Live Model Thinking'
+
+    thinkingLabel.appendChild(thinkingDot)
+    thinkingLabel.appendChild(thinkingTitle)
+
+    progressThinkingChars = document.createElement('span')
+    progressThinkingChars.className = 'atm-progress-thinking-chars'
+    progressThinkingChars.textContent = '(0 chars)'
+
+    thinkingHeader.appendChild(thinkingLabel)
+    thinkingHeader.appendChild(progressThinkingChars)
+
+    progressThinkingBody = document.createElement('div')
+    progressThinkingBody.className = 'atm-progress-thinking-body'
+
+    progressThinkingContainer.appendChild(thinkingHeader)
+    progressThinkingContainer.appendChild(progressThinkingBody)
 
     domainChipsContainer = document.createElement('div')
     domainChipsContainer.className = 'atm-domain-chips'
@@ -1064,6 +1190,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     progressContainer.appendChild(progressHeader)
     progressContainer.appendChild(progressBarBg)
     progressContainer.appendChild(progressDetail)
+    progressContainer.appendChild(progressThinkingContainer)
 
     const resultsList = document.createElement('div')
     resultsList.className = 'atm-results'
@@ -1180,10 +1307,15 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     `)
     scoreInfoSpan.appendChild(scoreTooltip)
 
+    concurrentOpsBadge = document.createElement('span')
+    concurrentOpsBadge.className = 'atm-concurrent-ops-badge'
+    concurrentOpsBadge.style.display = 'none'
+
     rightControls.appendChild(groupResultsBtn)
     rightControls.appendChild(sortToggleBtn)
     rightControls.appendChild(closedTabsToggleBtn)
     rightControls.appendChild(ungroupedToggleLabel)
+    rightControls.appendChild(concurrentOpsBadge)
     rightControls.appendChild(scoreInfoSpan)
 
     footer.appendChild(keybindsSpan)
@@ -1276,18 +1408,16 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     lastMouseX = mouseX
     lastMouseY = mouseY
 
-    // Reset details panel state and load metrics conditionally
+    // Reset details panel state and eagerly load metrics & active operations
     const detailsPanel = shadow.querySelector('.atm-details-panel') as HTMLDivElement
     if (detailsPanel) detailsPanel.style.display = 'none'
     overlayMetrics = null
-    if (initialQuery.startsWith('/')) {
-      loadMetrics().then(() => {
-        if (visible && selectedIndex !== -1 && shadow) {
-          const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
-          if (resultsList) updateSelection(resultsList)
-        }
-      })
-    }
+    loadMetrics().then(() => {
+      if (visible && selectedIndex !== -1 && shadow) {
+        const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
+        if (resultsList) updateSelection(resultsList)
+      }
+    })
 
     const input = shadow.querySelector('.atm-input') as HTMLInputElement
     const resultsList = shadow.querySelector('.atm-results') as HTMLDivElement
@@ -1395,42 +1525,18 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     }
   }
 
-  async function runAICommand(result: SearchResultItem) {
-    if (!shadow || !result.commandAction) return
-
-    isAIOperating = true
-    startAIProgressTracking('Executing AI Command...')
-
-    // Keep search input enabled so user can search while progress bar runs
-    const input = shadow.querySelector('.atm-input') as HTMLInputElement
-    if (input) {
-      input.disabled = false
+  function resolveActionDisplayTitle(action: string, explicitTitle?: string): string {
+    const titleMap: Record<string, string> = {
+      'GROUP_TABS': 'AI Group Tabs',
+      'SPLIT_CURRENT_GROUP': 'Split Current Group',
+      'MERGE_CURRENT_GROUP': 'Merge Current Group',
+      'CLASSIFY_NEW_TABS': 'Classify New Tabs',
+      'CHECK_LAST_20_TABS': 'Check & Regroup Tabs',
     }
-    if (progressContainer) progressContainer.style.display = 'flex'
-    switchToProgressOnlyMode()
+    return explicitTitle || titleMap[action] || 'AI Command'
+  }
 
-
-    if (progressCloseBtn) {
-      progressCloseBtn.textContent = 'Cancel'
-      progressCloseBtn.style.color = '' // Reverts to CSS-defined red color
-      progressCloseBtn.style.display = 'block'
-    }
-    if (progressHideBtn) {
-      progressHideBtn.style.display = 'block'
-    }
-    if (progressStatus) {
-      progressStatus.style.color = '' // reset to default blue
-      progressStatus.textContent = 'Executing AI Command...'
-    }
-    if (progressFill) {
-      progressFill.style.width = '100%'
-      progressFill.style.backgroundColor = '' // reset to default blue
-      progressFill.classList.add('atm-indeterminate')
-    }
-    if (progressPercent) progressPercent.textContent = ''
-    setProgressDetail('Processing...')
-
-    // Extract overrides and display name
+  function resolveCommandModel(result: SearchResultItem): { model: string; provider: string; payload?: any } {
     let model = 'gemini-3.5-flash'
     let provider = 'gemini'
     let payload: any = undefined
@@ -1458,13 +1564,53 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       payload = payload || {}
       payload.sendFullUrl = true
     }
-
     if ((event as MouseEvent | KeyboardEvent)?.shiftKey) {
       payload = payload || {}
       payload.shiftKey = true
     }
+    return { model, provider, payload }
+  }
 
+  async function runAICommand(result: SearchResultItem) {
+    if (!shadow || !result.commandAction) return
+
+    const { model, payload } = resolveCommandModel(result)
     const modelDisplayName = MODEL_NAMES[model] || model
+    const baseActionTitle = resolveActionDisplayTitle(result.commandAction, result.tab?.title)
+    const headerTitle = baseActionTitle.includes(modelDisplayName)
+      ? baseActionTitle
+      : `${baseActionTitle} (${modelDisplayName})`
+
+    isAIOperating = true
+    startAIProgressTracking(headerTitle, 'Processing...')
+
+    // Keep search input enabled so user can search while progress bar runs
+    const input = shadow.querySelector('.atm-input') as HTMLInputElement
+    if (input) {
+      input.disabled = false
+    }
+    if (progressContainer) progressContainer.style.display = 'flex'
+    switchToProgressOnlyMode()
+
+    if (progressCloseBtn) {
+      progressCloseBtn.textContent = 'Cancel'
+      progressCloseBtn.style.color = '' // Reverts to CSS-defined red color
+      progressCloseBtn.style.display = 'block'
+    }
+    if (progressHideBtn) {
+      progressHideBtn.style.display = 'block'
+    }
+    if (progressStatus) {
+      progressStatus.style.color = '' // reset to default blue
+      progressStatus.textContent = headerTitle
+    }
+    if (progressFill) {
+      progressFill.style.width = '100%'
+      progressFill.style.backgroundColor = '' // reset to default blue
+      progressFill.classList.add('atm-indeterminate')
+    }
+    if (progressPercent) progressPercent.textContent = ''
+    setProgressDetail('Processing...')
 
 
 
@@ -1586,14 +1732,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   function hide() {
     if (!hostEl) return
 
-    if (isAIOperating) {
-      switchToProgressOnlyMode()
-      return
-    }
-
     const isStandalone = window.location?.protocol?.includes('-extension:') && window.location?.pathname?.includes('search.html')
     if (isStandalone) {
-      resetAIProgressState()
+      if (!isAIOperating) {
+        resetAIProgressState()
+      }
       const input = shadow?.querySelector('.atm-input') as HTMLInputElement
       const resultsList = shadow?.querySelector('.atm-results') as HTMLDivElement
       if (input && resultsList) {
@@ -1605,7 +1748,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     visible = false
     hostEl.style.display = 'none'
     clearTimeout(debounceTimer)
-    resetAIProgressState()
+    if (!isAIOperating) {
+      resetAIProgressState()
+    }
   }
 
   function toggle(initialQuery = '') {
@@ -2221,7 +2366,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         return
       }
 
-      const aiActions = ['GROUP_TABS', 'SPLIT_CURRENT_GROUP', 'MERGE_CURRENT_GROUP', 'CLASSIFY_NEW_TABS']
+      const aiActions = ['GROUP_TABS', 'SPLIT_CURRENT_GROUP', 'MERGE_CURRENT_GROUP', 'CLASSIFY_NEW_TABS', 'CHECK_LAST_20_TABS']
       if (aiActions.includes(result.commandAction)) {
         runAICommand(result)
         return
@@ -2247,7 +2392,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         payload: { url: result.tab.url }
       })
     }
-    const isStandalone = window.location.protocol.includes('-extension:') && window.location.pathname.includes('search.html')
+    const isStandalone = Boolean(window.location?.protocol?.includes('-extension:') && window.location?.pathname?.includes('search.html'))
     const isNavigation = !(result.isCommand && result.commandAction)
     if (!isStandalone || !isNavigation) {
       hide()
@@ -2257,7 +2402,9 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   function setHTMLContent(element: HTMLElement, htmlString: string): void {
     element.replaceChildren()
     const doc = new DOMParser().parseFromString(htmlString, 'text/html')
-    element.append(...Array.from(doc.body.childNodes))
+    if (doc?.body?.childNodes) {
+      element.append(...Array.from(doc.body.childNodes))
+    }
   }
 
   function setSvgContent(element: HTMLElement, svgString: string): void {
@@ -2326,113 +2473,108 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
   // Expose toggle function globally so background can call it via executeScript
   ; (window as unknown as Record<string, (q?: string) => void>).__ATM_TOGGLE_SEARCH__ = toggle
 
-  // Also listen for messages (for tabs.sendMessage from background)
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message?.action === 'TOGGLE_SEARCH_OVERLAY') {
-      toggle(message.payload?.initialQuery || '')
-    } else if (message?.action === 'START_AI_PROGRESS') {
-      if (isAIOperating || !visible) return
-      const commandAction = message.payload?.commandAction
-      if (commandAction) {
-        const titleMap: Record<string, string> = {
-          'GROUP_TABS': 'Group Tabs',
-          'SPLIT_CURRENT_GROUP': 'Split Current Group',
-          'MERGE_CURRENT_GROUP': 'Merge Group',
-          'CLASSIFY_NEW_TABS': 'Classify New Tabs'
-        }
-        const actionTitle = titleMap[commandAction] || 'AI Command'
+  function updateConcurrentOpsBadge(): void {
+    if (!concurrentOpsBadge) return
+    if (concurrentBackgroundOpsCount > 0) {
+      concurrentOpsBadge.style.display = 'inline-flex'
+      concurrentOpsBadge.textContent = `⚡ ${concurrentBackgroundOpsCount} bg AI op${concurrentBackgroundOpsCount > 1 ? 's' : ''}`
+      concurrentOpsBadge.title = `${concurrentBackgroundOpsCount} background AI operation${concurrentBackgroundOpsCount > 1 ? 's' : ''} running in other windows`
+    } else {
+      concurrentOpsBadge.style.display = 'none'
+    }
+  }
 
-        if (hostEl && shadow) {
-          switchToProgressOnlyMode()
+  function handleStartAIProgressMessage(payload: any): void {
+    const winId = payload?.windowId
+    if (winId !== undefined && currentOverlayWindowId !== null && winId !== currentOverlayWindowId) {
+      concurrentBackgroundOpsCount++
+      updateConcurrentOpsBadge()
+      return
+    }
+    if (isAIOperating || !visible) return
+    const commandAction = payload?.commandAction
+    if (!commandAction) return
+    const titleMap: Record<string, string> = {
+      'GROUP_TABS': 'AI Group Tabs',
+      'SPLIT_CURRENT_GROUP': 'Split Current Group',
+      'MERGE_CURRENT_GROUP': 'Merge Current Group',
+      'CLASSIFY_NEW_TABS': 'Classify New Tabs',
+      'CHECK_LAST_20_TABS': 'Check & Regroup Tabs',
+      'SORT_TABS': 'Sort Tabs'
+    }
+    const actionTitle = titleMap[commandAction] || 'AI Command'
+    if (hostEl && shadow) {
+      switchToProgressOnlyMode()
+      isExternalAI = true
+      startAIProgressTracking(actionTitle)
+      runAICommand({
+        tab: { title: actionTitle, url: 'Executing from Background...' },
+        score: 0,
+        isOpen: false,
+        isCommand: true,
+        commandAction
+      })
+    }
+  }
 
-          isExternalAI = true
-          startAIProgressTracking(actionTitle)
-          runAICommand({
-            tab: { title: actionTitle, url: 'Executing from Background...' },
-            score: 0,
-            isOpen: false,
-            isCommand: true,
-            commandAction: commandAction
-          })
-        }
-      }
-    } else if (message?.action === 'AI_OPERATION_PROGRESS') {
-      if (!isAIOperating || !visible) return
-      const status = message.payload?.status
-      if (status) {
-        aiBatchCurrent = status.batchCurrent || 0
-        aiBatchTotal = status.batchTotal || 0
-        if (status.statusText) {
-          aiStatusText = status.statusText
-        }
-        if (status.model) {
-          aiModel = status.model
-        }
-        if (status.discoveredGroupNames && Array.isArray(status.discoveredGroupNames)) {
-          aiDiscoveredGroups = status.discoveredGroupNames
-        }
-        if (status.liveReasoning) {
-          aiLiveReasoning = status.liveReasoning
-        }
-        if (status.reasoningSnippet) {
-          aiReasoningSnippet = status.reasoningSnippet
-        }
-        if (status.retry) {
-          aiRetryText = `Rate limit / retry in ${(status.retry.delayMs / 1000).toFixed(0)}s (Attempt ${status.retry.attempt}/${status.retry.maxRetries})`
-        } else {
-          aiRetryText = ''
-        }
-        if (status.batchTotal && status.batchTotal > 1) {
-          const current = status.batchCurrent || 1
-          if (current > status.batchTotal) {
-            aiStatusText = 'Applying groups to browser...'
-          } else {
-            aiStatusText = `${status.statusText || 'Processing...'} (Batch ${current} of ${status.batchTotal})`
-          }
-        }
-        updateAIProgressUI()
-      }
-    } else if (message?.action === 'AI_OPERATION_COMPLETE') {
-      if (isAIOperating) {
-        stopAIProgressTracking()
-        if (aiProgressInterval) {
-          clearInterval(aiProgressInterval)
-          aiProgressInterval = null
-        }
-        isAIOperating = false
-        isExternalAI = false
+  function handleAIOperationProgressMessage(payload: any): void {
+    const winId = payload?.windowId
+    if (winId !== undefined && currentOverlayWindowId !== null && winId !== currentOverlayWindowId) {
+      return
+    }
+    if (!isAIOperating || !visible) return
+    applyProgressStatusUpdate(payload?.status)
+  }
 
-        if (progressPercent) progressPercent.textContent = '100% (0% remaining)'
-        if (progressFill) {
-          progressFill.style.width = '100%'
-          progressFill.classList.remove('atm-indeterminate')
-          progressFill.style.backgroundColor = 'var(--group-green, #34C759)'
-        }
-        if (progressStatus) {
-          progressStatus.textContent = 'Success!'
-          progressStatus.style.color = 'var(--group-green, #34C759)'
-        }
-        setProgressDetail('Operation completed successfully.')
-        if (progressCloseBtn) {
-          progressCloseBtn.style.display = 'none'
-        }
-        if (progressStopApplyBtn) {
-          progressStopApplyBtn.style.display = 'none'
-        }
+  function handleAIOperationCompleteMessage(payload: any): void {
+    const winId = payload?.windowId
+    if (winId !== undefined && currentOverlayWindowId !== null && winId !== currentOverlayWindowId) {
+      if (concurrentBackgroundOpsCount > 0) concurrentBackgroundOpsCount--
+      updateConcurrentOpsBadge()
+      return
+    }
+    if (!isAIOperating) return
+    stopAIProgressTracking()
+    if (aiProgressInterval) {
+      clearInterval(aiProgressInterval)
+      aiProgressInterval = null
+    }
+    isAIOperating = false
+    isExternalAI = false
+    if (progressPercent) progressPercent.textContent = '100% (0% remaining)'
+    if (progressFill) {
+      progressFill.style.width = '100%'
+      progressFill.classList.remove('atm-indeterminate')
+      progressFill.style.backgroundColor = 'var(--group-green, #34C759)'
+    }
+    if (progressStatus) {
+      progressStatus.textContent = 'Success!'
+      progressStatus.style.color = 'var(--group-green, #34C759)'
+    }
+    setProgressDetail('Operation completed successfully.')
+    if (progressCloseBtn) progressCloseBtn.style.display = 'none'
+    if (progressStopApplyBtn) progressStopApplyBtn.style.display = 'none'
 
-        if (aiProgressTimeout) clearTimeout(aiProgressTimeout)
-        aiProgressTimeout = setTimeout(() => {
-          hide()
-        }, 1500)
-      }
-    } else if (message?.action === 'AI_OPERATION_FAILED') {
+    if (visible) {
+      if (aiProgressTimeout) clearTimeout(aiProgressTimeout)
+      aiProgressTimeout = setTimeout(() => { hide() }, 1500)
+    } else {
+      resetAIProgressState()
+    }
+  }
+
+  function handleAIOperationFailedMessage(payload: any): void {
+    const winId = payload?.windowId
+    if (winId !== undefined && currentOverlayWindowId !== null && winId !== currentOverlayWindowId) {
+      if (concurrentBackgroundOpsCount > 0) concurrentBackgroundOpsCount--
+      updateConcurrentOpsBadge()
+      return
+    }
+    if (visible) {
       init()
       if (hostEl && shadow) {
-        visible = true
-        hostEl.style.display = 'block'
         syncThemeAttribute()
         switchToProgressOnlyMode()
-
         stopAIProgressTracking()
         if (aiProgressInterval) {
           clearInterval(aiProgressInterval)
@@ -2440,10 +2582,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         }
         isAIOperating = false
         isExternalAI = false
-
-        if (progressContainer) {
-          progressContainer.classList.add('atm-error')
-        }
+        if (progressContainer) progressContainer.classList.add('atm-error')
         if (progressFill) {
           progressFill.style.width = '100%'
           progressFill.classList.remove('atm-indeterminate')
@@ -2453,19 +2592,36 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
           progressStatus.textContent = 'AI Operation Failed'
           progressStatus.style.color = 'var(--group-red, #FF3B30)'
         }
-        setProgressDetail(message.payload?.error || 'An unknown error occurred.', true)
+        setProgressDetail(payload?.error || 'An unknown error occurred.', true)
         if (progressCloseBtn) {
           progressCloseBtn.textContent = 'Dismiss'
           progressCloseBtn.style.color = 'var(--group-red, #FF3B30)'
           progressCloseBtn.style.display = 'block'
         }
-        if (progressStopApplyBtn) {
-          progressStopApplyBtn.style.display = 'none'
-        }
-        if (progressHideBtn) {
-          progressHideBtn.style.display = 'none'
-        }
+        if (progressStopApplyBtn) progressStopApplyBtn.style.display = 'none'
+        if (progressHideBtn) progressHideBtn.style.display = 'none'
       }
+    } else {
+      resetAIProgressState()
+    }
+  }
+
+  // Also listen for messages (for tabs.sendMessage from background)
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message?.action === 'TOGGLE_SEARCH_OVERLAY') {
+      toggle(message.payload?.initialQuery || '')
+    } else if (message?.action === 'ACTIVE_OPERATIONS_UPDATED') {
+      if (message.payload && typeof message.payload === 'object') {
+        updateConcurrentOpsFromMap(message.payload)
+      }
+    } else if (message?.action === 'START_AI_PROGRESS') {
+      handleStartAIProgressMessage(message.payload)
+    } else if (message?.action === 'AI_OPERATION_PROGRESS') {
+      handleAIOperationProgressMessage(message.payload)
+    } else if (message?.action === 'AI_OPERATION_COMPLETE') {
+      handleAIOperationCompleteMessage(message.payload)
+    } else if (message?.action === 'AI_OPERATION_FAILED') {
+      handleAIOperationFailedMessage(message.payload)
     }
   })
 
