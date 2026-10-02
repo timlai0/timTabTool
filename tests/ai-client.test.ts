@@ -1851,6 +1851,33 @@ describe('OpenRouter Provider & Model Fetching', () => {
       expect(decisions[0]).toEqual({ index: 0, group: 'KEEP', newGroupName: undefined, newGroupColor: undefined })
       expect(decisions[1]).toEqual({ index: 1, group: 'Work', newGroupName: undefined, newGroupColor: undefined })
     })
+
+    it('unwraps object responses containing decisions or tabs arrays and handles aliases', async () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key' }
+      const client = new AIClient(config)
+
+      const mockResponse = JSON.stringify({
+        decisions: [
+          { index: 1, targetGroup: 'Work' },
+          { index: 2, category: 'NEW', newName: 'Finance', color: 'blue' }
+        ]
+      })
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: mockResponse } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      ))
+
+      const tabs = [
+        { url: 'https://site1.com', title: 'Site 1' },
+        { url: 'https://site2.com', title: 'Site 2' }
+      ]
+      const decisions = await client.reviewAndRegroupTabs(tabs, ['Work'])
+      expect(decisions).toHaveLength(2)
+      expect(decisions[0]).toEqual({ index: 0, group: 'Work', newGroupName: undefined, newGroupColor: undefined })
+      expect(decisions[1]).toEqual({ index: 1, group: 'NEW', newGroupName: 'Finance', newGroupColor: 'blue' })
+    })
   })
 })
 

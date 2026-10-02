@@ -840,7 +840,7 @@ Only output the JSON array.`
       .join('\n')
     const existingList = existingGroupNames.length > 0 ? existingGroupNames.map((n) => `"${n}"`).join(', ') : 'None'
 
-    return `You are a browser tab organizer. Review the following tabs to verify if each tab is currently in the correct group, and regroup it if needed.
+    return `You are a browser tab organizer. Review the following tabs to verify if each tab is currently in the correct group, and regroup or categorize it if needed.
 
 Existing tab groups: ${existingList}.
 
@@ -849,11 +849,12 @@ ${tabDescriptions}
 
 For each tab:
 1. If its current group accurately matches its content/topic, KEEP it in that group: {"index": 1, "group": "KEEP"}.
-2. If it belongs in a different existing group, move it: {"index": 2, "group": "existing group name"}.
+   IMPORTANT: If the tab has "[Current group: None (ungrouped)]", do NOT return "KEEP" unless it should remain ungrouped. Assign it to an appropriate existing group or create a new group.
+2. If it belongs in a different existing group from the list above, move it: {"index": 2, "group": "existing group name"}.
 3. If it does not belong in any existing group and should be grouped, create a new group: {"index": 3, "group": "NEW", "newGroupName": "...", "newGroupColor": "blue"}.
 4. If it should be ungrouped, set group to "_ungrouped_": {"index": 4, "group": "_ungrouped_"}.
 
-Be conservative: if a tab's current group is already appropriate, keep it in that group. Only regroup tabs that are clearly misplaced or ungrouped.
+Be conservative with already grouped tabs: if their current group is appropriate, keep them in that group. Regroup tabs that are misplaced or currently ungrouped.
 Valid colors: grey, blue, red, yellow, green, pink, purple, cyan.
 
 JSON format: [{"index":1,"group":"KEEP"}] or [{"index":2,"group":"existing group name"}] or [{"index":3,"group":"NEW","newGroupName":"...","newGroupColor":"blue"}]
@@ -902,21 +903,50 @@ Only output the JSON array.`
     offset: number,
     existingGroupNames: string[]
   ): ReviewAndRegroupDecision[] {
-    const extracted = extractJsonSubstring(response, 'array')
-    if (!extracted.startsWith('[')) return this.fallbackAllToKeep(tabs, offset)
+    const extracted = extractJsonSubstring(response, 'auto')
+    let parsedArray = this.tryParseRegroupJson(extracted)
+    if (!parsedArray) {
+      const arrayExtracted = extractJsonSubstring(response, 'array')
+      parsedArray = this.tryParseRegroupJson(arrayExtracted)
+    }
 
-    let parsed: Array<{ index: number; group: string; newGroupName?: string; newGroupColor?: string }>
+    if (!parsedArray || !Array.isArray(parsedArray)) {
+      return this.fallbackAllToKeep(tabs, offset)
+    }
+
+    return this.mapParsedDecisions(parsedArray, tabs, offset, existingGroupNames)
+  }
+
+  /**
+   * Attempt to parse regroup JSON and extract decision array from potential wrappers.
+   */
+  private tryParseRegroupJson(jsonStr: string): any[] | null {
+    if (!jsonStr) return null
+    let parsed: any = null
     try {
-      parsed = JSON.parse(extracted.replace(/,\s*([}\]])/g, '$1'))
+      parsed = JSON.parse(jsonStr.replace(/,\s*([}\]])/g, '$1'))
     } catch {
       try {
-        parsed = JSON.parse(repairTruncatedJson(extracted))
+        parsed = JSON.parse(repairTruncatedJson(jsonStr))
       } catch {
-        return this.fallbackAllToKeep(tabs, offset)
+        return null
       }
     }
 
-    return this.mapParsedDecisions(parsed, tabs, offset, existingGroupNames)
+    if (Array.isArray(parsed)) return parsed
+    if (parsed && typeof parsed === 'object') {
+      const possibleArrays = [
+        parsed.decisions,
+        parsed.tabs,
+        parsed.results,
+        parsed.items,
+        parsed.groups,
+        parsed.data,
+      ]
+      const found = possibleArrays.find((arr) => Array.isArray(arr))
+      if (found) return found
+    }
+    return null
   }
 
   /**
@@ -938,6 +968,10 @@ Only output the JSON array.`
       const match = existingGroupNames.find((n) => n.toLowerCase() === rawGroup.toLowerCase())
       return match ? { group: match } : { group: 'NEW', newGroupName: rawNewName || rawGroup }
     }
+    if (rawNewName && rawNewName.length > 0) {
+      const match = existingGroupNames.find((n) => n.toLowerCase() === rawNewName.toLowerCase())
+      return match ? { group: match } : { group: 'NEW', newGroupName: rawNewName }
+    }
     return { group: 'KEEP' }
   }
 
@@ -945,16 +979,46 @@ Only output the JSON array.`
    * Resolve a single parsed item into a structured decision.
    */
   private resolveParsedDecision(
-    item: { index: number; group?: string; newGroupName?: string; newGroupColor?: string },
+    item: {
+      index?: number
+      group?: string
+      targetGroup?: string
+      category?: string
+      name?: string
+      newName?: string
+      newGroupName?: string
+      newGroupColor?: string
+      color?: string
+    },
     tabIdx: number,
     offset: number,
     existingGroupNames: string[]
   ): ReviewAndRegroupDecision {
-    const rawGroup = typeof item.group === 'string' ? item.group.trim() : ''
-    const rawNewName = typeof item.newGroupName === 'string' ? item.newGroupName.trim() : undefined
-    const rawColor = typeof item.newGroupColor === 'string' ? item.newGroupColor.trim().toLowerCase() : undefined
-    const validColor = VALID_COLORS.includes(rawColor as ChromeTabGroupColor) ? (rawColor as ChromeTabGroupColor) : undefined
+    const rawGroup = typeof item.group === 'string'
+      ? item.group.trim()
+      : typeof item.targetGroup === 'string'
+        ? item.targetGroup.trim()
+        : typeof item.category === 'string'
+          ? item.category.trim()
+          : typeof item.name === 'string' && (item.newGroupName || item.color)
+            ? item.name.trim()
+            : ''
 
+    const rawNewName = typeof item.newGroupName === 'string'
+      ? item.newGroupName.trim()
+      : typeof item.newName === 'string'
+        ? item.newName.trim()
+        : (typeof item.name === 'string' && (rawGroup.toUpperCase() === 'NEW' || !rawGroup))
+          ? item.name.trim()
+          : undefined
+
+    const rawColor = typeof item.newGroupColor === 'string'
+      ? item.newGroupColor.trim().toLowerCase()
+      : typeof item.color === 'string'
+        ? item.color.trim().toLowerCase()
+        : undefined
+
+    const validColor = VALID_COLORS.includes(rawColor as ChromeTabGroupColor) ? (rawColor as ChromeTabGroupColor) : undefined
     const { group, newGroupName } = this.resolveTargetGroupName(rawGroup, rawNewName, existingGroupNames)
 
     return {
