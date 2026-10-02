@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Concurrent Multi-Window State Collisions in Popup**: Replaced scalar numeric locks (`groupingWindowId`, `classifyingWindowId`, `checkingLast20WindowId`) in `App.vue` with a reactive multi-window status map (`allActiveOperations`) and window-level helpers (`isWindowGrouping`, `isWindowClassifying`, `isWindowRegrouping`, `isWindowOperating`), preventing UI button resets, lost cancellation targets, and premature polling stops when executing operations in parallel.
+- **Search Overlay Modal Trapping During In-Flight AI Tasks**: Fixed `hide()` in `search-overlay.ts` to allow users to close or minimize the overlay during active operations without resetting progress state, terminating execution, or keeping users trapped on screen.
+- **Cross-Window Broadcast Collisions**: Fixed service worker progress, completion, and failure broadcasts to include `{ windowId, commandAction }` and added strict window filtering in content scripts, preventing operations in one window from erasing or overwriting progress UI in other windows.
+- **Content Script Window ID Resolution**: Resolved caller window ID from `sender?.tab?.windowId` in `resolveWindowId`, ensuring operations initiated from search overlays target the caller's window instead of defaulting to the last focused normal window.
+- **Tab Group Verification Ungrouped Tabs & Schema Parsing**: Resolved an issue where "Check & Regroup Last 20 Tabs" left ungrouped tabs untouched due to conservative prompt interpretation; added explicit prompt rules for ungrouped tabs, object unwrap parsing (`decisions`, `tabs`, `results`, `items`), and property aliases (`targetGroup`, `category`, `color`, `newName`).
+- **Tab Group Verification Operation Logging**: Fixed missing and orphaned logs during tab regroup verification by scoping loggers outside try blocks, capturing error stack traces via `logger.markFailed`, and logging zero-tab runs with `finishEmptyRegroup`.
+- **Search Overlay Progress Text Deduplication**: Eliminated duplicate and redundant status strings between the search overlay header and subtitle.
+- **Content Script Progress Broadcast Delivery**: Routed background `AI_OPERATION_PROGRESS` broadcasts directly to the active tab content script via `activeOperationTabIds` and `chrome.tabs.sendMessage`, allowing live reasoning deltas to stream into web page overlays.
 - **SPA Routing False-Positive Collisions**: Introduced `isSpaHashRoute` guard to strictly preserve client-side hash routes (`#/dashboard` vs `#/settings`) during URL normalization, preventing accidental clustering and closure of distinct web application views.
 - **Metric Inflation & Double-Counting in Duplicate Clusters**: Resolved an issue where exact duplicate copies inside mixed clusters were counted towards both exact and possible duplicate counts, standardizing cluster accounting.
 - **Action Badge Lifecycle & Stuck "AI" Icon**: Resolved an issue where the extension badge remained permanently stuck on `"AI"` after service worker suspension, browser restart, unhandled abort, or window closure.
@@ -17,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Gemini Reasoning Separation & Fallback**: Corrected candidate part segregation in `chatGemini` to ensure thought parts are not inadvertently treated as completion text when text parts are absent.
 
 ### Added
+- **Concurrent Multi-Window Header Tray in Popup**: Added a click-toggle slide-down tray to the header AI badge displaying all concurrent window operations in real time with progress percentages, elapsed/ETA times, and direct cancel buttons per window.
+- **Per-Window In-Card Real-Time Progress Indicators**: Added real-time operation status lines and animated mini progress bars inside individual window cards in `App.vue`.
+- **Search Overlay Cross-Window Concurrent Tasks Indicator**: Added `.atm-concurrent-ops-badge` to the search overlay displaying the count of background AI tasks currently running in other windows.
+- **Multi-Window Concurrency Unit Test Suite**: Added comprehensive unit test coverage in `tests/background.test.ts` and `tests/search-overlay.test.ts` verifying concurrent multi-window state tracking, independent cancellation, and window-filtered runtime message handling.
+- **Search Overlay Live Reasoning Stream**: Built dedicated live thinking container with character counter, real-time thought delta streaming, auto-scroll, and light/dark theme styling in the search overlay.
+- **Explicit Tool & Model Header in Overlay**: Displayed actual tool and model in the search overlay header (e.g. `AI Group Tabs (Gemini 2.5 Flash)`).
+- **Command Palette Regroup Shortcuts**: Added `/verify` and `/regroup` commands with `-full` URL flags to the search overlay command palette.
+- **Case-Insensitive Group Name Resolution**: Added case-insensitive matching in `findGroupIdByName` for tab regrouping.
 - **Comprehensive Possible Duplication Detection**: Multi-stage URL canonicalization supporting modern tracking parameter stripping (`srsltid`, `rdt_cid`, `igsh`, `mibextid`), protocol normalization (`http:` to `https:`), `www.` host canonicalization, default index document normalization (`/index.html`, `/index.php`, `/default.aspx`), and section anchor matching.
 - **Intelligent Keeper Tab Scoring (`calculateKeeperTabScore`)**: Priority ranking that automatically evaluates candidate tabs in a cluster based on active focus (+10,000), pinned state (+5,000), audio playback (+3,000), group membership (+1,000), and clean canonical URL form (+200), ensuring user-focused tabs are safely retained.
 - **Visual Variant Differences & Badges**: Precalculated diff badges (`+N params`, `#anchor`, `http`, `www`, default doc) and match reason summaries in the popup duplicates popover, with dedicated indicators for exact duplicate copies in mixed clusters.
