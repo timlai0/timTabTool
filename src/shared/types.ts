@@ -277,6 +277,8 @@ type MessageAction =
   | 'GET_SETTINGS'
   | 'SAVE_SETTINGS'
   | 'TOGGLE_SEARCH_OVERLAY'
+  | 'OPEN_CHAT_WINDOW'
+  | 'OPEN_CHAT_TAB'
   | 'SWITCH_TAB'
   | 'OPEN_URL'
   | 'CANCEL_OPERATION'
@@ -300,6 +302,7 @@ type MessageAction =
   | 'CLOSE_DUPLICATES'
   | 'CLOSE_POSSIBLE_DUPLICATES'
   | 'ORGANIZE_POSSIBLE_DUPLICATES'
+  | 'RENAME_DUPLICATE_GROUPS'
   | 'GROUP_CLUSTER'
   | 'CLOSE_DOMAIN'
   | 'ISOLATE_DOMAIN'
@@ -341,7 +344,7 @@ export interface ExtensionMessage {
  */
 export interface LastAIResult {
   timestamp: number
-  actionType: 'group' | 'classify' | 'split' | 'merge' | 'regroup'
+  actionType: 'group' | 'classify' | 'split' | 'merge' | 'regroup' | 'rename'
   actionTitle: string
   windowId: number
   tabsProcessed: number
@@ -350,6 +353,8 @@ export interface LastAIResult {
   createdGroupNames?: string[]
   summary: string
   error?: string
+  reasoning?: string
+  reasoningSnippet?: string
 }
 
 /**
@@ -506,7 +511,7 @@ export type AIProgressCallback = (update: AIProgressUpdate) => void
  * Complete real-time status of an active operation per window.
  */
 export interface OperationStatusInfo {
-  type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup' | null
+  type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup' | 'rename' | null
   error: string | null
   stage?: OperationStage
   statusText?: string
@@ -566,5 +571,14 @@ export interface RegroupLast20Result {
   summary: string
 }
 
+export interface DuplicateGroupClusterItem {
+  groupId: number
+  name: string
+  tabs: Array<{ title: string; url: string }>
+}
 
-
+export interface DistinctGroupRenameResult {
+  groupId: number
+  oldName: string
+  newName: string
+}

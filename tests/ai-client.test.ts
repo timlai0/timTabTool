@@ -1976,6 +1976,100 @@ describe('OpenRouter Provider & Model Fetching', () => {
       expect(decisions[1]).toEqual({ index: 1, group: 'NEW', newGroupName: 'Finance', newGroupColor: 'blue' })
     })
   })
+
+  describe('generateDistinctGroupNames', () => {
+    it('returns empty array if fewer than 2 groups are passed', async () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key' }
+      const client = new AIClient(config)
+
+      const result = await client.generateDistinctGroupNames('Work', [
+        { groupId: 1, name: 'Work', tabs: [{ url: 'https://site1.com', title: 'Site 1' }] }
+      ])
+      expect(result).toEqual([])
+    })
+
+    it('successfully parses direct array of renamed groups', async () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key' }
+      const client = new AIClient(config)
+
+      const mockResponse = JSON.stringify([
+        { groupId: 101, name: 'Frontend Dev' },
+        { groupId: 102, name: 'Backend API' }
+      ])
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: mockResponse } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      ))
+
+      const groups = [
+        { groupId: 101, name: 'Dev', tabs: [{ url: 'https://react.dev', title: 'React' }] },
+        { groupId: 102, name: 'Dev', tabs: [{ url: 'https://nodejs.org', title: 'Node' }] }
+      ]
+
+      const results = await client.generateDistinctGroupNames('Dev', groups)
+      expect(results).toHaveLength(2)
+      expect(results[0]).toEqual({ groupId: 101, oldName: 'Dev', newName: 'Frontend Dev' })
+      expect(results[1]).toEqual({ groupId: 102, oldName: 'Dev', newName: 'Backend API' })
+    })
+
+    it('unwraps envelope objects and handles property aliases', async () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key' }
+      const client = new AIClient(config)
+
+      const mockResponse = JSON.stringify({
+        groups: [
+          { id: 201, title: 'Travel Booking' },
+          { group_id: 202, newName: 'Hotel Search' }
+        ]
+      })
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: mockResponse } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      ))
+
+      const groups = [
+        { groupId: 201, name: 'Travel', tabs: [{ url: 'https://flights.com', title: 'Flights' }] },
+        { groupId: 202, name: 'Travel', tabs: [{ url: 'https://hotels.com', title: 'Hotels' }] }
+      ]
+
+      const results = await client.generateDistinctGroupNames('Travel', groups)
+      expect(results).toHaveLength(2)
+      expect(results[0]).toEqual({ groupId: 201, oldName: 'Travel', newName: 'Travel Booking' })
+      expect(results[1]).toEqual({ groupId: 202, oldName: 'Travel', newName: 'Hotel Search' })
+    })
+
+    it('resolves name collisions by appending numeric suffixes', async () => {
+      const config: AIConfig = { enabled: true, provider: 'openai', apiKey: 'test-key' }
+      const client = new AIClient(config)
+
+      // AI returned duplicate names for both groups
+      const mockResponse = JSON.stringify([
+        { groupId: 301, name: 'Research' },
+        { groupId: 302, name: 'Research' }
+      ])
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: mockResponse } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      ))
+
+      const groups = [
+        { groupId: 301, name: 'Docs', tabs: [{ url: 'https://site1.com', title: 'Paper 1' }] },
+        { groupId: 302, name: 'Docs', tabs: [{ url: 'https://site2.com', title: 'Paper 2' }] }
+      ]
+
+      const results = await client.generateDistinctGroupNames('Docs', groups)
+      expect(results).toHaveLength(2)
+      expect(results[0].newName).toBe('Research')
+      expect(results[1].newName).toBe('Research 2')
+    })
+  })
 })
+
 
 
