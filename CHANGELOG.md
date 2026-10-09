@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Gemini API Deprecated Generation Parameters**: Removed deprecated custom sampling parameters (`temperature`, `top_p`, `top_k`) from Gemini requests and migrated reasoning effort configuration from token-based `thinking_budget` to `thinking_level` (`minimal`, `low`, `medium`, `high`), preventing HTTP 400 `INVALID_ARGUMENT` errors.
 - **Concurrent Multi-Window State Collisions in Popup**: Replaced scalar numeric locks (`groupingWindowId`, `classifyingWindowId`, `checkingLast20WindowId`) in `App.vue` with a reactive multi-window status map (`allActiveOperations`) and window-level helpers (`isWindowGrouping`, `isWindowClassifying`, `isWindowRegrouping`, `isWindowOperating`), preventing UI button resets, lost cancellation targets, and premature polling stops when executing operations in parallel.
 - **Search Overlay Modal Trapping During In-Flight AI Tasks**: Fixed `hide()` in `search-overlay.ts` to allow users to close or minimize the overlay during active operations without resetting progress state, terminating execution, or keeping users trapped on screen.
 - **Cross-Window Broadcast Collisions**: Fixed service worker progress, completion, and failure broadcasts to include `{ windowId, commandAction }` and added strict window filtering in content scripts, preventing operations in one window from erasing or overwriting progress UI in other windows.
@@ -25,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Gemini Reasoning Separation & Fallback**: Corrected candidate part segregation in `chatGemini` to ensure thought parts are not inadvertently treated as completion text when text parts are absent.
 
 ### Added
+- **Window Chat Launchers & Full-View Mode**: Added context menu actions (`open-chat-window`, `open-chat-tab`) and responsive full-view styling to open AI tab chat in a dedicated popup window or pinned tab.
+- **AI-Driven Duplicate Group Renaming**: Added `RENAME_DUPLICATE_GROUPS` background handler and `AIClient.generateDistinctGroupNames` to intelligently differentiate and disambiguate identically named tab groups across windows.
+- **Background & Shared Utilities Architecture Modularization**: Decomposed monolithic `tab-manager.ts` and `utils.ts` into isolated leaf modules (`url-utils.ts`, `duplicate-detector.ts`, `ai-providers.ts`, `message-router.ts`, `ipc-broadcast.ts`, `tab-window-actions.ts`, `ai-tab-operations.ts`) maintaining strict bundler DAG invariants.
+- **Tabbed Prompt Card Layout & Auto-Resize in Settings**: Segmented prompt configurations into focused tab cards (Grouping, Coherence, Split, Add Tabs, Merge, Custom, All) within popup viewport budgeting constraints.
+- **Middle-Click Tab Close**: Enabled middle-click (`auxclick` button 1) tab closing across popup tab items and search overlay results.
 - **Concurrent Multi-Window Header Tray in Popup**: Added a click-toggle slide-down tray to the header AI badge displaying all concurrent window operations in real time with progress percentages, elapsed/ETA times, and direct cancel buttons per window.
 - **Per-Window In-Card Real-Time Progress Indicators**: Added real-time operation status lines and animated mini progress bars inside individual window cards in `App.vue`.
 - **Search Overlay Cross-Window Concurrent Tasks Indicator**: Added `.atm-concurrent-ops-badge` to the search overlay displaying the count of background AI tasks currently running in other windows.
