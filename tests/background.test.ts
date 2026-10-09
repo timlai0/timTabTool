@@ -587,6 +587,14 @@ describe('setupContextMenus', () => {
 
     const searchChildren = createCalls.filter((c) => c.parentId === 'search-parent')
     expect(searchChildren.length).toBe(3)
+
+    // Verify chat items are nested under chat-parent for action context
+    const chatParent = createCalls.find((c) => c.id === 'chat-parent')
+    expect(chatParent).toBeDefined()
+
+    const chatChildren = createCalls.filter((c) => c.parentId === 'chat-parent')
+    expect(chatChildren.length).toBe(2)
+    expect(chatChildren.map((c) => c.id)).toEqual(['open-chat-window', 'open-chat-tab'])
   })
 })
 
@@ -892,6 +900,80 @@ describe('Multi-Window Concurrent AI Operations and Progress State', () => {
     cancelActiveOperation(103)
     expect(isAnyAIOperationRunning()).toBe(false)
     expect(Object.keys(getActiveOperations())).toHaveLength(0)
+  })
+})
+
+describe('chat context menu and launcher helpers', () => {
+  let focusExistingChatTabOrWindow: any
+  let openChatInNewWindow: any
+  let openChatInNewTab: any
+  let handleExtensionMessage: any
+
+  beforeAll(async () => {
+    const mod = await import('../src/background/index')
+    focusExistingChatTabOrWindow = mod.focusExistingChatTabOrWindow
+    openChatInNewWindow = mod.openChatInNewWindow
+    openChatInNewTab = mod.openChatInNewTab
+
+    const routerMod = await import('../src/background/message-router')
+    handleExtensionMessage = routerMod.handleExtensionMessage
+  })
+
+  it('focuses existing chat tab when available', async () => {
+    const chatUrl = 'chrome-extension://test/src/popup/index.html?view=chat'
+    chrome.runtime.getURL = vi.fn().mockReturnValue(chatUrl)
+    chrome.tabs.query = vi.fn().mockResolvedValue([
+      { id: 42, windowId: 7, url: chatUrl }
+    ])
+    chrome.windows.update = vi.fn().mockResolvedValue({})
+    chrome.tabs.update = vi.fn().mockResolvedValue({})
+
+    const focused = await focusExistingChatTabOrWindow()
+    expect(focused).toBe(true)
+    expect(chrome.windows.update).toHaveBeenCalledWith(7, { focused: true })
+    expect(chrome.tabs.update).toHaveBeenCalledWith(42, { active: true })
+  })
+
+  it('opens chat in a dedicated popup window when requested', async () => {
+    chrome.runtime.getURL = vi.fn().mockImplementation((path: string) => `chrome-extension://test/${path}`)
+    chrome.windows.getLastFocused = vi.fn().mockResolvedValue({ left: 100, top: 100, width: 1200, height: 800 })
+    chrome.windows.create = vi.fn().mockResolvedValue({})
+
+    await openChatInNewWindow(5)
+    expect(chrome.windows.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: 'chrome-extension://test/src/popup/index.html?view=chat&windowId=5',
+        type: 'popup',
+        focused: true,
+      })
+    )
+  })
+
+  it('opens chat in a new pinned tab when requested', async () => {
+    chrome.runtime.getURL = vi.fn().mockImplementation((path: string) => `chrome-extension://test/${path}`)
+    chrome.tabs.create = vi.fn().mockResolvedValue({})
+
+    await openChatInNewTab(3)
+    expect(chrome.tabs.create).toHaveBeenCalledWith({
+      url: 'chrome-extension://test/src/popup/index.html?view=chat&windowId=3',
+      pinned: true,
+    })
+  })
+
+  it('handles OPEN_CHAT_WINDOW and OPEN_CHAT_TAB in message router', async () => {
+    chrome.runtime.getURL = vi.fn().mockImplementation((path: string) => `chrome-extension://test/${path}`)
+    chrome.tabs.query = vi.fn().mockResolvedValue([])
+    chrome.windows.getLastFocused = vi.fn().mockResolvedValue({ left: 0, top: 0, width: 1000, height: 700 })
+    chrome.windows.create = vi.fn().mockResolvedValue({})
+    chrome.tabs.create = vi.fn().mockResolvedValue({})
+
+    const winRes = await handleExtensionMessage({ action: 'OPEN_CHAT_WINDOW', payload: { windowId: 2 } })
+    expect(winRes).toEqual({ ok: true })
+    expect(chrome.windows.create).toHaveBeenCalled()
+
+    const tabRes = await handleExtensionMessage({ action: 'OPEN_CHAT_TAB', payload: { windowId: 2 } })
+    expect(tabRes).toEqual({ ok: true })
+    expect(chrome.tabs.create).toHaveBeenCalled()
   })
 })
 
