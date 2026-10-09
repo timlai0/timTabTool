@@ -7,7 +7,8 @@ import {
   isTrackingParam,
   isSpaHashRoute,
   stripDefaultDocumentFromPath,
-  calculateKeeperTabScore
+  calculateKeeperTabScore,
+  formatMarkdown
 } from '../src/shared/utils'
 
 describe('isTrackingParam', () => {
@@ -326,5 +327,103 @@ describe('detectDuplicateTabs', () => {
     const copyTab = clusterTabs.find(t => t.id === 81)
     expect(copyTab?.isExactDuplicate).toBe(true)
   })
+
+  it('never treats the same tab instance as a duplicate of itself if provided multiple times', () => {
+    const tabs = [
+      { id: 42, url: 'chrome-extension://jgjoggcjfmglgicldodidofaochkba/src/popup/search.html', title: 'timTabTool Search' },
+      { id: 42, url: 'chrome-extension://jgjoggcjfmglgicldodidofaochkba/src/popup/search.html', title: 'timTabTool Search' },
+    ]
+    const result = detectDuplicateTabs(tabs)
+    expect(result.exactDuplicateCount).toBe(0)
+    expect(result.exactDuplicates).toEqual([])
+    expect(result.possibleDuplicateCount).toBe(0)
+    expect(result.possibleDuplicates).toEqual([])
+  })
+
+  it('clusters Google Sheets tabs with different gid parameters as possible duplicates', () => {
+    const tabs = [
+      {
+        id: 101,
+        url: 'https://docs.google.com/spreadsheets/d/1kSAt3I6zKPmsWR1nlMW1H5XHIv1Ek-DvctJRkhMrL_o/edit?gid=1235169722#gid=1235169722',
+        title: 'all notes sheets - Google Sheets'
+      },
+      {
+        id: 102,
+        url: 'https://docs.google.com/spreadsheets/d/1kSAt3I6zKPmsWR1nlMW1H5XHIv1Ek-DvctJRkhMrL_o/edit?gid=0#gid=0',
+        title: 'all notes sheets - Google Sheets'
+      },
+      {
+        id: 201,
+        url: 'https://docs.google.com/spreadsheets/d/1K9qTeyiymOol8bfQOTEp4blCSUjpvmFFoY8w26cs11E/edit?gid=0#gid=0',
+        title: 'Ari Projekte - Google Sheets'
+      },
+      {
+        id: 202,
+        url: 'https://docs.google.com/spreadsheets/d/1K9qTeyiymOol8bfQOTEp4blCSUjpvmFFoY8w26cs11E/edit?gid=1635712131#gid=1635712131',
+        title: 'Ari Projekte - Google Sheets'
+      }
+    ]
+
+    const result = detectDuplicateTabs(tabs)
+    expect(result.exactDuplicateCount).toBe(0)
+    expect(result.possibleDuplicates.length).toBe(2)
+    expect(result.possibleDuplicateCount).toBe(2)
+
+    const cluster1 = result.possibleDuplicates.find(c => c.title === 'all notes sheets - Google Sheets')
+    expect(cluster1).toBeDefined()
+    expect(cluster1?.cleanUrl).toBe('https://docs.google.com/spreadsheets/d/1kSAt3I6zKPmsWR1nlMW1H5XHIv1Ek-DvctJRkhMrL_o/edit')
+    expect(cluster1?.tabs.map(t => t.id)).toEqual([101, 102])
+
+    const cluster2 = result.possibleDuplicates.find(c => c.title === 'Ari Projekte - Google Sheets')
+    expect(cluster2).toBeDefined()
+    expect(cluster2?.cleanUrl).toBe('https://docs.google.com/spreadsheets/d/1K9qTeyiymOol8bfQOTEp4blCSUjpvmFFoY8w26cs11E/edit')
+    expect(cluster2?.tabs.map(t => t.id)).toEqual([201, 202])
+  })
 })
+
+describe('formatMarkdown', () => {
+  it('returns empty string for empty input', () => {
+    expect(formatMarkdown('')).toBe('')
+  })
+
+  it('escapes raw HTML tags to prevent XSS', () => {
+    const raw = '<script>alert("xss")</script>'
+    const rendered = formatMarkdown(raw)
+    expect(rendered).not.toContain('<script>')
+    expect(rendered).toContain('&lt;script&gt;')
+  })
+
+  it('formats headings correctly', () => {
+    const md = '# Title\n## Subtitle\n### Section'
+    const rendered = formatMarkdown(md)
+    expect(rendered).toContain('Title</div>')
+    expect(rendered).toContain('Subtitle</div>')
+    expect(rendered).toContain('Section</div>')
+  })
+
+  it('formats bold, italic, and inline code', () => {
+    const md = 'This is **bold**, *italic*, and `inline code`'
+    const rendered = formatMarkdown(md)
+    expect(rendered).toContain('<strong>bold</strong>')
+    expect(rendered).toContain('<em>italic</em>')
+    expect(rendered).toContain('<code class="px-1 py-0.2 rounded-xs text-[9px] font-mono bg-black/10 dark:bg-white/10 select-text">inline code</code>')
+  })
+
+  it('formats bullet lists and numbered lists', () => {
+    const md = '- Item A\n* Item B\n1. First\n2. Second'
+    const rendered = formatMarkdown(md)
+    expect(rendered).toContain('Item A</span>')
+    expect(rendered).toContain('Item B</span>')
+    expect(rendered).toContain('>1.</span><span>First</span>')
+    expect(rendered).toContain('>2.</span><span>Second</span>')
+  })
+
+  it('preserves and formats multi-line fenced code blocks', () => {
+    const md = '```json\n{\n  "group": "work"\n}\n```'
+    const rendered = formatMarkdown(md)
+    expect(rendered).toContain('<pre')
+    expect(rendered).toContain('"group": "work"')
+  })
+})
+
 
