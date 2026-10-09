@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, toRaw } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, toRaw, nextTick } from 'vue'
 import { getMessage } from '../../shared/i18n'
 import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS, MODEL_PRICING, PROVIDER_DEFAULTS, OPENROUTER_PROVIDERS } from '../../shared/constants'
-import { getAutoBatchSize, parseMaxTokensToNumber, formatTimeAgo } from '../../shared/utils'
+import { getAutoBatchSize, parseMaxTokensToNumber, formatTimeAgo, formatMarkdown } from '../../shared/utils'
 import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse, AIProvider, OpenRouterProviderItem, ClosedTabEntry } from '../../shared/types'
 import { getClosedTabs, restoreClosedTab, restoreAllClosedTabs, removeClosedTab, clearClosedTabs, restoreClosedBatch, removeClosedBatch } from '../../shared/closed-tabs-manager'
 import { AIClient, SYSTEM_PROMPT, fetchGoogleModels, fetchOpenRouterModels, fetchOpenRouterProviders, fetchOpenRouterKeyInfo, isFreeModel } from '../../shared/ai-client'
@@ -33,6 +33,53 @@ const searchShortcut = ref('Ctrl+Shift+F')
 const searchSlashShortcut = ref('Ctrl+Shift+7')
 const advancedPromptsExpanded = ref(false)
 const connectionSettingsExpanded = ref(false)
+
+const activePromptTab = ref<'grouping' | 'coherence' | 'split' | 'classify' | 'merge' | 'custom' | 'all'>('grouping')
+
+const promptTabs = computed(() => [
+  {
+    id: 'grouping' as const,
+    label: 'Grouping',
+    isCustomized: settings.value.ai.groupingPrompt !== DEFAULT_GROUPING_PROMPT
+  },
+  {
+    id: 'coherence' as const,
+    label: 'Coherence',
+    isCustomized: settings.value.ai.coherencePrompt !== DEFAULT_SETTINGS.ai.coherencePrompt
+  },
+  {
+    id: 'split' as const,
+    label: 'Split',
+    isCustomized: settings.value.ai.splitPrompt !== DEFAULT_SPLIT_PROMPT
+  },
+  {
+    id: 'classify' as const,
+    label: 'Add Tabs',
+    isCustomized: settings.value.ai.classifyPrompt !== DEFAULT_CLASSIFY_PROMPT
+  },
+  {
+    id: 'merge' as const,
+    label: 'Merge',
+    isCustomized: settings.value.ai.mergePrompt !== DEFAULT_MERGE_PROMPT
+  },
+  {
+    id: 'custom' as const,
+    label: 'Custom',
+    isCustomized: Boolean(settings.value.ai.customPrompt && settings.value.ai.customPrompt.trim())
+  }
+])
+
+watch([advancedPromptsExpanded, activePromptTab], () => {
+  nextTick(() => {
+    const textareas = document.querySelectorAll<HTMLTextAreaElement>('.advanced-prompts-wrapper textarea')
+    textareas.forEach((ta) => {
+      ta.style.height = 'auto'
+      if (ta.scrollHeight > 0) {
+        ta.style.height = Math.max(activePromptTab.value === 'all' ? 64 : 110, ta.scrollHeight) + 'px'
+      }
+    })
+  })
+})
 
 // MCP Status & Reconnection refs
 const mcpStatus = ref({ state: 'disabled', port: 8585, error: null as string | null, autoRetrySecondsLeft: 0 })
@@ -82,6 +129,11 @@ const vAutoresize = {
       el.style.height = el.scrollHeight + 'px'
     }
     el.addEventListener('input', resize)
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(resize)
+      ro.observe(el)
+      ;(el as any)._ro = ro
+    }
     setTimeout(resize, 0)
   },
   updated: (el: HTMLTextAreaElement) => {
@@ -90,6 +142,11 @@ const vAutoresize = {
       el.style.height = el.scrollHeight + 'px'
     }
     setTimeout(resize, 0)
+  },
+  unmounted: (el: HTMLTextAreaElement) => {
+    if ((el as any)._ro) {
+      (el as any)._ro.disconnect()
+    }
   }
 }
 
@@ -835,7 +892,7 @@ function formatDurationMs(ms?: number): string {
 const copyReqState = ref<Record<string, boolean>>({})
 const copyRespState = ref<Record<string, boolean>>({})
 
-async function copyToClipboardWithFeedback(text: string, key: string, type: 'req' | 'resp') {
+async function copyToClipboardWithFeedback(text: string, key: string, type: 'req' | 'resp' | 'thought') {
   try {
     await navigator.clipboard.writeText(text)
     if (type === 'req') {
@@ -873,6 +930,36 @@ function getCompleteAiResponse(resp: AILogRawResponse): string {
     return JSON.stringify(resp.parsedJson, null, 2)
   }
   return resp.responseBody || resp.error || 'No response body recorded'
+}
+
+function extractReasoningFromRawResponse(resp: AILogRawResponse): string | null {
+  if (!resp.parsedJson) return null
+  const json = resp.parsedJson as any
+  if (typeof json === 'object' && json !== null) {
+    if (typeof json.accumulatedReasoning === 'string' && json.accumulatedReasoning.trim()) {
+      return json.accumulatedReasoning.trim()
+    }
+    const choice = json.choices?.[0]
+    const reasoning = choice?.message?.reasoning || choice?.message?.reasoning_content || choice?.message?.thought
+    if (typeof reasoning === 'string' && reasoning.trim()) {
+      return reasoning.trim()
+    }
+    const candidate = json.candidates?.[0]
+    if (candidate) {
+      if (typeof candidate.reasoning_content === 'string' && candidate.reasoning_content.trim()) {
+        return candidate.reasoning_content.trim()
+      }
+      if (Array.isArray(candidate.content?.parts)) {
+        const thoughts = candidate.content.parts
+          .filter((p: any) => p && (p.thought === true || typeof p.thought === 'string'))
+          .map((p: any) => typeof p.thought === 'string' ? p.thought : (p.text || ''))
+          .join('\n')
+          .trim()
+        if (thoughts) return thoughts
+      }
+    }
+  }
+  return null
 }
 
 function calculateVariancePercent(est?: number, act?: number): string {
@@ -1146,10 +1233,12 @@ async function pasteConfig() {
     </header>
 
     <!-- Scrollable content -->
-    <div class="flex-1 overflow-y-auto px-2 py-2 space-y-2" style="background: var(--bg-secondary);">
-
-      <!-- AI Configuration -->
-      <div>
+    <div class="flex-1 overflow-y-auto px-2 py-2" style="background: var(--bg-secondary);">
+      <div class="settings-layout-container w-full max-w-[1400px] mx-auto">
+        <!-- Left Column: AI & Automation -->
+        <div class="settings-column">
+          <!-- AI Configuration -->
+          <div>
         <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5 flex items-center gap-1.5" style="color: var(--text-secondary);">
           <svg class="w-3.5 h-3.5 opacity-80" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M5 2a1 1 0 011-1h1a1 1 0 011 1v1h1a1 1 0 110 2H8v1a1 1 0 11-2 0V6H5a1 1 0 01-1-1V3a1 1 0 011-1zm12 7a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0v-1h-1a1 1 0 110-2h1v-1a1 1 0 011-1zM11 5a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0V9H9a1 1 0 110-2h1V6a1 1 0 011-1zM4 11a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1z" clip-rule="evenodd" />
@@ -1972,236 +2061,283 @@ async function pasteConfig() {
             </button>
 
             <!-- Collapsible Prompts Container -->
-            <div v-show="advancedPromptsExpanded">
-              <!-- Grouping Prompt -->
-              <div class="px-3 py-2 setting-row">
-                <div class="flex items-center justify-between mb-1">
-                  <div class="flex items-center gap-1.5">
-                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                      Tab Grouping Prompt
-                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                    </label>
-                    <div class="relative group/help">
-                      <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
-                        <div class="font-bold mb-1" style="color: var(--accent);">Tab Grouping Prompt</div>
-                        Defines tab clustering logic and categories.
-                        
-                        <strong style="color: var(--accent);">Data sent to AI</strong>:
-                        • List of browser tabs: [Index, Title, Domain or Full URL, Opened timestamp]
-                      </div>
-                    </div>
-                  </div>
+            <div v-show="advancedPromptsExpanded" class="advanced-prompts-wrapper border-b" style="border-color: var(--border);">
+              <!-- Segmented Tabs Navigation Bar -->
+              <div class="flex items-center justify-between gap-1 px-3 py-1.5 border-b flex-wrap" style="border-color: var(--border); background: var(--bg-primary);">
+                <div class="flex items-center gap-1 flex-wrap">
                   <button
-                    v-if="settings.ai.groupingPrompt !== DEFAULT_GROUPING_PROMPT"
-                    @click="resetGroupingPrompt"
-                    class="text-[9px] hover:underline"
-                    style="color: var(--accent);"
-                    title="Restore default instructions"
+                    v-for="tab in promptTabs"
+                    :key="tab.id"
+                    type="button"
+                    @click="activePromptTab = tab.id"
+                    class="px-2 py-0.75 text-[10px] font-medium rounded-sm transition-all flex items-center gap-1 cursor-pointer select-none border"
+                    :style="activePromptTab === tab.id
+                      ? { background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)' }
+                      : { background: 'var(--bg-secondary)', color: 'var(--text-secondary)', borderColor: 'var(--border)' }"
                   >
-                    Reset to Default
+                    <span>{{ tab.label }}</span>
+                    <span
+                      v-if="tab.isCustomized"
+                      class="w-1.5 h-1.5 rounded-full shrink-0"
+                      :style="{ background: activePromptTab === tab.id ? '#fff' : 'var(--accent)' }"
+                      title="Customized"
+                    />
                   </button>
                 </div>
-                <textarea
-                  v-model="settings.ai.groupingPrompt"
-                  v-autoresize
-                  :placeholder="'Default:\n' + DEFAULT_GROUPING_PROMPT"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
-                ></textarea>
+                <button
+                  type="button"
+                  @click="activePromptTab = (activePromptTab === 'all' ? 'grouping' : 'all')"
+                  class="px-2 py-0.75 text-[9.5px] font-medium rounded-sm transition-all flex items-center gap-1 shrink-0 ml-auto cursor-pointer border"
+                  :style="activePromptTab === 'all'
+                    ? { background: 'var(--accent-soft)', color: 'var(--accent)', borderColor: 'var(--accent)' }
+                    : { background: 'var(--bg-secondary)', color: 'var(--text-tertiary)', borderColor: 'var(--border)' }"
+                  title="Toggle between single prompt view and all prompts grid"
+                >
+                  <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                  </svg>
+                  <span>{{ activePromptTab === 'all' ? 'Single View' : 'All Prompts' }}</span>
+                </button>
               </div>
 
-              <!-- Coherence Prompt -->
-              <div class="px-3 py-2 setting-row">
-                <div class="flex items-center justify-between mb-1">
-                  <div class="flex items-center gap-1.5">
-                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                      Batch Coherence Instructions
-                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                    </label>
-                    <div class="relative group/help">
-                      <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
-                        <div class="font-bold mb-1" style="color: var(--accent);">Batch Coherence</div>
-                        Injected into subsequent batches (batch 2+).
-                        
-                        <strong style="color: var(--accent);">Data sent to AI</strong>:
-                        • Current batch tab list [Index, Title, Domain/URL, Opened timestamp]
-                        • List of existing group names created in previous batches (e.g., ["Dev", "Shopping"])
+              <!-- Prompts Grid / Active Card Container -->
+              <div class="p-2" :class="{ 'advanced-prompts-grid': activePromptTab === 'all' }">
+                <!-- Grouping Prompt -->
+                <div v-show="activePromptTab === 'grouping' || activePromptTab === 'all'" class="prompt-card">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <label class="block text-[10px] font-medium truncate" style="color: var(--text-secondary);">
+                        Tab Grouping Prompt
+                        <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                      </label>
+                      <div class="relative group/help shrink-0">
+                        <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                        <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] max-w-[calc(100vw-32px)] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                          <div class="font-bold mb-1" style="color: var(--accent);">Tab Grouping Prompt</div>
+                          Defines tab clustering logic and categories.
+                          
+                          <strong style="color: var(--accent);">Data sent to AI</strong>:
+                          • List of browser tabs: [Index, Title, Domain or Full URL, Opened timestamp]
+                        </div>
                       </div>
                     </div>
+                    <button
+                      v-if="settings.ai.groupingPrompt !== DEFAULT_GROUPING_PROMPT"
+                      @click="resetGroupingPrompt"
+                      class="text-[9px] hover:underline shrink-0 ml-1.5"
+                      style="color: var(--accent);"
+                      title="Restore default instructions"
+                    >
+                      Reset to Default
+                    </button>
                   </div>
-                  <button
-                    v-if="settings.ai.coherencePrompt !== DEFAULT_SETTINGS.ai.coherencePrompt"
-                    @click="settings.ai.coherencePrompt = DEFAULT_SETTINGS.ai.coherencePrompt"
-                    class="text-[9px] hover:underline"
-                    style="color: var(--accent);"
-                    title="Restore default instructions"
-                  >
-                    Reset to Default
-                  </button>
+                  <textarea
+                    v-model="settings.ai.groupingPrompt"
+                    v-autoresize
+                    :placeholder="'Default:\n' + DEFAULT_GROUPING_PROMPT"
+                    class="w-full text-xs rounded-sm py-1.5 px-2 resize-y overflow-y-auto flex-1 scrollbar-thin transition-all"
+                    :class="activePromptTab === 'all' ? 'min-h-[64px] max-h-[110px]' : 'min-h-[105px] max-h-[220px]'"
+                    style="background: var(--bg-primary); color: var(--text-primary); border: 0.5px solid var(--border);"
+                  ></textarea>
                 </div>
-                <textarea
-                  v-model="settings.ai.coherencePrompt"
-                  v-autoresize
-                  placeholder="Instructions on how to reuse existing groups..."
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
-                ></textarea>
-              </div>
 
-              <!-- Split Group Prompt -->
-              <div class="px-3 py-2 setting-row">
-                <div class="flex items-center justify-between mb-1">
-                  <div class="flex items-center gap-1.5">
-                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                      Split Group Prompt
-                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                    </label>
-                    <div class="relative group/help">
-                      <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
-                        <div class="font-bold mb-1" style="color: var(--accent);">Split Group Prompt</div>
-                        Defines how highly related tab groups are divided into finer sub-groups.
-                        
-                        <strong style="color: var(--accent);">Data sent to AI</strong>:
-                        • Target group's tab list: [Index, Title, Domain or Full URL, Opened timestamp]
+                <!-- Coherence Prompt -->
+                <div v-show="activePromptTab === 'coherence' || activePromptTab === 'all'" class="prompt-card">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <label class="block text-[10px] font-medium truncate" style="color: var(--text-secondary);">
+                        Batch Coherence Instructions
+                        <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                      </label>
+                      <div class="relative group/help shrink-0">
+                        <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                        <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] max-w-[calc(100vw-32px)] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                          <div class="font-bold mb-1" style="color: var(--accent);">Batch Coherence</div>
+                          Injected into subsequent batches (batch 2+).
+                          
+                          <strong style="color: var(--accent);">Data sent to AI</strong>:
+                          • Current batch tab list [Index, Title, Domain/URL, Opened timestamp]
+                          • List of existing group names created in previous batches (e.g., ["Dev", "Shopping"])
+                        </div>
                       </div>
                     </div>
+                    <button
+                      v-if="settings.ai.coherencePrompt !== DEFAULT_SETTINGS.ai.coherencePrompt"
+                      @click="settings.ai.coherencePrompt = DEFAULT_SETTINGS.ai.coherencePrompt"
+                      class="text-[9px] hover:underline shrink-0 ml-1.5"
+                      style="color: var(--accent);"
+                      title="Restore default instructions"
+                    >
+                      Reset to Default
+                    </button>
                   </div>
-                  <button
-                    v-if="settings.ai.splitPrompt !== DEFAULT_SPLIT_PROMPT"
-                    @click="resetSplitPrompt"
-                    class="text-[9px] hover:underline"
-                    style="color: var(--accent);"
-                    title="Restore default instructions"
-                  >
-                    Reset to Default
-                  </button>
+                  <textarea
+                    v-model="settings.ai.coherencePrompt"
+                    v-autoresize
+                    placeholder="Instructions on how to reuse existing groups..."
+                    class="w-full text-xs rounded-sm py-1.5 px-2 resize-y overflow-y-auto flex-1 scrollbar-thin transition-all"
+                    :class="activePromptTab === 'all' ? 'min-h-[64px] max-h-[110px]' : 'min-h-[105px] max-h-[220px]'"
+                    style="background: var(--bg-primary); color: var(--text-primary); border: 0.5px solid var(--border);"
+                  ></textarea>
                 </div>
-                <textarea
-                  v-model="settings.ai.splitPrompt"
-                  v-autoresize
-                  :placeholder="'Default:\n' + DEFAULT_SPLIT_PROMPT"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
-                ></textarea>
-              </div>
 
-              <!-- Add New Tabs Prompt -->
-              <div class="px-3 py-2 setting-row">
-                <div class="flex items-center justify-between mb-1">
-                  <div class="flex items-center gap-1.5">
-                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                      Add New Tabs Prompt
-                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                    </label>
-                    <div class="relative group/help">
-                      <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
-                        <div class="font-bold mb-1" style="color: var(--accent);">Add New Tabs Prompt</div>
-                        Defines instructions for classifying new incoming tabs into existing groups.
-                        
-                        <strong style="color: var(--accent);">Data sent to AI</strong>:
-                        • New tab list [Index, Title, Domain/URL, Opened timestamp]
-                        • List of existing group names in the current window
+                <!-- Split Group Prompt -->
+                <div v-show="activePromptTab === 'split' || activePromptTab === 'all'" class="prompt-card">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <label class="block text-[10px] font-medium truncate" style="color: var(--text-secondary);">
+                        Split Group Prompt
+                        <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                      </label>
+                      <div class="relative group/help shrink-0">
+                        <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                        <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] max-w-[calc(100vw-32px)] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                          <div class="font-bold mb-1" style="color: var(--accent);">Split Group Prompt</div>
+                          Defines how highly related tab groups are divided into finer sub-groups.
+                          
+                          <strong style="color: var(--accent);">Data sent to AI</strong>:
+                          • Target group's tab list: [Index, Title, Domain or Full URL, Opened timestamp]
+                        </div>
                       </div>
                     </div>
+                    <button
+                      v-if="settings.ai.splitPrompt !== DEFAULT_SPLIT_PROMPT"
+                      @click="resetSplitPrompt"
+                      class="text-[9px] hover:underline shrink-0 ml-1.5"
+                      style="color: var(--accent);"
+                      title="Restore default instructions"
+                    >
+                      Reset to Default
+                    </button>
                   </div>
-                  <button
-                    v-if="settings.ai.classifyPrompt !== DEFAULT_CLASSIFY_PROMPT"
-                    @click="resetClassifyPrompt"
-                    class="text-[9px] hover:underline"
-                    style="color: var(--accent);"
-                    title="Restore default instructions"
-                  >
-                    Reset to Default
-                  </button>
+                  <textarea
+                    v-model="settings.ai.splitPrompt"
+                    v-autoresize
+                    :placeholder="'Default:\n' + DEFAULT_SPLIT_PROMPT"
+                    class="w-full text-xs rounded-sm py-1.5 px-2 resize-y overflow-y-auto flex-1 scrollbar-thin transition-all"
+                    :class="activePromptTab === 'all' ? 'min-h-[64px] max-h-[110px]' : 'min-h-[105px] max-h-[220px]'"
+                    style="background: var(--bg-primary); color: var(--text-primary); border: 0.5px solid var(--border);"
+                  ></textarea>
                 </div>
-                <textarea
-                  v-model="settings.ai.classifyPrompt"
-                  v-autoresize
-                  :placeholder="'Default:\n' + DEFAULT_CLASSIFY_PROMPT"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
-                ></textarea>
-              </div>
 
-              <!-- Merge Group Prompt -->
-              <div class="px-3 py-2 setting-row">
-                <div class="flex items-center justify-between mb-1">
-                  <div class="flex items-center gap-1.5">
-                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                      Merge Group Prompt
-                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                    </label>
-                    <div class="relative group/help">
-                      <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
-                        <div class="font-bold mb-1" style="color: var(--accent);">Merge Group Prompt</div>
-                        Defines instructions for choosing an existing group to merge this tab group into.
-                        
-                        <strong style="color: var(--accent);">Data sent to AI</strong>:
-                        • Target group's tab list: [Index, Title, Domain or Full URL, Opened timestamp]
-                        • List of all other existing group names in the window
+                <!-- Add New Tabs Prompt -->
+                <div v-show="activePromptTab === 'classify' || activePromptTab === 'all'" class="prompt-card">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <label class="block text-[10px] font-medium truncate" style="color: var(--text-secondary);">
+                        Add New Tabs Prompt
+                        <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                      </label>
+                      <div class="relative group/help shrink-0">
+                        <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                        <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] max-w-[calc(100vw-32px)] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                          <div class="font-bold mb-1" style="color: var(--accent);">Add New Tabs Prompt</div>
+                          Defines instructions for classifying new incoming tabs into existing groups.
+                          
+                          <strong style="color: var(--accent);">Data sent to AI</strong>:
+                          • New tab list [Index, Title, Domain/URL, Opened timestamp]
+                          • List of existing group names in the current window
+                        </div>
                       </div>
                     </div>
+                    <button
+                      v-if="settings.ai.classifyPrompt !== DEFAULT_CLASSIFY_PROMPT"
+                      @click="resetClassifyPrompt"
+                      class="text-[9px] hover:underline shrink-0 ml-1.5"
+                      style="color: var(--accent);"
+                      title="Restore default instructions"
+                    >
+                      Reset to Default
+                    </button>
                   </div>
-                  <button
-                    v-if="settings.ai.mergePrompt !== DEFAULT_MERGE_PROMPT"
-                    @click="resetMergePrompt"
-                    class="text-[9px] hover:underline"
-                    style="color: var(--accent);"
-                    title="Restore default instructions"
-                  >
-                    Reset to Default
-                  </button>
+                  <textarea
+                    v-model="settings.ai.classifyPrompt"
+                    v-autoresize
+                    :placeholder="'Default:\n' + DEFAULT_CLASSIFY_PROMPT"
+                    class="w-full text-xs rounded-sm py-1.5 px-2 resize-y overflow-y-auto flex-1 scrollbar-thin transition-all"
+                    :class="activePromptTab === 'all' ? 'min-h-[64px] max-h-[110px]' : 'min-h-[105px] max-h-[220px]'"
+                    style="background: var(--bg-primary); color: var(--text-primary); border: 0.5px solid var(--border);"
+                  ></textarea>
                 </div>
-                <textarea
-                  v-model="settings.ai.mergePrompt"
-                  v-autoresize
-                  :placeholder="'Default:\n' + DEFAULT_MERGE_PROMPT"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
-                ></textarea>
-              </div>
 
-              <!-- Custom Prompt -->
-              <div class="px-3 py-2 setting-row">
-                <div class="flex items-center justify-between mb-1">
-                  <div class="flex items-center gap-1.5">
-                    <label class="block text-[10px] font-medium" style="color: var(--text-secondary);">
-                      Custom System Prompt Instructions
-                      <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
-                    </label>
-                    <div class="relative group/help">
-                      <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
-                      <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
-                        <div class="font-bold mb-1" style="color: var(--accent);">Custom System Prompt</div>
-                        Defines global behavior, persona, and output style rules.
-                        
-                        <strong style="color: var(--accent);">Data sent to AI</strong>:
-                        • System instructions prepended to every AI prompt
+                <!-- Merge Group Prompt -->
+                <div v-show="activePromptTab === 'merge' || activePromptTab === 'all'" class="prompt-card">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <label class="block text-[10px] font-medium truncate" style="color: var(--text-secondary);">
+                        Merge Group Prompt
+                        <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                      </label>
+                      <div class="relative group/help shrink-0">
+                        <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                        <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] max-w-[calc(100vw-32px)] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                          <div class="font-bold mb-1" style="color: var(--accent);">Merge Group Prompt</div>
+                          Defines instructions for choosing an existing group to merge this tab group into.
+                          
+                          <strong style="color: var(--accent);">Data sent to AI</strong>:
+                          • Target group's tab list: [Index, Title, Domain or Full URL, Opened timestamp]
+                          • List of all other existing group names in the window
+                        </div>
                       </div>
                     </div>
+                    <button
+                      v-if="settings.ai.mergePrompt !== DEFAULT_MERGE_PROMPT"
+                      @click="resetMergePrompt"
+                      class="text-[9px] hover:underline shrink-0 ml-1.5"
+                      style="color: var(--accent);"
+                      title="Restore default instructions"
+                    >
+                      Reset to Default
+                    </button>
                   </div>
-                  <button
-                    v-if="settings.ai.customPrompt"
-                    @click="resetSystemPrompt"
-                    class="text-[9px] hover:underline"
-                    style="color: var(--accent);"
-                    title="Restore default instructions"
-                  >
-                    Reset to Default
-                  </button>
+                  <textarea
+                    v-model="settings.ai.mergePrompt"
+                    v-autoresize
+                    :placeholder="'Default:\n' + DEFAULT_MERGE_PROMPT"
+                    class="w-full text-xs rounded-sm py-1.5 px-2 resize-y overflow-y-auto flex-1 scrollbar-thin transition-all"
+                    :class="activePromptTab === 'all' ? 'min-h-[64px] max-h-[110px]' : 'min-h-[105px] max-h-[220px]'"
+                    style="background: var(--bg-primary); color: var(--text-primary); border: 0.5px solid var(--border);"
+                  ></textarea>
                 </div>
-                <textarea
-                  v-model="settings.ai.customPrompt"
-                  v-autoresize
-                  :placeholder="'Default:\n' + SYSTEM_PROMPT"
-                  class="w-full text-xs rounded-sm border-0 py-1.5 px-2 resize-none overflow-hidden"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
-                ></textarea>
+
+                <!-- Custom Prompt -->
+                <div v-show="activePromptTab === 'custom' || activePromptTab === 'all'" class="prompt-card">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <label class="block text-[10px] font-medium truncate" style="color: var(--text-secondary);">
+                        Custom System Prompt Instructions
+                        <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                      </label>
+                      <div class="relative group/help shrink-0">
+                        <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                        <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] max-w-[calc(100vw-32px)] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                          <div class="font-bold mb-1" style="color: var(--accent);">Custom System Prompt</div>
+                          Defines global behavior, persona, and output style rules.
+                          
+                          <strong style="color: var(--accent);">Data sent to AI</strong>:
+                          • System instructions prepended to every AI prompt
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      v-if="settings.ai.customPrompt"
+                      @click="resetSystemPrompt"
+                      class="text-[9px] hover:underline shrink-0 ml-1.5"
+                      style="color: var(--accent);"
+                      title="Restore default instructions"
+                    >
+                      Reset to Default
+                    </button>
+                  </div>
+                  <textarea
+                    v-model="settings.ai.customPrompt"
+                    v-autoresize
+                    :placeholder="'Default:\n' + SYSTEM_PROMPT"
+                    class="w-full text-xs rounded-sm py-1.5 px-2 resize-y overflow-y-auto flex-1 scrollbar-thin transition-all"
+                    :class="activePromptTab === 'all' ? 'min-h-[64px] max-h-[110px]' : 'min-h-[105px] max-h-[220px]'"
+                    style="background: var(--bg-primary); color: var(--text-primary); border: 0.5px solid var(--border);"
+                  ></textarea>
+                </div>
               </div>
             </div>
           </template>
@@ -2310,7 +2446,10 @@ async function pasteConfig() {
           </template>
         </div>
       </div>
+    </div>
 
+    <!-- Right Column: App Preferences & Tools -->
+    <div class="settings-column">
       <!-- Keyboard Shortcut -->
       <div>
         <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5 flex items-center gap-1.5" style="color: var(--text-secondary);">
@@ -2989,6 +3128,37 @@ async function pasteConfig() {
                           </svg>
                           <span>{{ copyRespState[`resp_${log.id}_${resp.batchIndex}`] ? 'Copied Response!' : 'Copy Complete AI Response' }}</span>
                         </button>
+
+                        <button
+                          v-if="extractReasoningFromRawResponse(resp)"
+                          @click="copyToClipboardWithFeedback(extractReasoningFromRawResponse(resp)!, `thought_${log.id}_${resp.batchIndex}`, 'thought')"
+                          class="px-2 py-1 text-[9px] font-semibold rounded-sm bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 transition-colors flex items-center gap-1 cursor-pointer border border-amber-500/20 shadow-sm"
+                        >
+                          <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14H8v-1h4v1zM6 8a4 4 0 118 0c0 1.098-.5 2.1-1.3 2.7-.4.3-.7.8-.7 1.3H8c0-.5-.3-1-.7-1.3C6.5 10.1 6 9.1 6 8z" />
+                          </svg>
+                          <span>{{ copyRespState[`thought_${log.id}_${resp.batchIndex}`] ? 'Copied Reasoning!' : 'Copy Model Reasoning' }}</span>
+                        </button>
+                      </div>
+
+                      <!-- Extracted Model Reasoning Trace -->
+                      <div v-if="extractReasoningFromRawResponse(resp)" class="flex flex-col gap-1 mt-1">
+                        <details class="group/logReasoning text-[9px]" open>
+                          <summary class="cursor-pointer font-medium flex items-center justify-between hover:underline select-none" style="color: var(--group-yellow);" title="Click to collapse/expand reasoning trace">
+                            <span class="flex items-center gap-1">
+                              <svg class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14H8v-1h4v1zM6 8a4 4 0 118 0c0 1.098-.5 2.1-1.3 2.7-.4.3-.7.8-.7 1.3H8c0-.5-.3-1-.7-1.3C6.5 10.1 6 9.1 6 8z" />
+                              </svg>
+                              <span class="font-semibold">Model Reasoning Trace</span>
+                              <span class="text-[8px] opacity-60 font-normal">({{ extractReasoningFromRawResponse(resp)!.length }} chars)</span>
+                            </span>
+                            <span class="text-[8px] opacity-70 group-open/logReasoning:hidden" style="color: var(--text-tertiary);">Expand</span>
+                          </summary>
+                          <div 
+                            class="mt-1 max-h-40 overflow-y-auto p-2 bg-amber-500/5 dark:bg-amber-500/10 border border-amber-500/20 rounded-sm text-[9px] leading-relaxed scrollbar-thin select-text"
+                            v-html="formatMarkdown(extractReasoningFromRawResponse(resp)!)"
+                          />
+                        </details>
                       </div>
 
                       <!-- Raw Response Body -->
@@ -3073,11 +3243,87 @@ async function pasteConfig() {
           </div>
         </div>
       </div>
+      <!-- End of Right Column -->
     </div>
+    <!-- End of settings-layout-container -->
   </div>
+</div>
+</div>
 </template>
 
 <style scoped>
+/* Responsive 2-column layout for settings */
+.settings-layout-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+@media (min-width: 880px) {
+  .settings-layout-container {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    align-items: start;
+  }
+}
+
+/* Advanced Prompts Container & Grid */
+.advanced-prompts-wrapper {
+  container-type: inline-size;
+}
+
+.advanced-prompts-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+@container (min-width: 520px) {
+  .advanced-prompts-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+}
+
+@container (min-width: 860px) {
+  .advanced-prompts-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+}
+
+.prompt-card {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px;
+  border-radius: 2px;
+  background: var(--bg-secondary);
+  border: 0.5px solid var(--border);
+  min-width: 0;
+}
+
+.prompt-card textarea::-webkit-scrollbar {
+  width: 4px;
+}
+.prompt-card textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+.prompt-card textarea::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+.prompt-card textarea::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
 .setting-row {
   border-bottom: 0.5px solid var(--border);
 }

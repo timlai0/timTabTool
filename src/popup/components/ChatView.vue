@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue"
 import { AIClient } from "../../shared/ai-client"
 import { STORAGE_KEYS, DEFAULT_SETTINGS } from "../../shared/constants"
+import { formatMarkdown as baseFormatMarkdown } from "../../shared/utils"
 import type { WindowGroupsInfo, ExtensionSettings, ReasoningEffort } from "../../shared/types"
 
 interface ChatMessage {
@@ -294,9 +295,10 @@ Answer the user's question concisely based on the provided list of tabs. You MUS
       1,
       undefined,
       (progress) => {
-        if (progress.liveReasoning) {
-          capturedReasoning = progress.liveReasoning
-          liveReasoning.value = progress.liveReasoning
+        const thought = progress.liveReasoning || progress.reasoningSnippet
+        if (thought) {
+          capturedReasoning = thought
+          liveReasoning.value = thought
           scrollToBottom()
         }
         if (progress.liveContent) {
@@ -338,25 +340,13 @@ Answer the user's question concisely based on the provided list of tabs. You MUS
 
 function formatMarkdown(text: string) {
   if (!text) return ""
-  return text
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/^### (.*$)/gim, '<div class="font-bold text-[12px] mt-2 mb-0.5" style="color: var(--text-primary);">$1</div>')
-    .replace(/^## (.*$)/gim, '<div class="font-bold text-[13px] mt-2.5 mb-1" style="color: var(--text-primary);">$1</div>')
-    .replace(/^# (.*$)/gim, '<div class="font-bold text-[14px] mt-3 mb-1" style="color: var(--text-primary);">$1</div>')
-    .replace(/^---\s*$/gim, '<hr class="my-2 opacity-30" style="border-color: var(--border);" />')
-    .replace(/^\s*\*\s+(.*$)/gim, '<div class="flex items-start gap-1.5 ml-1"><span class="opacity-50 select-none">•</span><span>$1</span></div>')
-    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.*?)\*/g, "<em>$1</em>")
-    .replace(/~~(.*?)~~/g, "<del class='opacity-50'>$1</del>")
-    .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded-sm text-[10px] font-mono bg-black/10 dark:bg-white/10">$1</code>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, title, url) => {
-      const isClicked = clickedUrls.value.includes(url)
-      const clickedClasses = isClicked ? "line-through opacity-40 text-t-secondary" : "text-accent hover:underline"
-      return `<a href="${url}" class="${clickedClasses} cursor-pointer transition-all duration-150" data-url="${url}">${title}</a>`
-    })
-    .replace(/\n\n/g, '<div class="h-1.5"></div>')
-    .replace(/\n/g, "<br/>")
+  let html = baseFormatMarkdown(text)
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, title, url) => {
+    const isClicked = clickedUrls.value.includes(url)
+    const clickedClasses = isClicked ? "line-through opacity-40 text-t-secondary" : "text-accent hover:underline"
+    return `<a href="${url}" class="${clickedClasses} cursor-pointer transition-all duration-150" data-url="${url}">${title}</a>`
+  })
+  return html
 }
 
 function handleLinkClick(e: MouseEvent) {
@@ -549,9 +539,7 @@ async function copyToClipboard(text: string) {
                   <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor" style="color: var(--group-yellow);"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14H8v-1h4v1zM6 8a4 4 0 118 0c0 1.098-.5 2.1-1.3 2.7-.4.3-.7.8-.7 1.3H8c0-.5-.3-1-.7-1.3C6.5 10.1 6 9.1 6 8z" /></svg>
                   Model Reasoning Trace:
                 </span>
-                <div class="p-2 rounded-sm bg-black/10 dark:bg-white/10 font-mono text-[9.5px] whitespace-pre-wrap max-h-32 overflow-y-auto scrollbar-thin opacity-85 leading-tight">
-                  {{ msg.reasoning }}
-                </div>
+                <div class="p-2 rounded-sm bg-black/10 dark:bg-white/10 text-[9.5px] max-h-36 overflow-y-auto scrollbar-thin opacity-85 leading-relaxed" v-html="formatMarkdown(msg.reasoning)" />
               </div>
 
               <!-- Full Prompt Sent -->
@@ -591,9 +579,7 @@ async function copyToClipboard(text: string) {
               <svg class="w-3.5 h-3.5 animate-pulse" viewBox="0 0 20 20" fill="currentColor"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14H8v-1h4v1zM6 8a4 4 0 118 0c0 1.098-.5 2.1-1.3 2.7-.4.3-.7.8-.7 1.3H8c0-.5-.3-1-.7-1.3C6.5 10.1 6 9.1 6 8z" /></svg>
               <span>Thinking & Reasoning:</span>
             </div>
-            <div class="font-mono text-[9.5px] opacity-85 whitespace-pre-wrap max-h-32 overflow-y-auto scrollbar-thin leading-tight">
-              {{ liveReasoning }}
-            </div>
+            <div class="text-[9.5px] opacity-85 max-h-36 overflow-y-auto scrollbar-thin leading-relaxed" v-html="formatMarkdown(liveReasoning)" />
           </div>
 
           <!-- Live Streaming Text Content (rendered markdown + typing cursor) -->

@@ -387,6 +387,18 @@
     "message": "在新标签页中搜索",
     "description": "Context menu item to open search in new tab"
   },
+  "contextMenuWindowChat": {
+    "message": "窗口聊天",
+    "description": "Context menu parent item for window chat"
+  },
+  "contextMenuOpenChatWindow": {
+    "message": "在新窗口中聊天",
+    "description": "Context menu item to open chat in a new window"
+  },
+  "contextMenuOpenChatTab": {
+    "message": "在新标签页中聊天",
+    "description": "Context menu item to open chat in a new tab"
+  },
   "contextMenuGroupAll": {
     "message": "AI 分组标签页",
     "description": "Context menu item to group tabs using AI"

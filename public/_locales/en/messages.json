@@ -308,7 +308,7 @@
     "description": "Button label to clean up small tab groups"
   },
   "enterMinTabs": {
-    "message": "Enter minimum tab count for a group (tabs in smaller groups will be closed):",
+    "message": "Enter minimum tab count for a group (tabs in smaller groups will be ungrouped):",
     "description": "Prompt message when cleaning up small groups"
   },
   "contextMenuOpenSearch": {
@@ -386,6 +386,18 @@
   "contextMenuOpenSearchTab": {
     "message": "Search in New Tab",
     "description": "Context menu item to open search in new tab"
+  },
+  "contextMenuWindowChat": {
+    "message": "Window Chat",
+    "description": "Context menu parent item for window chat"
+  },
+  "contextMenuOpenChatWindow": {
+    "message": "Chat in New Window",
+    "description": "Context menu item to open chat in a new window"
+  },
+  "contextMenuOpenChatTab": {
+    "message": "Chat in New Tab",
+    "description": "Context menu item to open chat in a new tab"
   },
   "contextMenuGroupAll": {
     "message": "Group Tabs (AI)",

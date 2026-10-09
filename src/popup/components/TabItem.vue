@@ -51,7 +51,7 @@ function getFaviconUrl(tab: TabInfo): string {
     :data-tab-id="tab.id"
     class="tab-row w-full flex items-center gap-2.5 px-2 py-[5px] rounded-sm text-left group transition-all duration-300"
     :class="{ 'active-tab-highlight': tab.active }"
-    @click="switchToTab(tab.id)"
+    @click.left="switchToTab(tab.id)"
     @mousedown.middle.prevent.stop=""
     @click.middle.prevent.stop="closeTab(tab.id)"
     @auxclick.prevent.stop="($event) => { if ($event.button === 1) closeTab(tab.id); }"
@@ -73,6 +73,8 @@ function getFaviconUrl(tab: TabInfo): string {
     </span>
     <span
       @click.stop="closeTab(tab.id)"
+      @mousedown.middle.prevent.stop=""
+      @click.middle.prevent.stop="closeTab(tab.id)"
       @auxclick.prevent.stop="($event) => { if ($event.button === 1) closeTab(tab.id); }"
       class="opacity-0 group-hover:opacity-100 p-0.5 rounded-sm hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
       style="color: var(--text-tertiary);"

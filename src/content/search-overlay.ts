@@ -6,7 +6,7 @@ import type { TabInfo } from '../shared/types'
 import cssText from './search-overlay.css?inline'
 import { AIClient } from '../shared/ai-client'
 import { MODEL_PRICING, PROVIDER_DEFAULTS, MODEL_NAMES, DEFAULT_MODELS } from '../shared/constants'
-import { getOptimalFaviconUrl } from '../shared/utils'
+import { getOptimalFaviconUrl, formatMarkdown } from '../shared/utils'
 
 /**
  * Represents a command item in the search overlay.
@@ -287,7 +287,7 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
     if (rawThought) {
       progressThinkingContainer.style.display = 'flex'
       progressThinkingChars.textContent = `(${rawThought.length} chars)`
-      progressThinkingBody.textContent = rawThought
+      progressThinkingBody.innerHTML = formatMarkdown(rawThought)
       progressThinkingBody.scrollTop = progressThinkingBody.scrollHeight
     } else {
       progressThinkingContainer.style.display = 'none'
@@ -1997,6 +1997,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       const item = document.createElement('div')
       item.className = 'atm-result-item' + (index === selectedIndex ? ' atm-selected' : '')
       item.addEventListener('click', () => activateResult(result))
+      item.addEventListener('mousedown', (e: MouseEvent) => {
+        if (e.button === 1) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      })
       item.addEventListener('auxclick', (e: MouseEvent) => {
         if (e.button === 1 && result.isOpen && !result.isCommand && result.tab.id !== undefined) {
           e.stopPropagation()
@@ -2112,6 +2118,12 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         }
 
         closeBtn.addEventListener('click', closeAction)
+        closeBtn.addEventListener('mousedown', (e: MouseEvent) => {
+          if (e.button === 1) {
+            e.preventDefault()
+            e.stopPropagation()
+          }
+        })
         closeBtn.addEventListener('auxclick', (e: MouseEvent) => {
           if (e.button === 1) closeAction(e)
         })

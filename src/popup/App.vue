@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, shallowRef, onMounted, computed, watch, onUnmounted, nextTick } from 'vue'
+import { ref, shallowRef, triggerRef, onMounted, computed, watch, onUnmounted, nextTick } from 'vue'
 import { getMessage } from '../shared/i18n'
 import { STORAGE_KEYS, DEFAULT_SETTINGS, DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS } from '../shared/constants'
 import { SYSTEM_PROMPT, AIClient } from '../shared/ai-client'
-import { getAutoBatchSize, getOptimalFaviconUrl, detectDuplicateTabs, normalizeUrl, getUrlVariantDifferences, parseUrlSegments, type MinimalTab } from '../shared/utils'
+import { getAutoBatchSize, getOptimalFaviconUrl, detectDuplicateTabs, normalizeUrl, getUrlVariantDifferences, parseUrlSegments, formatMarkdown, type MinimalTab } from '../shared/utils'
 import type { ExtensionSettings, GroupIndicatorStyle, ThemeMode, WindowGroupsInfo, LastAIResult, OperationStatusInfo } from '../shared/types'
 import { APP_VERSION, BUILD_NUMBER, BUILD_STRING } from '../shared/version'
 import GroupList from './components/GroupList.vue'
@@ -190,6 +190,12 @@ onMounted(async () => {
   const urlParams = new URLSearchParams(window.location.search)
   if (urlParams.get('view') === 'chat') {
     currentView.value = 'chat'
+    document.documentElement.classList.add('full-view')
+    document.body.classList.add('full-view')
+    const targetWinId = urlParams.get('windowId')
+    if (targetWinId) {
+      activeChatWindowId.value = parseInt(targetWinId, 10)
+    }
   }
   chrome.storage.onChanged.addListener(handleStorageChange)
   const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
@@ -302,6 +308,7 @@ function removeTrackingParams(urlString: string): string {
 
 const duplicateAnalysis = computed(() => {
   const allTabs: MinimalTab[] = []
+  const seenTabIds = new Set<number>()
   let win: (typeof allWindows.value)[0]
   let group: (typeof win.groups)[0]
   let tab: (typeof group.tabs)[0]
@@ -309,6 +316,10 @@ const duplicateAnalysis = computed(() => {
     for (group of win.groups) {
       for (tab of group.tabs) {
         if (!tab.url) continue
+        if (typeof tab.id === 'number') {
+          if (seenTabIds.has(tab.id)) continue
+          seenTabIds.add(tab.id)
+        }
         allTabs.push({
           id: tab.id,
           url: tab.url,
@@ -452,6 +463,46 @@ async function mergeAllDuplicateGroups() {
   await loadAllPreviews()
 }
 
+async function renameDuplicateGroup(cluster: any) {
+  const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
+  await chrome.runtime.sendMessage({
+    action: 'RENAME_DUPLICATE_GROUPS',
+    payload: {
+      clusters: [cluster],
+      windowId: currentWinId,
+    }
+  })
+  await loadAllPreviews(true)
+}
+
+async function renameAllDuplicateGroups() {
+  const allClusters = [...duplicateGroupClusters.value]
+  if (allClusters.length === 0) return
+  const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
+  await chrome.runtime.sendMessage({
+    action: 'RENAME_DUPLICATE_GROUPS',
+    payload: {
+      clusters: allClusters,
+      windowId: currentWinId,
+    }
+  })
+  await loadAllPreviews(true)
+}
+
+async function renameCrossWindowDuplicateGroups() {
+  const allClusters = [...crossWindowDuplicateGroupClusters.value]
+  if (allClusters.length === 0) return
+  const currentWinId = currentWindowId.value || (await chrome.windows.getCurrent().catch(() => null))?.id
+  await chrome.runtime.sendMessage({
+    action: 'RENAME_DUPLICATE_GROUPS',
+    payload: {
+      clusters: allClusters,
+      windowId: currentWinId,
+    }
+  })
+  await loadAllPreviews(true)
+}
+
 async function focusTab(tabId: number, windowId: number) {
   // Logic: Activate the selected tab and bring its window to the foreground
   // Programming logic: Activate the selected tab and bring its window to the foreground
@@ -469,8 +520,30 @@ async function organizePossibleDuplicates() {
 }
 
 async function closeSingleTab(tabId: number) {
-  await chrome.runtime.sendMessage({ action: 'CLOSE_TAB', payload: { tabId } })
-  await loadAllPreviews()
+  // Logic: optimistically remove closed tab from shallowRef allWindows for immediate UI responsiveness
+  let removed = false
+  for (const win of allWindows.value) {
+    for (const group of win.groups) {
+      const idx = group.tabs.findIndex(t => t.id === tabId)
+      if (idx !== -1) {
+        group.tabs.splice(idx, 1)
+        removed = true
+        break
+      }
+    }
+    if (removed) break
+  }
+  if (removed) {
+    triggerRef(allWindows)
+  }
+
+  try {
+    await chrome.runtime.sendMessage({ action: 'CLOSE_TAB', payload: { tabId } })
+  } catch (err) {
+    console.error('Failed to close tab:', err)
+  } finally {
+    await loadAllPreviews()
+  }
 }
 
 async function closeClusterDuplicates(cluster: { cleanUrl: string; domain: string; tabs: Array<{ id?: number; active?: boolean }>; primaryTabId?: number }, keepTabId?: number) {
@@ -574,7 +647,7 @@ function formatTimer(ms?: number): string {
 const activeAIOperationsList = computed(() => {
   const list: Array<{
     windowId: number
-    type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup'
+    type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup' | 'rename'
     windowName: string
     stage?: string
     statusText?: string
@@ -1432,23 +1505,21 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   </div>
 
                   <!-- Live Model Thinking Stream -->
-                  <div v-if="op.liveReasoning" class="pt-1 flex flex-col gap-1">
+                  <div v-if="op.liveReasoning || op.reasoningSnippet" class="pt-1 flex flex-col gap-1">
                     <details class="group/reasoning text-[9px]" open>
                       <summary class="cursor-pointer font-medium flex items-center justify-between hover:underline select-none" style="color: var(--accent);" title="Click to collapse or expand thought stream">
                         <span class="flex items-center gap-1.5">
                           <span class="w-1.5 h-1.5 rounded-full animate-ping" style="background: var(--accent);" />
                           <span class="font-semibold">Live Model Thinking</span>
-                          <span class="text-[8px] opacity-60 font-normal">({{ op.liveReasoning.length }} chars)</span>
+                          <span class="text-[8px] opacity-60 font-normal">({{ (op.liveReasoning || op.reasoningSnippet || '').length }} chars)</span>
                         </span>
                         <span class="text-[8px] opacity-70 group-open/reasoning:hidden" style="color: var(--text-tertiary);">Expand</span>
                       </summary>
                       <div 
-                        class="mt-1 p-1.5 rounded-xs font-mono text-[8.5px] leading-relaxed max-h-[120px] overflow-y-auto whitespace-pre-wrap select-text scrollbar-thin border border-black/5 dark:border-white/5" 
+                        class="mt-1 p-2 rounded-xs text-[9px] leading-relaxed max-h-[140px] overflow-y-auto select-text scrollbar-thin border border-black/5 dark:border-white/5" 
                         style="background: var(--bg-primary); color: var(--text-secondary);"
-                        :title="'Full Model Thinking Stream:\n\n' + op.liveReasoning"
-                      >
-                        {{ op.liveReasoning }}
-                      </div>
+                        v-html="formatMarkdown(op.liveReasoning || op.reasoningSnippet || '')"
+                      />
                     </details>
                   </div>
 
@@ -1491,7 +1562,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
         <!-- Last AI Operation Result Indicator -->
         <span v-else-if="lastAIResult" class="relative group shrink-0">
           <span 
-            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm flex items-center gap-1.5 cursor-pointer shadow-xs transition-all hover:opacity-90"
+            class="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-sm flex items-center gap-1.5 cursor-pointer shadow-xs transition-all hover:opacity-90 max-w-[200px] min-w-0"
             :style="lastAIResult.error ? 'color: var(--group-red); background: rgba(255,59,48,0.1); border: 1px solid rgba(255,59,48,0.2);' : 'color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border);'"
           >
             <svg v-if="!lastAIResult.error" class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
@@ -1500,13 +1571,13 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
             <svg v-else class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
             </svg>
-            <span>{{ lastAIResult.error ? 'AI Failed' : 'AI: ' + lastAIResult.summary }}</span>
-            <svg class="w-2.5 h-2.5 opacity-60" viewBox="0 0 20 20" fill="currentColor">
+            <span class="truncate">{{ lastAIResult.error ? 'AI Failed' : 'AI: ' + lastAIResult.summary }}</span>
+            <svg class="w-2.5 h-2.5 opacity-60 shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
             </svg>
           </span>
 
-          <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[280px] max-w-[calc(100vw-24px)] z-50">
+          <div class="hidden group-hover:block absolute left-0 top-full pt-2 w-[320px] max-w-[calc(100vw-24px)] z-50">
             <div class="p-3 rounded-sm shadow-card text-left leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border);">
               <div class="font-semibold mb-1.5 text-xs flex items-center justify-between" :style="lastAIResult.error ? 'color: var(--group-red);' : 'color: var(--accent);'">
                 <span class="flex items-center gap-1.5 min-w-0">
@@ -1547,6 +1618,27 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                         {{ gName }}
                       </span>
                     </div>
+                  </div>
+
+                  <!-- Persisted Model Reasoning Trace -->
+                  <div v-if="lastAIResult.reasoning || lastAIResult.reasoningSnippet" class="mt-1 pt-1.5 border-t" style="border-color: var(--border);">
+                    <details class="group/historyReasoning text-[9px]">
+                      <summary class="cursor-pointer font-medium flex items-center justify-between hover:underline select-none" style="color: var(--accent);" title="Click to inspect model reasoning trace">
+                        <span class="flex items-center gap-1.5">
+                          <svg class="w-3 h-3 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14H8v-1h4v1zM6 8a4 4 0 118 0c0 1.098-.5 2.1-1.3 2.7-.4.3-.7.8-.7 1.3H8c0-.5-.3-1-.7-1.3C6.5 10.1 6 9.1 6 8z" />
+                          </svg>
+                          <span class="font-semibold">Model Reasoning</span>
+                          <span class="text-[8px] opacity-60 font-normal">({{ (lastAIResult.reasoning || lastAIResult.reasoningSnippet || '').length }} chars)</span>
+                        </span>
+                        <span class="text-[8px] opacity-70 group-open/historyReasoning:hidden" style="color: var(--text-tertiary);">Show</span>
+                      </summary>
+                      <div 
+                        class="mt-1 p-2 rounded-xs text-[9px] leading-relaxed max-h-[160px] overflow-y-auto select-text scrollbar-thin border border-black/5 dark:border-white/5" 
+                        style="background: var(--bg-primary); color: var(--text-secondary);"
+                        v-html="formatMarkdown(lastAIResult.reasoning || lastAIResult.reasoningSnippet || '')"
+                      />
+                    </details>
                   </div>
                 </template>
               </div>
@@ -1692,8 +1784,10 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                   <div 
                     v-for="tab in exactDuplicateTabs" 
                     :key="tab.id" 
-                    class="flex items-center gap-2 text-[10px] p-1.5 rounded-sm cursor-pointer hover:bg-black/10 dark:hover:bg-white/10 transition-colors group/tabrow"
-                    @click="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
+                    class="flex items-center gap-2 text-[10px] p-1.5 rounded-sm cursor-pointer hover:bg-black/10 dark:hover:bg-white/10 transition-colors group/tabrow select-none"
+                    @click.left="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
+                    @mousedown.middle.prevent.stop=""
+                    @click.middle.prevent.stop="tab.id !== undefined && closeSingleTab(tab.id)"
                     @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
                   >
                     <img v-if="getOptimalFaviconUrl(tab.url, tab.favIconUrl)" :src="getOptimalFaviconUrl(tab.url, tab.favIconUrl)" alt="" class="w-3.5 h-3.5 rounded-xs shrink-0" />
@@ -1705,6 +1799,8 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                     <button 
                       v-if="tab.id !== undefined"
                       @click.stop="closeSingleTab(tab.id)"
+                      @mousedown.middle.prevent.stop=""
+                      @click.middle.prevent.stop="closeSingleTab(tab.id)"
                       @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
                       class="w-4 h-4 rounded-sm flex items-center justify-center opacity-0 group-hover/tabrow:opacity-100 hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
                       style="color: var(--text-tertiary);"
@@ -1825,13 +1921,15 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                       <div 
                         v-for="tab in cluster.tabs" 
                         :key="tab.id"
-                        class="flex items-center gap-1.5 p-1 rounded-sm cursor-pointer transition-colors group/tabrow"
+                        class="flex items-center gap-1.5 p-1 rounded-sm cursor-pointer transition-colors group/tabrow select-none"
                         :class="[
                           getClusterKeepTabId(cluster) === tab.id 
                             ? 'bg-emerald-500/10 border border-emerald-500/30' 
                             : 'hover:bg-black/10 dark:hover:bg-white/10 border border-transparent'
                         ]"
-                        @click="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
+                        @click.left="tab.id !== undefined && tab.windowId !== undefined && focusTab(tab.id, tab.windowId)"
+                        @mousedown.middle.prevent.stop=""
+                        @click.middle.prevent.stop="tab.id !== undefined && closeSingleTab(tab.id)"
                         @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
                       >
                         <img v-if="getOptimalFaviconUrl(tab.url || '', tab.favIconUrl)" :src="getOptimalFaviconUrl(tab.url || '', tab.favIconUrl)" alt="" class="w-3 h-3 rounded-xs shrink-0" />
@@ -1875,6 +1973,8 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                           <button 
                             v-else-if="tab.id !== undefined"
                             @click.stop="setClusterKeepTab(cluster.cleanUrl, tab.id)"
+                            @mousedown.middle.stop=""
+                            @auxclick.stop=""
                             class="text-[7.5px] opacity-0 group-hover/tabrow:opacity-100 px-1 py-0.2 rounded-xs hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 transition-opacity cursor-pointer"
                             title="Set this tab as the one to keep"
                           >
@@ -1885,6 +1985,8 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                           <button 
                             v-if="tab.id !== undefined"
                             @click.stop="closeSingleTab(tab.id)"
+                            @mousedown.middle.prevent.stop=""
+                            @click.middle.prevent.stop="closeSingleTab(tab.id)"
                             @auxclick.prevent.stop="($event) => { if ($event.button === 1 && tab.id !== undefined) closeSingleTab(tab.id); }"
                             class="w-3.5 h-3.5 rounded-xs flex items-center justify-center opacity-0 group-hover/tabrow:opacity-100 hover:bg-red-500/20 hover:text-red-500 transition-all shrink-0 cursor-pointer"
                             style="color: var(--text-tertiary);"
@@ -1911,9 +2013,14 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                       <span>Duplicate Groups</span>
                       <span class="text-[9.5px] px-1.5 py-0.2 rounded-xs font-medium bg-black/10 dark:bg-white/10" style="color: var(--text-secondary);">{{ duplicateGroupsCount }}</span>
                     </span>
-                    <button @click.stop="mergeAllDuplicateGroups" class="text-[9px] px-2 py-0.5 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);">
-                      Merge All
-                    </button>
+                    <div class="flex items-center gap-1">
+                      <button @click.stop="renameAllDuplicateGroups" :disabled="isAnyAIOperating" class="text-[9px] px-2 py-0.5 rounded-sm font-medium bg-purple-500/15 text-purple-600 dark:text-purple-400 hover:bg-purple-500/25 transition-colors cursor-pointer disabled:opacity-50" title="AI generate distinct names for all duplicate groups">
+                        AI Rename All
+                      </button>
+                      <button @click.stop="mergeAllDuplicateGroups" class="text-[9px] px-2 py-0.5 rounded-sm font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer" style="color: var(--text-primary);">
+                        Merge All
+                      </button>
+                    </div>
                   </div>
                   <div class="flex flex-col gap-1.5">
                     <div v-for="cluster in duplicateGroupClusters" :key="cluster.normalized" class="p-1.5 rounded-sm bg-black/5 dark:bg-white/5 border border-dashed flex items-center justify-between gap-1 text-[10px]" style="border-color: var(--border);">
@@ -1921,9 +2028,14 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                         {{ cluster.originalNames[0] }} 
                         <span class="opacity-60 text-[8.5px]" style="color: var(--text-secondary);">({{ cluster.count }} duplicate groups)</span>
                       </span>
-                      <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer shrink-0" style="color: var(--text-primary);" title="Merge these duplicate groups into one">
-                        Merge
-                      </button>
+                      <div class="flex items-center gap-1 shrink-0">
+                        <button @click.stop="renameDuplicateGroup(cluster)" :disabled="isAnyAIOperating" class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium bg-purple-500/15 text-purple-600 dark:text-purple-400 hover:bg-purple-500/25 transition-colors cursor-pointer disabled:opacity-50" title="AI generate distinct names for these groups">
+                          AI Rename
+                        </button>
+                        <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer shrink-0" style="color: var(--text-primary);" title="Merge these duplicate groups into one">
+                          Merge
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1934,6 +2046,9 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                       <span>Duplicate Groups (Cross-Window)</span>
                       <span class="text-[9.5px] px-1.5 py-0.2 rounded-xs font-medium bg-black/10 dark:bg-white/10" style="color: var(--text-secondary);">{{ crossWindowDuplicateGroupsCount }}</span>
                     </span>
+                    <button @click.stop="renameCrossWindowDuplicateGroups" :disabled="isAnyAIOperating" class="text-[9px] px-2 py-0.5 rounded-sm font-medium bg-purple-500/15 text-purple-600 dark:text-purple-400 hover:bg-purple-500/25 transition-colors cursor-pointer disabled:opacity-50" title="AI generate distinct names for all cross-window duplicate groups">
+                      AI Rename All
+                    </button>
                   </div>
                   <div class="flex flex-col gap-1.5">
                     <div v-for="cluster in crossWindowDuplicateGroupClusters" :key="'cross_'+cluster.normalized" class="p-1.5 rounded-sm bg-black/5 dark:bg-white/5 border border-dashed flex items-center justify-between gap-1 text-[10px]" style="border-color: var(--border);">
@@ -1941,9 +2056,14 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                         {{ cluster.originalNames[0] }} 
                         <span class="opacity-60 text-[8.5px]" style="color: var(--text-secondary);">({{ cluster.count }} groups across windows)</span>
                       </span>
-                      <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer shrink-0" style="color: var(--text-primary);" title="Merge these cross-window duplicate groups into one window">
-                        Merge
-                      </button>
+                      <div class="flex items-center gap-1 shrink-0">
+                        <button @click.stop="renameDuplicateGroup(cluster)" :disabled="isAnyAIOperating" class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium bg-purple-500/15 text-purple-600 dark:text-purple-400 hover:bg-purple-500/25 transition-colors cursor-pointer disabled:opacity-50" title="AI generate distinct names for these cross-window groups">
+                          AI Rename
+                        </button>
+                        <button @click.stop="mergeDuplicateGroup(cluster)" class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors cursor-pointer shrink-0" style="color: var(--text-primary);" title="Merge these cross-window duplicate groups into one window">
+                          Merge
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
