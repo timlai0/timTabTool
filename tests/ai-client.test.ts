@@ -837,7 +837,7 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(capturedBody.reasoning).toBeUndefined()
   })
 
-  it('injects thinkingConfig.thinkingBudget into Gemini request body when reasoningEffort is configured', async () => {
+  it('injects thinkingConfig.thinkingLevel and includeThoughts into Gemini request body and omits sampling parameters when reasoningEffort is configured', async () => {
     const config: AIConfig = {
       enabled: true,
       provider: 'gemini',
@@ -874,10 +874,101 @@ describe('OpenRouter Provider & Model Fetching', () => {
     const result = await client.testConnection()
     expect(result.ok).toBe(true)
     expect(capturedBody).toBeDefined()
-    expect(capturedBody.generationConfig?.thinkingConfig).toEqual({ thinkingBudget: 4096 })
+    expect(capturedBody.generationConfig?.thinkingConfig).toEqual({ thinkingLevel: 'medium', includeThoughts: true })
+    expect(capturedBody.generationConfig?.thinkingBudget).toBeUndefined()
+    expect(capturedBody.generationConfig?.temperature).toBeUndefined()
+    expect(capturedBody.generationConfig?.topP).toBeUndefined()
+    expect(capturedBody.generationConfig?.topK).toBeUndefined()
   })
 
-  it('omits reasoning effort parameters when reasoningEffort is auto or unset', async () => {
+  it('injects thinkingLevel and includeThoughts for Gemini 3 models', async () => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'gemini',
+      apiKey: 'AIza-test-key',
+      model: 'gemini-3.5-flash',
+      reasoningEffort: 'high',
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    { text: 'Deep reasoning trace...', thought: true },
+                    { text: 'OK' },
+                  ],
+                },
+                finishReason: 'STOP',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const result = await client.testConnection()
+    expect(result.ok).toBe(true)
+    expect(capturedBody).toBeDefined()
+    expect(capturedBody.generationConfig?.thinkingConfig).toEqual({ thinkingLevel: 'high', includeThoughts: true })
+    expect(capturedBody.generationConfig?.thinkingBudget).toBeUndefined()
+    expect(capturedBody.generationConfig?.temperature).toBeUndefined()
+    expect(capturedBody.generationConfig?.topP).toBeUndefined()
+    expect(capturedBody.generationConfig?.topK).toBeUndefined()
+  })
+
+  it.each([
+    ['minimal', 'minimal'],
+    ['low', 'low'],
+    ['medium', 'medium'],
+    ['high', 'high'],
+    ['max', 'high'],
+  ])('maps Gemini reasoningEffort %s to thinkingLevel %s without sampling parameters', async (effort, expectedLevel) => {
+    const config: AIConfig = {
+      enabled: true,
+      provider: 'gemini',
+      apiKey: 'AIza-test-key',
+      model: 'gemini-2.5-flash',
+      reasoningEffort: effort as any,
+    }
+    const client = new AIClient(config)
+
+    let capturedBody: any = null
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(init.body as string)
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: { parts: [{ text: 'OK' }] },
+                finishReason: 'STOP',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await client.testConnection()
+    expect(capturedBody.generationConfig?.thinkingConfig).toEqual({ thinkingLevel: expectedLevel, includeThoughts: true })
+    expect(capturedBody.generationConfig?.thinkingBudget).toBeUndefined()
+    expect(capturedBody.generationConfig?.temperature).toBeUndefined()
+    expect(capturedBody.generationConfig?.topP).toBeUndefined()
+    expect(capturedBody.generationConfig?.topK).toBeUndefined()
+  })
+
+  it('omits reasoning effort parameters when reasoningEffort is auto or unset for OpenRouter', async () => {
     const config: AIConfig = {
       enabled: true,
       provider: 'openrouter',
@@ -905,7 +996,7 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(capturedBody.reasoning_effort).toBeUndefined()
   })
 
-  it('omits thinkingConfig for Gemini when reasoningEffort is auto or unset', async () => {
+  it('injects includeThoughts: true for Gemini when reasoningEffort is auto or unset', async () => {
     const config: AIConfig = {
       enabled: true,
       provider: 'gemini',
@@ -938,7 +1029,11 @@ describe('OpenRouter Provider & Model Fetching', () => {
 
     await client.testConnection()
     expect(capturedBody).toBeDefined()
-    expect(capturedBody.generationConfig?.thinkingConfig).toBeUndefined()
+    expect(capturedBody.generationConfig?.thinkingConfig).toEqual({ includeThoughts: true })
+    expect(capturedBody.generationConfig?.temperature).toBeUndefined()
+    expect(capturedBody.generationConfig?.topP).toBeUndefined()
+    expect(capturedBody.generationConfig?.topK).toBeUndefined()
+    expect(capturedBody.generationConfig?.thinkingBudget).toBeUndefined()
   })
 
   it('injects provider routing order and allow_fallbacks into OpenRouter request body when openrouterProvider is configured', async () => {
@@ -1286,7 +1381,9 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(groups[0].name).toBe('Quantum Physics')
     expect(capturedUrl).toContain('streamGenerateContent')
     expect(capturedUrl).toContain('alt=sse')
-    expect(capturedBody.generationConfig?.thinkingConfig).toEqual({ thinkingBudget: 4096 })
+    expect(capturedBody.generationConfig?.thinkingConfig).toEqual({ thinkingLevel: 'medium', includeThoughts: true })
+    expect(capturedBody.generationConfig?.thinkingBudget).toBeUndefined()
+    expect(capturedBody.generationConfig?.temperature).toBeUndefined()
 
     const reasoningUpdates = progressUpdates.filter(u => u.liveReasoning)
     expect(reasoningUpdates.length).toBeGreaterThan(0)

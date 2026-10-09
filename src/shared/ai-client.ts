@@ -1873,16 +1873,20 @@ Only output the JSON object.`
     let accumulatedContent = ''
     let accumulatedReasoning = ''
 
-    const thinkingBudgetMap: Record<string, number> = {
-      minimal: 1024,
-      low: 2048,
-      medium: 4096,
-      high: 8192,
-      max: 16384,
+    const effort = this.config.reasoningEffort
+
+    let thinkingConfig: Record<string, any> | undefined
+    if (effort && effort !== 'auto') {
+      const thinkingLevel = effort === 'max' ? 'high' : effort
+      thinkingConfig = {
+        thinkingLevel,
+        includeThoughts: true,
+      }
+    } else {
+      thinkingConfig = {
+        includeThoughts: true,
+      }
     }
-    const thinkingBudget = this.config.reasoningEffort && this.config.reasoningEffort !== 'auto'
-      ? (thinkingBudgetMap[this.config.reasoningEffort] || 2048)
-      : undefined
     
     const contents: any[] = [
       { role: 'user', parts: [{ text: userMessage }] },
@@ -1900,13 +1904,10 @@ Only output the JSON object.`
       }
 
       const generationConfig: any = {
-        temperature: 0,
         maxOutputTokens: Math.min(this.config.maxTokens || 16384, 65536),
         ...(jsonMode && { responseMimeType: 'application/json' }),
-        ...(thinkingBudget !== undefined && {
-          thinkingConfig: {
-            thinkingBudget,
-          },
+        ...(thinkingConfig !== undefined && {
+          thinkingConfig: { ...thinkingConfig },
         }),
       }
 
@@ -1927,6 +1928,7 @@ Only output the JSON object.`
         if (
           lowerPeek.includes('thinking') ||
           lowerPeek.includes('thinkingbudget') ||
+          lowerPeek.includes('thinkinglevel') ||
           lowerPeek.includes('thinkingconfig') ||
           lowerPeek.includes('not supported')
         ) {
