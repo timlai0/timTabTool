@@ -127,6 +127,12 @@ describe('getAIOverrides', () => {
     expect(result).toEqual({ provider: 'custom', sendFullUrl: true })
     expect(result?.model).toBeUndefined()
   })
+
+  it('extracts windowNamingPrompt when present', () => {
+    const payload = { windowNamingPrompt: 'Custom prompt for window naming' }
+    const result = getAIOverrides(payload)
+    expect(result).toEqual({ windowNamingPrompt: 'Custom prompt for window naming' })
+  })
 })
 
 describe('cleanupTabGroups', () => {

@@ -399,10 +399,10 @@
     "message": "在新标签页中聊天",
     "description": "Context menu item to open chat in a new tab"
   },
-  "contextMenuGroupAll": {
-    "message": "AI 分组标签页",
-    "description": "Context menu item to group tabs using AI"
-  },
+   "contextMenuGroupAll": {
+     "message": "AI 分类未分组标签页",
+     "description": "Context menu item to classify ungrouped tabs using AI"
+   },
   "contextMenuCleanupGroups": {
     "message": "清理标签分组",
     "description": "Context menu item to clean up small tab groups"
@@ -414,5 +414,25 @@
   "contextMenuMoveToOtherWindow": {
     "message": "移动标签到另一窗口",
     "description": "Context menu item to move current tab to another window"
+  },
+  "generateWindowName": {
+    "message": "AI 生成窗口名称",
+    "description": "Context menu or button label to generate window name via AI"
+  },
+  "generateAllWindowsNames": {
+    "message": "AI 命名所有窗口",
+    "description": "Button label to generate names for all windows via AI"
+  },
+  "windowNamingPrompt": {
+    "message": "窗口命名提示词",
+    "description": "Settings label for AI window naming prompt"
+  },
+  "windowNameGenerated": {
+    "message": "窗口名称已生成",
+    "description": "Notification message when window name is generated"
+  },
+  "allWindowNamesGenerated": {
+    "message": "所有窗口名称已生成",
+    "description": "Notification message when all window names are generated"
   }
 }

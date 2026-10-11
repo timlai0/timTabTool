@@ -87,6 +87,8 @@ export {
   splitGroup,
   mergeGroup,
   renameDuplicateGroups,
+  generateWindowName,
+  generateAllWindowsNames,
 } from './tabs/ai-tab-operations'
 
 export type { CachedLiveTab, TabRemoveInfo } from './tabs/live-tab-tracker'

@@ -192,6 +192,7 @@ export interface AIConfig {
   splitPrompt?: string
   classifyPrompt?: string
   mergePrompt?: string
+  windowNamingPrompt?: string
   maxRetries?: number
   bypassSafeguards?: boolean
   alwaysLogAIOperations?: boolean
@@ -330,6 +331,8 @@ type MessageAction =
   | 'DELETE_CLOSED_BATCH'
   | 'CLEAR_CLOSED_TAB'
   | 'CLEAR_CLOSED_TABS'
+  | 'GENERATE_WINDOW_NAME'
+  | 'GENERATE_ALL_WINDOW_NAMES'
 
 /**
  * @interface ExtensionMessage
@@ -344,7 +347,7 @@ export interface ExtensionMessage {
  */
 export interface LastAIResult {
   timestamp: number
-  actionType: 'group' | 'classify' | 'split' | 'merge' | 'regroup' | 'rename'
+  actionType: 'group' | 'classify' | 'split' | 'merge' | 'regroup' | 'rename' | 'name_window'
   actionTitle: string
   windowId: number
   tabsProcessed: number
@@ -511,7 +514,7 @@ export type AIProgressCallback = (update: AIProgressUpdate) => void
  * Complete real-time status of an active operation per window.
  */
 export interface OperationStatusInfo {
-  type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup' | 'rename' | null
+  type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup' | 'rename' | 'name_window' | null
   error: string | null
   stage?: OperationStage
   statusText?: string
@@ -581,4 +584,9 @@ export interface DistinctGroupRenameResult {
   groupId: number
   oldName: string
   newName: string
+}
+
+export interface WindowNameResult {
+  windowId: number
+  name: string
 }

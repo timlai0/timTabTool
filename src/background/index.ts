@@ -21,6 +21,7 @@ import {
   ungroupAllTabs,
   groupAllTabs,
   cleanupTabGroups,
+  generateWindowName,
 } from './tab-manager'
 import { recordTabVisit } from './storage'
 import { STORAGE_KEYS } from '../shared/constants'
@@ -177,21 +178,28 @@ export function setupContextMenus(): void {
       contexts: ['page']
     })
 
-    // Top-level item 3: Group all tabs (AI)
+     // Top-level item 3: Classify all tabs (AI)
+     createSafe({
+       id: 'group-all',
+       title: getMsg('contextMenuGroupAll', 'Classify Ungrouped Tabs (AI)'),
+       contexts: ['action']
+     })
+
+    // Top-level item 4: Generate window name (AI)
     createSafe({
-      id: 'group-all',
-      title: getMsg('contextMenuGroupAll', 'Group Tabs (AI)'),
+      id: 'generate-window-name',
+      title: getMsg('generateWindowName', 'AI Generate Window Name'),
       contexts: ['action']
     })
 
-    // Top-level item 4: Clean up tab groups
+    // Top-level item 5: Clean up tab groups
     createSafe({
       id: 'cleanup-groups',
       title: getMsg('contextMenuCleanupGroups', 'Clean Up Tab Groups'),
       contexts: ['action']
     })
 
-    // Top-level item 5: Ungroup all tabs
+    // Top-level item 6: Ungroup all tabs
     createSafe({
       id: 'ungroup-all',
       title: getMsg('contextMenuUngroupAll', 'Ungroup All Tabs'),
@@ -251,6 +259,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   } else if (info.menuItemId === 'group-all') {
     const windowId = tab?.windowId ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.windowId
     if (windowId !== undefined) await groupAllTabs(windowId)
+  } else if (info.menuItemId === 'generate-window-name') {
+    const windowId = tab?.windowId ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.windowId
+    if (windowId !== undefined) await generateWindowName(windowId)
   } else if (info.menuItemId === 'cleanup-groups') {
     const windowId = tab?.windowId ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.windowId
     if (windowId !== undefined) await cleanupTabGroups(windowId, 3)

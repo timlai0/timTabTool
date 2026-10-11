@@ -469,6 +469,18 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       action: 'MERGE_WINDOWS'
     },
     {
+      key: '/name-window',
+      title: 'AI Generate Window Name',
+      description: 'Generate a descriptive name for this window using AI',
+      action: 'GENERATE_WINDOW_NAME'
+    },
+    {
+      key: '/name-all-windows',
+      title: 'AI Name All Windows',
+      description: 'Generate distinct names for all open browser windows using AI',
+      action: 'GENERATE_ALL_WINDOW_NAMES'
+    },
+    {
       key: '/mute-all',
       title: 'Mute All Tabs',
       description: 'Mute audio playback on all tabs in this window',

@@ -399,10 +399,10 @@
     "message": "Chat in New Tab",
     "description": "Context menu item to open chat in a new tab"
   },
-  "contextMenuGroupAll": {
-    "message": "Group Tabs (AI)",
-    "description": "Context menu item to group tabs using AI"
-  },
+   "contextMenuGroupAll": {
+     "message": "Classify Ungrouped Tabs (AI)",
+     "description": "Context menu item to classify ungrouped tabs using AI"
+   },
   "contextMenuCleanupGroups": {
     "message": "Clean Up Tab Groups",
     "description": "Context menu item to clean up small tab groups"
@@ -414,5 +414,25 @@
   "contextMenuMoveToOtherWindow": {
     "message": "Move Tab to Other Window",
     "description": "Context menu item to move current tab to another window"
+  },
+  "generateWindowName": {
+    "message": "AI Generate Window Name",
+    "description": "Context menu or button label to generate window name via AI"
+  },
+  "generateAllWindowsNames": {
+    "message": "AI Name All Windows",
+    "description": "Button label to generate names for all windows via AI"
+  },
+  "windowNamingPrompt": {
+    "message": "Window Naming Prompt",
+    "description": "Settings label for AI window naming prompt"
+  },
+  "windowNameGenerated": {
+    "message": "Window name generated",
+    "description": "Notification message when window name is generated"
+  },
+  "allWindowNamesGenerated": {
+    "message": "All window names generated",
+    "description": "Notification message when all window names are generated"
   }
 }

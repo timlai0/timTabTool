@@ -53,6 +53,16 @@ Guidelines:
 4. Be conservative: only merge when topics clearly overlap.`
 
 /**
+ * @constant DEFAULT_WINDOW_NAMING_PROMPT
+ */
+export const DEFAULT_WINDOW_NAMING_PROMPT = `Generate a concise, descriptive title (2-4 words) for this browser window based on its open tabs.
+Guidelines:
+1. Capture the overarching topic, task, project, or primary theme of the tabs.
+2. Names must be concise (2-4 words, capitalized, e.g., "Web Development", "Travel & Flight Bookings", "AI Research", "Shopping & Reviews").
+3. Avoid generic terms like "Tabs" or "Window" unless the tabs are entirely miscellaneous.
+4. Preserve the primary language of the tab content.`
+
+/**
  * @constant DEFAULT_COHERENCE_PROMPT
  */
 const DEFAULT_COHERENCE_PROMPT = `Prioritize placing tabs into the existing group names created in previous batches if there is a strong semantic fit. Only create a new group name if the tab represents a genuinely new topic that cannot belong in any existing group.`
@@ -73,6 +83,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     splitPrompt: DEFAULT_SPLIT_PROMPT,
     classifyPrompt: DEFAULT_CLASSIFY_PROMPT,
     mergePrompt: DEFAULT_MERGE_PROMPT,
+    windowNamingPrompt: DEFAULT_WINDOW_NAMING_PROMPT,
     maxRetries: 2,
     alwaysLogAIOperations: true,
     openRouterOnlyFree: false,
@@ -118,6 +129,7 @@ export const STORAGE_KEYS = {
   LAST_AI_RESULT: 'lastAIResult',
   AI_OPERATION_LOGS: 'aiOperationLogs',
   CLOSED_TABS_BY_EXTENSION: 'closedTabsByExtension',
+  CUSTOM_WINDOW_NAMES: 'customWindowNames',
 } as const
 
 export const MODEL_PRICING: Record<string, { input: number; output: number }> = {

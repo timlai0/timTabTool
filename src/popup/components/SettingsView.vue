@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, toRaw, nextTick } from 'vue'
 import { getMessage } from '../../shared/i18n'
-import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS, MODEL_PRICING, PROVIDER_DEFAULTS, OPENROUTER_PROVIDERS } from '../../shared/constants'
+import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_WINDOW_NAMING_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS, MODEL_PRICING, PROVIDER_DEFAULTS, OPENROUTER_PROVIDERS } from '../../shared/constants'
 import { getAutoBatchSize, parseMaxTokensToNumber, formatTimeAgo, formatMarkdown } from '../../shared/utils'
 import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse, AIProvider, OpenRouterProviderItem, ClosedTabEntry } from '../../shared/types'
 import { getClosedTabs, restoreClosedTab, restoreAllClosedTabs, removeClosedTab, clearClosedTabs, restoreClosedBatch, removeClosedBatch } from '../../shared/closed-tabs-manager'
@@ -34,7 +34,7 @@ const searchSlashShortcut = ref('Ctrl+Shift+7')
 const advancedPromptsExpanded = ref(false)
 const connectionSettingsExpanded = ref(false)
 
-const activePromptTab = ref<'grouping' | 'coherence' | 'split' | 'classify' | 'merge' | 'custom' | 'all'>('grouping')
+const activePromptTab = ref<'grouping' | 'coherence' | 'split' | 'classify' | 'merge' | 'windowNaming' | 'custom' | 'all'>('grouping')
 
 const promptTabs = computed(() => [
   {
@@ -61,6 +61,11 @@ const promptTabs = computed(() => [
     id: 'merge' as const,
     label: 'Merge',
     isCustomized: settings.value.ai.mergePrompt !== DEFAULT_MERGE_PROMPT
+  },
+  {
+    id: 'windowNaming' as const,
+    label: 'Window Naming',
+    isCustomized: settings.value.ai.windowNamingPrompt !== DEFAULT_WINDOW_NAMING_PROMPT
   },
   {
     id: 'custom' as const,
@@ -1087,6 +1092,10 @@ function resetClassifyPrompt() {
 
 function resetMergePrompt() {
   settings.value.ai.mergePrompt = DEFAULT_MERGE_PROMPT
+}
+
+function resetWindowNamingPrompt() {
+  settings.value.ai.windowNamingPrompt = DEFAULT_WINDOW_NAMING_PROMPT
 }
 
 function resetSystemPrompt() {
@@ -2294,6 +2303,46 @@ async function pasteConfig() {
                     v-model="settings.ai.mergePrompt"
                     v-autoresize
                     :placeholder="'Default:\n' + DEFAULT_MERGE_PROMPT"
+                    class="w-full text-xs rounded-sm py-1.5 px-2 resize-y overflow-y-auto flex-1 scrollbar-thin transition-all"
+                    :class="activePromptTab === 'all' ? 'min-h-[64px] max-h-[110px]' : 'min-h-[105px] max-h-[220px]'"
+                    style="background: var(--bg-primary); color: var(--text-primary); border: 0.5px solid var(--border);"
+                  ></textarea>
+                </div>
+
+                <!-- Window Naming Prompt -->
+                <div v-show="activePromptTab === 'windowNaming' || activePromptTab === 'all'" class="prompt-card">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <label class="block text-[10px] font-medium truncate" style="color: var(--text-secondary);">
+                        Window Naming Prompt
+                        <span style="color: var(--text-tertiary);">({{ getMessage('optional') }})</span>
+                      </label>
+                      <div class="relative group/help shrink-0">
+                        <span class="w-3.5 h-3.5 flex items-center justify-center text-[9px] font-bold border rounded-[2px] cursor-help transition-all select-none" style="border-color: var(--border); color: var(--text-tertiary); background: var(--hover);">?</span>
+                        <div class="absolute left-0 bottom-full mb-1.5 hidden group-hover/help:block w-[270px] max-w-[calc(100vw-32px)] p-2.5 rounded-sm shadow-card z-50 pointer-events-none text-left whitespace-pre-wrap leading-relaxed transition-all duration-200" style="background: var(--bg-elevated); color: var(--text-primary); border: 0.5px solid var(--border); font-size: 10px; font-weight: normal; text-transform: none;">
+                          <div class="font-bold mb-1" style="color: var(--accent);">Window Naming Prompt</div>
+                          Defines instructions for generating concise, descriptive browser window titles based on open tabs.
+                          
+                          <strong style="color: var(--accent);">Data sent to AI</strong>:
+                          • Window tabs: [Index, Title, Domain or Full URL, Opened timestamp]
+                          • List of other open window names to contrast with
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      v-if="settings.ai.windowNamingPrompt !== DEFAULT_WINDOW_NAMING_PROMPT"
+                      @click="resetWindowNamingPrompt"
+                      class="text-[9px] hover:underline shrink-0 ml-1.5"
+                      style="color: var(--accent);"
+                      title="Restore default instructions"
+                    >
+                      Reset to Default
+                    </button>
+                  </div>
+                  <textarea
+                    v-model="settings.ai.windowNamingPrompt"
+                    v-autoresize
+                    :placeholder="'Default:\n' + DEFAULT_WINDOW_NAMING_PROMPT"
                     class="w-full text-xs rounded-sm py-1.5 px-2 resize-y overflow-y-auto flex-1 scrollbar-thin transition-all"
                     :class="activePromptTab === 'all' ? 'min-h-[64px] max-h-[110px]' : 'min-h-[105px] max-h-[220px]'"
                     style="background: var(--bg-primary); color: var(--text-primary); border: 0.5px solid var(--border);"

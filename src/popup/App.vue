@@ -46,6 +46,9 @@ function isWindowClassifying(wid: number): boolean {
 function isWindowRegrouping(wid: number): boolean {
   return allActiveOperations.value[wid]?.type === 'regroup'
 }
+function isWindowNaming(wid: number): boolean {
+  return allActiveOperations.value[wid]?.type === 'name_window'
+}
 function isWindowOperating(wid: number): boolean {
   const type = allActiveOperations.value[wid]?.type
   return Boolean(type && type !== null)
@@ -182,6 +185,9 @@ function handleStorageChange(changes: { [key: string]: chrome.storage.StorageCha
     }
     if (changes[STORAGE_KEYS.LAST_AI_RESULT]) {
       lastAIResult.value = changes[STORAGE_KEYS.LAST_AI_RESULT].newValue as LastAIResult
+    }
+    if (changes['customWindowNames'] && changes['customWindowNames'].newValue) {
+      customWindowNames.value = (changes['customWindowNames'].newValue as Record<number, string>) || {}
     }
   }
 }
@@ -780,6 +786,8 @@ async function loadAllPreviews(showLoading = false) {
 function handleRuntimeMessage(msg: any) {
   if (msg?.action === 'LAST_AI_RESULT_UPDATED' && msg.payload) {
     lastAIResult.value = msg.payload
+  } else if (msg?.action === 'WINDOW_NAMES_UPDATED' && msg.payload) {
+    customWindowNames.value = { ...msg.payload }
   } else if (msg?.action === 'ACTIVE_OPERATIONS_UPDATED' && msg.payload) {
     allActiveOperations.value = msg.payload
     if (isAnyAIOperating.value) {
@@ -877,6 +885,48 @@ async function saveWindowName(windowId: number, event: Event) {
   
   await chrome.storage.local.set({ customWindowNames: customWindowNames.value })
   editingWindowId.value = null
+}
+
+async function handleGenerateWindowName(windowId: number, shiftKey = false) {
+  if (isAnyAIOperating.value) return
+  try {
+    const res = await chrome.runtime.sendMessage({
+      action: 'GENERATE_WINDOW_NAME',
+      payload: { windowId, shiftKey }
+    }) as any
+    if (res?.error) {
+      showError(res.error, windowId)
+    } else if (res?.result?.name) {
+      customWindowNames.value = { ...customWindowNames.value, [windowId]: res.result.name }
+      if (editingWindowId.value === windowId) {
+        editingWindowId.value = null
+      }
+    }
+  } catch (err: any) {
+    showError(err?.message || 'Failed to generate window name', windowId)
+  }
+}
+
+async function handleGenerateAllWindowsNames(shiftKey = false) {
+  if (isAnyAIOperating.value) return
+  try {
+    const targetWin = currentWindowId.value || allWindows.value[0]?.windowId || 0
+    const res = await chrome.runtime.sendMessage({
+      action: 'GENERATE_ALL_WINDOW_NAMES',
+      payload: { windowId: targetWin, shiftKey }
+    }) as any
+    if (res?.error) {
+      showError(res.error, targetWin)
+    } else if (res?.result?.results) {
+      const newNames = { ...customWindowNames.value }
+      for (const r of res.result.results) {
+        newNames[r.windowId] = r.name
+      }
+      customWindowNames.value = newNames
+    }
+  } catch (err: any) {
+    showError(err?.message || 'Failed to generate window names')
+  }
 }
 
 // removed duplicate unpinnedTabsCount
@@ -2074,6 +2124,19 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
         </div>
       </div>
       <div class="flex items-center gap-0.5">
+        <!-- AI Name All Windows -->
+        <button
+          v-if="allWindows.length > 1"
+          @click="handleGenerateAllWindowsNames($event.shiftKey)"
+          :disabled="isAnyAIOperating"
+          class="w-7 h-7 flex items-center justify-center rounded-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer disabled:opacity-40"
+          style="color: var(--accent);"
+          title="AI Name All Windows. Hold Shift + click for verbose log."
+        >
+          <svg class="w-[15px] h-[15px]" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.948 5.684a1 1 0 00-1.896 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.896l2.051.683a1 1 0 01.633.633l.683 2.051a1 1 0 001.896 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.896l-2.051-.683a1 1 0 01-.633-.633L6.948 5.684z" clip-rule="evenodd" />
+          </svg>
+        </button>
         <!-- Jump to Most Recent Tab -->
         <button
           @click="jumpToMostRecentTab()"
@@ -2244,6 +2307,20 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
               >
                 <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
                   <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+                </svg>
+              </button>
+              <button
+                v-if="editingWindowId !== w.windowId"
+                class="ml-0.5 p-0.5 rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-all focus:outline-none cursor-pointer"
+                :class="isWindowNaming(w.windowId) ? 'opacity-100' : 'opacity-0 group-hover/title:opacity-100'"
+                :disabled="isAnyAIOperating"
+                style="color: var(--accent);"
+                @click.stop="handleGenerateWindowName(w.windowId, $event.shiftKey)"
+                title="AI Generate Window Name. Hold Shift + click for verbose log."
+              >
+                <span v-if="isWindowNaming(w.windowId)" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full inline-block shrink-0" />
+                <svg v-else class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.948 5.684a1 1 0 00-1.896 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.896l2.051.683a1 1 0 01.633.633l.683 2.051a1 1 0 001.896 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.896l-2.051-.683a1 1 0 01-.633-.633L6.948 5.684z" clip-rule="evenodd" />
                 </svg>
               </button>
             </div>
@@ -2443,6 +2520,31 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
                         <path d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.948 5.684a1 1 0 00-1.896 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.896l2.051.683a1 1 0 01.633.633l.683 2.051a1 1 0 001.896 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.896l-2.051-.683a1 1 0 01-.633-.633L6.948 5.684z" />
                       </svg>
                       <span>{{ getMessage('oneShotPrompt') }}</span>
+                    </button>
+                    <button
+                      @click="handleGenerateWindowName(w.windowId, $event.shiftKey); activeMoreMenuWindowId = null"
+                      :disabled="isAnyAIOperating"
+                      class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer disabled:opacity-50"
+                      style="color: var(--text-primary);"
+                      title="AI Generate Window Name. Hold Shift + click for verbose log."
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.948 5.684a1 1 0 00-1.896 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.896l2.051.683a1 1 0 01.633.633l.683 2.051a1 1 0 001.896 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.896l-2.051-.683a1 1 0 01-.633-.633L6.948 5.684z" clip-rule="evenodd" />
+                      </svg>
+                      <span>{{ getMessage('generateWindowName') }}</span>
+                    </button>
+                    <button
+                      v-if="allWindows.length > 1"
+                      @click="handleGenerateAllWindowsNames($event.shiftKey); activeMoreMenuWindowId = null"
+                      :disabled="isAnyAIOperating"
+                      class="flex items-center gap-2 px-2.5 py-1.5 text-[11px] rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors w-full text-left font-medium cursor-pointer disabled:opacity-50"
+                      style="color: var(--text-primary);"
+                      title="AI Name All Windows. Hold Shift + click for verbose log."
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M15.98 1.804a1 1 0 00-1.96 0l-.24 1.192a1 1 0 01-.784.785l-1.192.238a1 1 0 000 1.962l1.192.238a1 1 0 01.785.785l.238 1.192a1 1 0 001.962 0l.238-1.192a1 1 0 01.785-.785l1.192-.238a1 1 0 000-1.962l-1.192-.238a1 1 0 01-.785-.785l-.238-1.192zM6.948 5.684a1 1 0 00-1.896 0l-.683 2.051a1 1 0 01-.633.633l-2.051.683a1 1 0 000 1.896l2.051.683a1 1 0 01.633.633l.683 2.051a1 1 0 001.896 0l.683-2.051a1 1 0 01.633-.633l2.051-.683a1 1 0 000-1.896l-2.051-.683a1 1 0 01-.633-.633L6.948 5.684z" clip-rule="evenodd" />
+                      </svg>
+                      <span>{{ getMessage('generateAllWindowsNames') }}</span>
                     </button>
                     <button
                       @click="handleUngroup(w.windowId)"

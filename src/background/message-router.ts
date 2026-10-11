@@ -20,6 +20,8 @@ import {
   closePossibleDuplicateTabs,
   organizePossibleDuplicateGroups,
   renameDuplicateGroups,
+  generateWindowName,
+  generateAllWindowsNames,
   closeDomainTabs,
   isolateDomainTabs,
   sortTabsByDomainAndTitle,
@@ -103,6 +105,7 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
       sendRandomOrder?: unknown
       groupingPrompt?: unknown
       customPrompt?: unknown
+      windowNamingPrompt?: unknown
       shiftKey?: unknown
       verboseLog?: unknown
       bypassSafeguards?: unknown
@@ -144,6 +147,10 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
       overrides.groupingPrompt = p.groupingPrompt.trim()
     } else if (typeof p.customPrompt === 'string' && p.customPrompt.trim()) {
       overrides.groupingPrompt = p.customPrompt.trim()
+    }
+
+    if (typeof p.windowNamingPrompt === 'string' && p.windowNamingPrompt.trim()) {
+      overrides.windowNamingPrompt = p.windowNamingPrompt.trim()
     }
 
     if (typeof p.bypassSafeguards === 'boolean') {
@@ -223,7 +230,7 @@ export function getAIOverrides(payload: unknown): Partial<ExtensionSettings['ai'
 async function runAIOperation<T>(
   windowId: number,
   actionName: string,
-  opType: 'group' | 'classify' | 'regroup' | 'rename' | null,
+  opType: 'group' | 'classify' | 'regroup' | 'rename' | 'name_window' | null,
   opFn: () => Promise<T>,
 ): Promise<{ ok: true; result?: T } | { error: string }> {
   if (opType) {
@@ -563,6 +570,20 @@ export async function handleExtensionMessage(message: ExtensionMessage, sender?:
       } | undefined
       return runAIOperation(windowId, 'RENAME_DUPLICATE_GROUPS', 'rename', () =>
         renameDuplicateGroups(payload?.clusters || payload?.groups, windowId, getAIOverrides(message.payload))
+      )
+    }
+
+    case 'GENERATE_WINDOW_NAME': {
+      const windowId = await resolveWindowId(message.payload, sender)
+      return runAIOperation(windowId, 'GENERATE_WINDOW_NAME', 'name_window', () =>
+        generateWindowName(windowId, getAIOverrides(message.payload))
+      )
+    }
+
+    case 'GENERATE_ALL_WINDOW_NAMES': {
+      const windowId = await resolveWindowId(message.payload, sender)
+      return runAIOperation(windowId, 'GENERATE_ALL_WINDOW_NAMES', 'name_window', () =>
+        generateAllWindowsNames(getAIOverrides(message.payload))
       )
     }
 

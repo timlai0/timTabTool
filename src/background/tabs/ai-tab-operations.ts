@@ -60,6 +60,7 @@ import type {
   TabInfo,
   DuplicateGroupClusterItem,
   DistinctGroupRenameResult,
+  WindowNameResult,
 } from '../../shared/types'
 
 export function cancelActiveOperation(windowId: number, applyCompleted = false): void {
@@ -1770,6 +1771,309 @@ export async function renameDuplicateGroups(
       activeOperationsMap.delete(windowId)
     }
     await updateNewTabsBadge(windowId).catch(console.error)
+  }
+}
+
+export async function generateWindowName(
+  targetWindowId?: number,
+  aiOverrides?: Partial<ExtensionSettings['ai']> & { shiftKey?: boolean; verboseLog?: boolean }
+): Promise<{ windowId: number; name: string }> {
+  let windowId = targetWindowId
+  if (windowId === undefined || windowId <= 0 || windowId === chrome.windows.WINDOW_ID_NONE) {
+    const currentWin = await chrome.windows.getCurrent().catch(() => null)
+    windowId = currentWin?.id || chrome.windows.WINDOW_ID_CURRENT
+  }
+
+  const controller = new AbortController()
+  setupOperationTimeout(windowId, controller)
+  activeAbortControllers.set(windowId, controller)
+  activeOperationsMap.set(windowId, { type: 'name_window', error: null, statusText: 'Analyzing window tabs...' })
+  operationStartTimestamps.set(windowId, Date.now())
+
+  let logger: AILogger | undefined
+
+  try {
+    const settings = await getSettings()
+    if (!settings.ai.enabled || !settings.ai.apiKey) {
+      throw new Error('AI is not configured. Please enable and configure AI in Settings first.')
+    }
+
+    const tabs = await chrome.tabs.query({ windowId })
+    const sampleTabsForLog = tabs.map((t, idx) => ({
+      index: idx + 1,
+      title: t.title || '',
+      url: t.url,
+      groupId: t.groupId,
+    }))
+
+    const alwaysLog = settings.ai.alwaysLogAIOperations ?? true
+    const isShift = Boolean(aiOverrides && (aiOverrides.shiftKey || aiOverrides.verboseLog))
+    const shouldLog = alwaysLog || isShift
+    if (shouldLog) {
+      logger = await AILogger.create({
+        actionType: 'GENERATE_WINDOW_NAME',
+        triggeredWithShift: isShift,
+        config: { ...settings.ai, ...aiOverrides },
+        tabsInput: sampleTabsForLog,
+        prompts: {
+          systemPrompt: SYSTEM_PROMPT,
+          userPrompt: `Generate descriptive window name for window #${windowId} with ${tabs.length} tabs`,
+        },
+        windowId,
+      })
+      registerTimeoutLogger(windowId, logger)
+    }
+
+    if (tabs.length === 0) {
+      const emptyName = 'Empty Window'
+      if (logger) {
+        await logger.markCompleted({
+          createdGroupsCount: 0,
+          createdGroupNames: [emptyName],
+          summary: `Window #${windowId} has no tabs. Defaulted name to "${emptyName}".`,
+        })
+      }
+      return { windowId, name: emptyName }
+    }
+
+    await setAIBadge(windowId)
+
+    // Gather existing names of OTHER open windows to contrast with
+    const namesData = await chrome.storage.local.get('customWindowNames')
+    const currentCustomNames = (namesData.customWindowNames as Record<number, string>) || {}
+    const existingNames = Object.entries(currentCustomNames)
+      .filter(([wid]) => Number(wid) !== windowId)
+      .map(([_, name]) => name)
+
+    const mergedAIConfig = {
+      ...settings.ai,
+      ...aiOverrides,
+    }
+
+    const client = new AIClient(mergedAIConfig, controller.signal, logger)
+    let capturedReasoning = ''
+
+    updateOperationProgress(windowId, {
+      statusText: `Generating name for window #${windowId}...`,
+      totalTabs: tabs.length,
+      processedTabs: tabs.length,
+    })
+
+    const generatedName = await client.generateWindowName(
+      tabs.map(t => ({ url: t.url || '', title: t.title || '' })),
+      {
+        existingNames,
+        windowId,
+        customPrompt: aiOverrides?.windowNamingPrompt,
+        onProgress: (update) => {
+          if (update.liveReasoning) capturedReasoning = update.liveReasoning
+          updateOperationProgress(windowId, update)
+        },
+      }
+    )
+
+    if (controller.signal.aborted) {
+      if (logger) await logger.markFailed(new Error('Operation aborted'))
+      return { windowId, name: currentCustomNames[windowId] || `Window #${windowId}` }
+    }
+
+    // Persist new window name to customWindowNames
+    const updatedCustomNames = { ...currentCustomNames, [windowId]: generatedName }
+    await chrome.storage.local.set({ customWindowNames: updatedCustomNames })
+    chrome.runtime.sendMessage({ action: 'WINDOW_NAMES_UPDATED', payload: updatedCustomNames }).catch(() => {})
+
+    const summary = `Generated name for window: "${generatedName}"`
+    if (logger) {
+      await logger.markCompleted({
+        createdGroupsCount: 1,
+        createdGroupNames: [generatedName],
+        summary,
+      })
+    }
+
+    const lastResult: LastAIResult = {
+      timestamp: Date.now(),
+      actionType: 'name_window',
+      actionTitle: 'Window Naming',
+      windowId,
+      tabsProcessed: tabs.length,
+      createdGroupNames: [generatedName],
+      summary,
+      reasoning: capturedReasoning || undefined,
+      reasoningSnippet: capturedReasoning ? (capturedReasoning.length > 120 ? '...' + capturedReasoning.slice(-120) : capturedReasoning) : undefined,
+    }
+    await chrome.storage.local.set({ [STORAGE_KEYS.LAST_AI_RESULT]: lastResult })
+    chrome.runtime.sendMessage({ action: 'LAST_AI_RESULT_UPDATED', payload: lastResult }).catch(() => {})
+
+    return { windowId, name: generatedName }
+  } catch (err: any) {
+    if (logger) {
+      await logger.markFailed(err)
+    }
+    throw err
+  } finally {
+    activeAIOperationWindows.delete(windowId)
+    clearOperationTimeout(windowId)
+    unregisterOperationTab(windowId)
+    if (activeAbortControllers.get(windowId) === controller) {
+      activeAbortControllers.delete(windowId)
+    }
+    if (activeOperationsMap.get(windowId)?.type === 'name_window') {
+      activeOperationsMap.delete(windowId)
+    }
+    await updateNewTabsBadge(windowId).catch(console.error)
+  }
+}
+
+export async function generateAllWindowsNames(
+  aiOverrides?: Partial<ExtensionSettings['ai']> & { shiftKey?: boolean; verboseLog?: boolean }
+): Promise<{ results: WindowNameResult[] }> {
+  const windows = await chrome.windows.getAll({ windowTypes: ['normal'] })
+  if (!windows || windows.length === 0) {
+    return { results: [] }
+  }
+
+  const focusedWin = windows.find(w => w.focused) || windows[0]
+  const opWindowId = focusedWin.id || chrome.windows.WINDOW_ID_CURRENT
+
+  const controller = new AbortController()
+  setupOperationTimeout(opWindowId, controller)
+  activeAbortControllers.set(opWindowId, controller)
+  activeOperationsMap.set(opWindowId, { type: 'name_window', error: null, statusText: 'Analyzing all window workspaces...' })
+  operationStartTimestamps.set(opWindowId, Date.now())
+
+  let logger: AILogger | undefined
+
+  try {
+    const settings = await getSettings()
+    if (!settings.ai.enabled || !settings.ai.apiKey) {
+      throw new Error('AI is not configured. Please enable and configure AI in Settings first.')
+    }
+
+    const namesData = await chrome.storage.local.get('customWindowNames')
+    const currentCustomNames = (namesData.customWindowNames as Record<number, string>) || {}
+
+    const windowDataList: Array<{
+      windowId: number
+      tabs: Array<{ url: string; title: string }>
+      currentName?: string
+    }> = []
+
+    let totalTabsCount = 0
+    const sampleTabsForLog: Array<{ index: number; title: string; url?: string; groupId?: number }> = []
+
+    for (const win of windows) {
+      const wid = win.id!
+      const tabs = await chrome.tabs.query({ windowId: wid })
+      totalTabsCount += tabs.length
+      windowDataList.push({
+        windowId: wid,
+        tabs: tabs.map(t => ({ url: t.url || '', title: t.title || '' })),
+        currentName: currentCustomNames[wid],
+      })
+      for (const t of tabs) {
+        sampleTabsForLog.push({ index: sampleTabsForLog.length + 1, title: t.title || '', url: t.url, groupId: t.groupId })
+      }
+    }
+
+    const alwaysLog = settings.ai.alwaysLogAIOperations ?? true
+    const isShift = Boolean(aiOverrides && (aiOverrides.shiftKey || aiOverrides.verboseLog))
+    const shouldLog = alwaysLog || isShift
+    if (shouldLog) {
+      logger = await AILogger.create({
+        actionType: 'GENERATE_ALL_WINDOW_NAMES',
+        triggeredWithShift: isShift,
+        config: { ...settings.ai, ...aiOverrides },
+        tabsInput: sampleTabsForLog,
+        prompts: {
+          systemPrompt: SYSTEM_PROMPT,
+          userPrompt: `Generate distinct window names for ${windows.length} windows (${totalTabsCount} total tabs)`,
+        },
+        windowId: opWindowId,
+      })
+      registerTimeoutLogger(opWindowId, logger)
+    }
+
+    await setAIBadge(opWindowId)
+
+    const mergedAIConfig = {
+      ...settings.ai,
+      ...aiOverrides,
+    }
+
+    const client = new AIClient(mergedAIConfig, controller.signal, logger)
+    let capturedReasoning = ''
+
+    updateOperationProgress(opWindowId, {
+      statusText: `Generating distinct names for ${windows.length} windows...`,
+      totalTabs: totalTabsCount,
+      processedTabs: totalTabsCount,
+    })
+
+    const results = await client.generateAllWindowsNames(
+      windowDataList,
+      {
+        customPrompt: aiOverrides?.windowNamingPrompt,
+        onProgress: (update) => {
+          if (update.liveReasoning) capturedReasoning = update.liveReasoning
+          updateOperationProgress(opWindowId, update)
+        },
+      }
+    )
+
+    if (controller.signal.aborted) {
+      if (logger) await logger.markFailed(new Error('Operation aborted'))
+      return { results: [] }
+    }
+
+    const updatedCustomNames = { ...currentCustomNames }
+    for (const res of results) {
+      updatedCustomNames[res.windowId] = res.name
+    }
+
+    await chrome.storage.local.set({ customWindowNames: updatedCustomNames })
+    chrome.runtime.sendMessage({ action: 'WINDOW_NAMES_UPDATED', payload: updatedCustomNames }).catch(() => {})
+
+    const summary = `Generated names for ${results.length} windows: ${results.map(r => `[#${r.windowId}: "${r.name}"]`).join(', ')}`
+    if (logger) {
+      await logger.markCompleted({
+        createdGroupsCount: results.length,
+        createdGroupNames: results.map(r => r.name),
+        summary,
+      })
+    }
+
+    const lastResult: LastAIResult = {
+      timestamp: Date.now(),
+      actionType: 'name_window',
+      actionTitle: 'Window Naming',
+      windowId: opWindowId,
+      tabsProcessed: totalTabsCount,
+      createdGroupNames: results.map(r => r.name),
+      summary,
+      reasoning: capturedReasoning || undefined,
+      reasoningSnippet: capturedReasoning ? (capturedReasoning.length > 120 ? '...' + capturedReasoning.slice(-120) : capturedReasoning) : undefined,
+    }
+    await chrome.storage.local.set({ [STORAGE_KEYS.LAST_AI_RESULT]: lastResult })
+    chrome.runtime.sendMessage({ action: 'LAST_AI_RESULT_UPDATED', payload: lastResult }).catch(() => {})
+
+    return { results }
+  } catch (err: any) {
+    if (logger) {
+      await logger.markFailed(err)
+    }
+    throw err
+  } finally {
+    activeAIOperationWindows.delete(opWindowId)
+    clearOperationTimeout(opWindowId)
+    unregisterOperationTab(opWindowId)
+    if (activeAbortControllers.get(opWindowId) === controller) {
+      activeAbortControllers.delete(opWindowId)
+    }
+    if (activeOperationsMap.get(opWindowId)?.type === 'name_window') {
+      activeOperationsMap.delete(opWindowId)
+    }
+    await updateNewTabsBadge(opWindowId).catch(console.error)
   }
 }
 

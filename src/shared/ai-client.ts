@@ -1,6 +1,6 @@
-import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory, AIProgressCallback, AIProgressUpdate, OperationRetryInfo, OpenRouterProviderItem, OpenRouterKeyInfo, ReviewAndRegroupTabInput, ReviewAndRegroupDecision, DuplicateGroupClusterItem, DistinctGroupRenameResult } from './types'
+import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory, AIProgressCallback, AIProgressUpdate, OperationRetryInfo, OpenRouterProviderItem, OpenRouterKeyInfo, ReviewAndRegroupTabInput, ReviewAndRegroupDecision, DuplicateGroupClusterItem, DistinctGroupRenameResult, WindowNameResult } from './types'
 import type { AILogger } from './ai-logger'
-import { DEFAULT_GROUPING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS, DEFAULT_ENDPOINTS } from './constants'
+import { DEFAULT_GROUPING_PROMPT, DEFAULT_WINDOW_NAMING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS, DEFAULT_ENDPOINTS } from './constants'
 import { getAutoBatchSize, formatTimeAgo, extractDomain, extractJsonSubstring } from './utils'
 import {
   getGoogleModelPricing,
@@ -72,7 +72,7 @@ export class AIClient {
   static estimateCostAndTokens(
     config: AIConfig,
     tabsCount: number,
-    type: 'group' | 'split' | 'merge' | 'classify' | 'regroup',
+    type: 'group' | 'split' | 'merge' | 'classify' | 'regroup' | 'name_window',
     modelOverride?: string,
     providerOverride?: string,
     existingGroupNames: string[] = []
@@ -111,6 +111,11 @@ export class AIClient {
       userPrompt = 'You are reviewing the last tabs to verify if each tab is currently in the correct group, and regroup it if needed.'
       if (existingGroupNames.length > 0) {
         baseUserPromptExtra = '\n\nExisting Groups: ' + existingGroupNames.join(', ')
+      }
+    } else if (type === 'name_window') {
+      userPrompt = config.windowNamingPrompt?.trim() || DEFAULT_WINDOW_NAMING_PROMPT
+      if (existingGroupNames.length > 0) {
+        baseUserPromptExtra = '\n\nOther Window Names: ' + existingGroupNames.join(', ')
       }
     }
 
@@ -1248,6 +1253,239 @@ ${formattedGroups}`
         return this.generateDistinctGroupNames(clusterName, groups, onProgress, true)
       }
       console.warn('[timTabTool] Failed to generate distinct group names. Error:', err)
+      throw err
+    }
+  }
+
+  /**
+   * Generates a concise, descriptive name for a single browser window based on its tabs.
+   * @param {Array<{ url: string; title: string; lastAccessed?: number; createdAt?: number }>} tabs
+   * @param {{ existingNames?: string[]; windowId?: number; customPrompt?: string; onProgress?: AIProgressCallback; stripTitles?: boolean }} [options]
+   * @returns {Promise<string>}
+   */
+  async generateWindowName(
+    tabs: Array<{ url: string; title: string; lastAccessed?: number; createdAt?: number }>,
+    options?: {
+      existingNames?: string[]
+      windowId?: number
+      customPrompt?: string
+      onProgress?: AIProgressCallback
+      stripTitles?: boolean
+    },
+  ): Promise<string> {
+    if (!tabs || tabs.length === 0) {
+      return 'Empty Window'
+    }
+
+    const stripTitles = options?.stripTitles ?? false
+    const tabLines = tabs
+      .slice(0, 40)
+      .map((t, idx) => this.formatTabForPrompt(t, idx + 1, stripTitles))
+      .join('\n')
+
+    const basePrompt = options?.customPrompt?.trim() || this.config.windowNamingPrompt?.trim() || DEFAULT_WINDOW_NAMING_PROMPT
+
+    let contextSection = ''
+    if (options?.existingNames && options.existingNames.length > 0) {
+      contextSection = `\n\nOther open browser window names (your generated name must clearly differ and contrast with these): ${options.existingNames.map(n => `"${n}"`).join(', ')}.`
+    }
+
+    const prompt = `${basePrompt}${contextSection}
+
+Tabs in this window (total ${tabs.length}):
+${tabLines}
+
+Output ONLY valid JSON matching this schema:
+{"name": "Concise Descriptive Title"}`
+
+    try {
+      const response = await this.chat(prompt, true, 1, undefined, options?.onProgress)
+      const extracted = extractJsonSubstring(response, 'auto')
+      const jsonStr = extracted.replace(/,\s*([}\]])/g, '$1')
+
+      let parsed: any = null
+      try {
+        parsed = JSON.parse(jsonStr)
+      } catch {
+        const match = response.match(/"(?:name|title|windowName)"\s*:\s*"([^"]+)"/i)
+        if (match) {
+          parsed = { name: match[1] }
+        }
+      }
+
+      if (parsed && typeof parsed === 'object') {
+        if (!parsed.name && !parsed.title && !parsed.windowName) {
+          const keys = ['window', 'result', 'data', 'item', 'windows']
+          for (const k of keys) {
+            if (parsed[k] && typeof parsed[k] === 'object') {
+              if (Array.isArray(parsed[k]) && parsed[k][0]) {
+                parsed = parsed[k][0]
+              } else {
+                parsed = parsed[k]
+              }
+              break
+            }
+          }
+        }
+      }
+
+      let generatedName = ''
+      if (typeof parsed === 'string') {
+        generatedName = parsed
+      } else if (parsed && typeof parsed === 'object') {
+        generatedName = String(parsed.name || parsed.title || parsed.windowName || parsed.newName || '').trim()
+      }
+
+      generatedName = generatedName.replace(/^["'`]+|["'`]+$/g, '').trim()
+
+      if (!generatedName) {
+        const cleanLine = response.replace(/```json|```|\{|\}|"name":/g, '').trim().split('\n')[0]?.trim()
+        if (cleanLine && cleanLine.length <= 40) {
+          generatedName = cleanLine.replace(/^["'`]+|["'`]+$/g, '').trim()
+        }
+      }
+
+      if (!generatedName) {
+        generatedName = 'Browser Window'
+      }
+
+      if (generatedName.length > 40) {
+        generatedName = generatedName.slice(0, 40).trim()
+      }
+
+      return generatedName
+    } catch (err) {
+      const msg = (err as Error).message || ''
+      if (!stripTitles && (msg.includes('PROHIBITED_CONTENT') || msg.includes('Prohibited Use policy') || msg.includes('promptFeedback') || msg.includes('content safety') || msg.includes('safety policy'))) {
+        console.warn('[timTabTool] Prompt blocked in window naming, retrying with URLs only...')
+        return this.generateWindowName(tabs, { ...options, stripTitles: true })
+      }
+      console.warn('[timTabTool] Failed to generate window name. Error:', err)
+      throw err
+    }
+  }
+
+  /**
+   * Generates distinct, descriptive names for multiple browser windows simultaneously.
+   * @param {Array<{ windowId: number; tabs: Array<{ url: string; title: string; lastAccessed?: number; createdAt?: number }>; currentName?: string }>} windows
+   * @param {{ customPrompt?: string; onProgress?: AIProgressCallback; stripTitles?: boolean }} [options]
+   * @returns {Promise<WindowNameResult[]>}
+   */
+  async generateAllWindowsNames(
+    windows: Array<{ windowId: number; tabs: Array<{ url: string; title: string; lastAccessed?: number; createdAt?: number }>; currentName?: string }>,
+    options?: {
+      customPrompt?: string
+      onProgress?: AIProgressCallback
+      stripTitles?: boolean
+    },
+  ): Promise<WindowNameResult[]> {
+    if (!windows || windows.length === 0) return []
+
+    const stripTitles = options?.stripTitles ?? false
+    const formattedWindows = windows.map((w, idx) => {
+      const tabLines = (w.tabs || [])
+        .slice(0, 25)
+        .map((t, tIdx) => this.formatTabForPrompt(t, tIdx + 1, stripTitles))
+        .join('\n')
+      const currentNameStr = w.currentName ? `, current name: "${w.currentName}"` : ''
+      return `Window #${idx + 1} (windowId: ${w.windowId}, total tabs: ${w.tabs.length}${currentNameStr}):\n${tabLines || '(No tabs)'}`
+    }).join('\n\n')
+
+    const basePrompt = options?.customPrompt?.trim() || this.config.windowNamingPrompt?.trim() || DEFAULT_WINDOW_NAMING_PROMPT
+
+    const prompt = `You are an expert at organizing browser workspaces.
+${basePrompt}
+
+Rules:
+1. Every generated window name MUST be distinct and clearly contrast with other windows so the user can easily distinguish them.
+2. Names must be concise (2-4 words, capitalized, e.g. "React Development", "Shopping & Reviews", "Finance & Invoices", "Travel Bookings").
+3. Output ONLY a valid JSON array of objects with the exact schema:
+[
+  {"windowId": ${windows[0].windowId}, "name": "Distinct Window Name"},
+  ...
+]
+
+Windows to name:
+${formattedWindows}`
+
+    try {
+      const response = await this.chat(prompt, true, 1, undefined, options?.onProgress)
+      const extracted = extractJsonSubstring(response, 'auto')
+      const jsonStr = extracted.replace(/,\s*([}\]])/g, '$1')
+
+      let parsed: unknown = JSON.parse(jsonStr)
+      if (!Array.isArray(parsed) && typeof parsed === 'object' && parsed !== null) {
+        const possibleKeys = ['windows', 'results', 'names', 'items', 'data', 'decisions']
+        for (const key of possibleKeys) {
+          if (Array.isArray((parsed as Record<string, unknown>)[key])) {
+            parsed = (parsed as Record<string, unknown>)[key]
+            break
+          }
+        }
+        if (!Array.isArray(parsed) && ((parsed as any).name || (parsed as any).title || (parsed as any).windowName)) {
+          parsed = [parsed]
+        }
+      }
+
+      if (!Array.isArray(parsed)) {
+        throw new Error('AI response did not return an array of window names')
+      }
+
+      const results: WindowNameResult[] = []
+      const usedNames = new Set<string>()
+
+      for (const item of parsed) {
+        if (!item || typeof item !== 'object') continue
+        const rawWid = (item as any).windowId ?? (item as any).id ?? (item as any).window_id ?? (windows.length === 1 ? windows[0].windowId : undefined)
+        const wid = Number(rawWid)
+        if (isNaN(wid)) continue
+
+        const targetWin = windows.find(w => w.windowId === wid)
+        if (!targetWin) continue
+
+        let name = String((item as any).name ?? (item as any).title ?? (item as any).windowName ?? '').trim()
+        name = name.replace(/^["'`]+|["'`]+$/g, '').trim()
+        if (!name) continue
+        if (name.length > 40) name = name.slice(0, 40).trim()
+
+        if (usedNames.has(name.toLowerCase())) {
+          let suffix = 2
+          while (usedNames.has(`${name} ${suffix}`.toLowerCase())) {
+            suffix++
+          }
+          name = `${name} ${suffix}`
+        }
+        usedNames.add(name.toLowerCase())
+
+        results.push({ windowId: wid, name })
+      }
+
+      // If any window was omitted by the model, provide a sensible fallback
+      for (const w of windows) {
+        if (!results.some(r => r.windowId === w.windowId)) {
+          let fallbackName = 'Window'
+          if (w.tabs.length > 0) {
+            const firstDomain = extractDomain(w.tabs[0].url) || 'General'
+            fallbackName = `${firstDomain} Tabs`
+          }
+          if (usedNames.has(fallbackName.toLowerCase())) {
+            let suffix = 2
+            while (usedNames.has(`${fallbackName} ${suffix}`.toLowerCase())) suffix++
+            fallbackName = `${fallbackName} ${suffix}`
+          }
+          usedNames.add(fallbackName.toLowerCase())
+          results.push({ windowId: w.windowId, name: fallbackName })
+        }
+      }
+
+      return results
+    } catch (err) {
+      const msg = (err as Error).message || ''
+      if (!stripTitles && (msg.includes('PROHIBITED_CONTENT') || msg.includes('Prohibited Use policy') || msg.includes('promptFeedback') || msg.includes('content safety') || msg.includes('safety policy'))) {
+        console.warn('[timTabTool] Prompt blocked in multi-window naming, retrying with URLs only...')
+        return this.generateAllWindowsNames(windows, { ...options, stripTitles: true })
+      }
+      console.warn('[timTabTool] Failed to generate all window names. Error:', err)
       throw err
     }
   }
