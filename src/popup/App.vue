@@ -653,7 +653,7 @@ function formatTimer(ms?: number): string {
 const activeAIOperationsList = computed(() => {
   const list: Array<{
     windowId: number
-    type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup' | 'rename'
+    type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup' | 'rename' | 'name_window'
     windowName: string
     stage?: string
     statusText?: string

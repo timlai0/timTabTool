@@ -366,7 +366,7 @@ async function handleExportKnownTabs(payload: unknown): Promise<unknown> {
 
   let customWindowNames: Record<number, string> = {}
   if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-    const winNameData = await chrome.storage.local.get(STORAGE_KEYS.CUSTOM_WINDOW_NAMES).catch(() => ({}))
+    const winNameData: Record<string, unknown> = await chrome.storage.local.get(STORAGE_KEYS.CUSTOM_WINDOW_NAMES).catch(() => ({}))
     customWindowNames = (winNameData[STORAGE_KEYS.CUSTOM_WINDOW_NAMES] ?? {}) as Record<number, string>
   }
 

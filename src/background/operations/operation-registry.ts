@@ -248,7 +248,7 @@ function broadcastOperationProgress(windowId: number, status: OperationStatus): 
 
 export function setActiveOperation(
   windowId: number,
-  type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup' | 'rename' | null,
+  type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup' | 'rename' | 'name_window' | null,
   error: string | null = null
 ): void {
   if (type === null && error === null) {
