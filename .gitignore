@@ -30,3 +30,8 @@ pnpm-debug.log*
 .env
 .env*.local
 web-ext-artifacts/
+
+# Conda / Python environment artifacts
+.conda/
+environment.yml
+b5bf2e54cb654f7b/
