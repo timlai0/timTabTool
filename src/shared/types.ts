@@ -338,6 +338,7 @@ type MessageAction =
   | 'CLEAR_CLOSED_TABS'
   | 'GENERATE_WINDOW_NAME'
   | 'GENERATE_ALL_WINDOW_NAMES'
+  | 'EXPORT_KNOWN_TABS'
 
 /**
  * @interface ExtensionMessage

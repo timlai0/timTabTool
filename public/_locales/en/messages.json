@@ -434,5 +434,25 @@
   "allWindowNamesGenerated": {
     "message": "All window names generated",
     "description": "Notification message when all window names are generated"
+  },
+  "exportKnownTabsTitle": {
+    "message": "Export Known Unclosed Tabs",
+    "description": "Section title for exporting known unclosed tabs"
+  },
+  "exportKnownTabsDesc": {
+    "message": "Export open and previously known tabs that were not explicitly closed (e.g., to recover missing tabs after browser crash or sync failure).",
+    "description": "Description for exporting known unclosed tabs"
+  },
+  "exportScopeAllUnclosed": {
+    "message": "Open + Unrestored",
+    "description": "Export scope option for both open tabs and unrestored history tabs"
+  },
+  "exportScopeOpenOnly": {
+    "message": "Open Tabs Only",
+    "description": "Export scope option for currently open tabs only"
+  },
+  "exportScopeMissingOnly": {
+    "message": "Unrestored Only",
+    "description": "Export scope option for missing/unrestored tabs only"
   }
 }

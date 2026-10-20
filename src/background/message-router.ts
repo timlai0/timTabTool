@@ -53,6 +53,13 @@ import {
   restoreClosedBatch,
   removeClosedBatch,
 } from '../shared/closed-tabs-manager'
+import {
+  buildKnownUnclosedTabs,
+  formatKnownUnclosedTabs,
+  type TabExportScope,
+  type TabExportFormat,
+  type ExportableOpenTab,
+} from '../shared/tab-exporter'
 import { getMCPStatus, reconnectMCP, getOrCreateMCPToken, regenerateMCPToken } from './mcp-bridge'
 import {
   isActionAllowed,
@@ -322,8 +329,92 @@ async function handleClosedTabMessages(action: string, payload: unknown): Promis
       await clearClosedTabs()
       return { ok: true }
     }
+    case 'EXPORT_KNOWN_TABS': {
+      return await handleExportKnownTabs(payload)
+    }
     default:
       return null
+  }
+}
+
+/**
+ * Queries open tabs, tab groups, custom window names, tab history, and closed tabs to build an export payload.
+ */
+async function handleExportKnownTabs(payload: unknown): Promise<unknown> {
+  const p = (payload && typeof payload === 'object' ? payload : {}) as {
+    scope?: TabExportScope
+    format?: TabExportFormat
+  }
+  const scope: TabExportScope =
+    p.scope === 'open_only' || p.scope === 'missing_only' || p.scope === 'all_unclosed'
+      ? p.scope
+      : 'all_unclosed'
+  const format: TabExportFormat =
+    p.format === 'markdown' || p.format === 'json' || p.format === 'txt' || p.format === 'html'
+      ? p.format
+      : 'markdown'
+
+  const tabs = typeof chrome !== 'undefined' && chrome.tabs?.query ? await chrome.tabs.query({}) : []
+  let tabGroups: chrome.tabGroups.TabGroup[] = []
+  if (typeof chrome !== 'undefined' && typeof chrome.tabGroups?.query === 'function') {
+    tabGroups = await chrome.tabGroups.query({}).catch(() => [])
+  }
+  const groupMap = new Map<number, chrome.tabGroups.TabGroup>()
+  for (const g of tabGroups) {
+    groupMap.set(g.id, g)
+  }
+
+  let customWindowNames: Record<number, string> = {}
+  if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+    const winNameData = await chrome.storage.local.get(STORAGE_KEYS.CUSTOM_WINDOW_NAMES).catch(() => ({}))
+    customWindowNames = (winNameData[STORAGE_KEYS.CUSTOM_WINDOW_NAMES] ?? {}) as Record<number, string>
+  }
+
+  const openTabs: ExportableOpenTab[] = tabs.map((t) => {
+    const gid = t.groupId !== undefined && t.groupId !== TAB_GROUP_ID_NONE ? t.groupId : undefined
+    const grp = gid !== undefined ? groupMap.get(gid) : undefined
+    return {
+      id: t.id,
+      url: t.url || '',
+      title: t.title || t.url || '',
+      favIconUrl: t.favIconUrl,
+      windowId: t.windowId,
+      windowName: t.windowId !== undefined ? customWindowNames[t.windowId] : undefined,
+      groupId: gid,
+      groupTitle: grp?.title,
+      groupColor: grp?.color,
+      pinned: t.pinned,
+      active: t.active,
+      lastAccessed: t.lastAccessed,
+    }
+  })
+
+  const historyEntries = await getHistoryEntries()
+  const closedTabs = await getClosedTabs()
+  const explicitlyClosedUrls = closedTabs
+    .filter((ct) => !ct.source?.startsWith('Closed Window'))
+    .map((ct) => ct.url)
+
+  const items = buildKnownUnclosedTabs({
+    openTabs,
+    historyEntries,
+    explicitlyClosedUrls,
+    scope,
+  })
+  const exportedAt = Date.now()
+  const content = formatKnownUnclosedTabs(items, format, scope, exportedAt)
+  return {
+    ok: true,
+    items,
+    content,
+    scope,
+    format,
+    exportedAt,
+    counts: {
+      total: items.length,
+      open: items.filter((i) => i.status === 'open').length,
+      unrestored: items.filter((i) => i.status === 'unrestored').length,
+    },
   }
 }
 

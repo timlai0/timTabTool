@@ -1,6 +1,7 @@
 'use strict';
 
-import { recordClosedTabs } from '../../shared/closed-tabs-manager'
+import { recordClosedTabs, isRestorableUrl } from '../../shared/closed-tabs-manager'
+import { markTabClosedInHistory, recordTabVisit } from '../storage'
 
 export interface CachedLiveTab {
   id: number
@@ -70,6 +71,9 @@ export async function initLiveTabTracker(): Promise<void> {
     liveTabMap.clear()
     for (const tab of tabs) {
       trackLiveTab(tab)
+      if (tab.url && isRestorableUrl(tab.url)) {
+        await recordTabVisit(tab.url, tab.title || tab.url, tab.favIconUrl)
+      }
     }
   } catch (err) {
     console.error('[timTabTool] Failed to initialize live tab tracker:', err)
@@ -106,12 +110,19 @@ export function untrackLiveTab(tabId: number): CachedLiveTab | undefined {
  */
 export function handleTabRemovalForMassClose(tabId: number, removeInfo: TabRemoveInfo): void {
   if (isTabClosedByExtension(tabId)) {
-    untrackLiveTab(tabId)
+    const extCached = untrackLiveTab(tabId)
+    if (extCached?.url) {
+      markTabClosedInHistory([extCached.url]).catch(() => {})
+    }
     return
   }
 
   const cached = untrackLiveTab(tabId)
   if (!cached || !cached.url) return
+
+  if (!removeInfo.isWindowClosing) {
+    markTabClosedInHistory([cached.url]).catch(() => {})
+  }
 
   pendingMassCloseItems.push({ tab: cached, removeInfo })
 

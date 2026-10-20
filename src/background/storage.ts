@@ -106,6 +106,34 @@ export async function recordTabVisit(
 }
 
 /**
+ * Mark one or more URLs as explicitly closed in tab history.
+ * @param {string[]} urls - Array of URLs that were explicitly closed.
+ * @param {boolean} [immediate=false] - If true, flushes directly to persistent storage.
+ * @returns {Promise<void>}
+ */
+export async function markTabClosedInHistory(urls: string[], immediate: boolean = false): Promise<void> {
+  if (!urls || urls.length === 0) return
+  const history = await getOrLoadHistory()
+  let updated = false
+  let url: string
+  for (url of urls) {
+    if (!url) continue
+    const existing = history.get(url)
+    if (existing && !existing.closed) {
+      history.set(url, { ...existing, closed: true })
+      updated = true
+    }
+  }
+  if (!updated) return
+  isHistoryDirty = true
+  if (immediate) {
+    await flushTabHistory()
+  } else {
+    scheduleHistoryFlush()
+  }
+}
+
+/**
  * Get all history entries sorted by recency.
  * @returns {Promise<TabHistoryEntry[]>} Array of all history entries.
  */
@@ -113,4 +141,17 @@ export async function getHistoryEntries(): Promise<TabHistoryEntry[]> {
   const history = await getOrLoadHistory()
   return Array.from(history.values()).sort((a, b) => b.lastAccessed - a.lastAccessed)
 }
+
+/**
+ * Reset in-memory history cache (used in tests or storage resets).
+ */
+export function clearHistoryCache(): void {
+  if (historyFlushTimer) {
+    clearTimeout(historyFlushTimer)
+    historyFlushTimer = null
+  }
+  inMemoryHistoryMap = null
+  isHistoryDirty = false
+}
+
 

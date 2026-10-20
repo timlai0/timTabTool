@@ -434,5 +434,25 @@
   "allWindowNamesGenerated": {
     "message": "所有窗口名称已生成",
     "description": "Notification message when all window names are generated"
+  },
+  "exportKnownTabsTitle": {
+    "message": "导出已知未关闭标签页",
+    "description": "Section title for exporting known unclosed tabs"
+  },
+  "exportKnownTabsDesc": {
+    "message": "导出当前打开以及历史记录中未主动关闭的标签页（用于浏览器崩溃或同步失败后的标签恢复）。",
+    "description": "Description for exporting known unclosed tabs"
+  },
+  "exportScopeAllUnclosed": {
+    "message": "打开 + 未恢复",
+    "description": "Export scope option for both open tabs and unrestored history tabs"
+  },
+  "exportScopeOpenOnly": {
+    "message": "仅当前打开",
+    "description": "Export scope option for currently open tabs only"
+  },
+  "exportScopeMissingOnly": {
+    "message": "仅未恢复标签",
+    "description": "Export scope option for missing/unrestored tabs only"
   }
 }

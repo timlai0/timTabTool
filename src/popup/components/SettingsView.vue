@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_
 import { getAutoBatchSize, parseMaxTokensToNumber, formatTimeAgo, formatMarkdown } from '../../shared/utils'
 import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse, AIProvider, OpenRouterProviderItem, ClosedTabEntry } from '../../shared/types'
 import { getClosedTabs, restoreClosedTab, restoreAllClosedTabs, removeClosedTab, clearClosedTabs, restoreClosedBatch, removeClosedBatch } from '../../shared/closed-tabs-manager'
+import type { TabExportScope, TabExportFormat } from '../../shared/tab-exporter'
 import { AIClient, SYSTEM_PROMPT, fetchGoogleModels, fetchOpenRouterModels, fetchOpenRouterProviders, fetchOpenRouterKeyInfo, isFreeModel } from '../../shared/ai-client'
 import { APP_VERSION, BUILD_NUMBER, BUILD_HASH, BUILD_TIME } from '../../shared/version'
 
@@ -774,6 +775,7 @@ onMounted(async () => {
 
   // Load restorable closed tabs
   loadClosedTabs()
+  refreshExportPreviewCounts()
 })
 
 onUnmounted(() => {
@@ -1243,6 +1245,93 @@ async function pasteConfig() {
     }, 1500)
   } catch (err: any) {
     backupError.value = 'Failed to paste: ' + err.message
+  }
+}
+
+// --- Known Unclosed Tabs Export state and handlers ---
+const exportScope = ref<TabExportScope>('all_unclosed')
+const exportFormat = ref<TabExportFormat>('markdown')
+const exportCounts = ref<{ total: number; open: number; unrestored: number }>({ total: 0, open: 0, unrestored: 0 })
+const exportCopyFeedback = ref<string | null>(null)
+const exportDownloadFeedback = ref<string | null>(null)
+const exportError = ref<string>('')
+
+async function refreshExportPreviewCounts(): Promise<void> {
+  try {
+    const res = await chrome.runtime.sendMessage({
+      action: 'EXPORT_KNOWN_TABS',
+      payload: { scope: exportScope.value, format: exportFormat.value },
+    })
+    if (res && res.counts) {
+      exportCounts.value = res.counts
+    }
+  } catch {
+    // Ignore preview count error
+  }
+}
+
+watch(exportScope, () => {
+  refreshExportPreviewCounts()
+})
+
+async function handleCopyExportTabs(): Promise<void> {
+  exportError.value = ''
+  try {
+    const res = await chrome.runtime.sendMessage({
+      action: 'EXPORT_KNOWN_TABS',
+      payload: { scope: exportScope.value, format: exportFormat.value },
+    })
+    if (!res || !res.ok) {
+      throw new Error(res?.error || 'Failed to generate tab export')
+    }
+    if (res.counts) exportCounts.value = res.counts
+    await navigator.clipboard.writeText(res.content || '')
+    exportCopyFeedback.value = `Copied (${res.counts?.total ?? 0} tabs)!`
+    setTimeout(() => {
+      exportCopyFeedback.value = null
+    }, 1800)
+  } catch (err: any) {
+    exportError.value = 'Failed to copy export: ' + (err?.message || String(err))
+  }
+}
+
+async function handleDownloadExportTabs(): Promise<void> {
+  exportError.value = ''
+  try {
+    const res = await chrome.runtime.sendMessage({
+      action: 'EXPORT_KNOWN_TABS',
+      payload: { scope: exportScope.value, format: exportFormat.value },
+    })
+    if (!res || !res.ok) {
+      throw new Error(res?.error || 'Failed to generate tab export')
+    }
+    if (res.counts) exportCounts.value = res.counts
+    const mimeByFormat: Record<TabExportFormat, string> = {
+      markdown: 'text/markdown;charset=utf-8',
+      json: 'application/json;charset=utf-8',
+      txt: 'text/plain;charset=utf-8',
+      html: 'text/html;charset=utf-8',
+    }
+    const extByFormat: Record<TabExportFormat, string> = {
+      markdown: 'md',
+      json: 'json',
+      txt: 'txt',
+      html: 'html',
+    }
+    const blob = new Blob([res.content || ''], { type: mimeByFormat[exportFormat.value] })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const dateStamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+    a.download = `tabpilot_tabs_${exportScope.value}_${dateStamp}.${extByFormat[exportFormat.value]}`
+    a.click()
+    URL.revokeObjectURL(url)
+    exportDownloadFeedback.value = `Downloaded .${extByFormat[exportFormat.value]}!`
+    setTimeout(() => {
+      exportDownloadFeedback.value = null
+    }, 1800)
+  } catch (err: any) {
+    exportError.value = 'Failed to download export: ' + (err?.message || String(err))
   }
 }
 </script>
@@ -3372,6 +3461,84 @@ async function pasteConfig() {
           <p v-if="backupError" class="text-[10px] text-center" style="color: var(--group-red);">
             {{ backupError }}
           </p>
+
+          <!-- Divider -->
+          <div style="height: 0.5px; background: var(--border);" />
+
+          <!-- Export Known Unclosed Tabs -->
+          <div class="space-y-2 pt-0.5">
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs font-medium flex items-center gap-1.5" style="color: var(--text-primary);">
+                <span>{{ getMessage('exportKnownTabsTitle') || 'Export Known Unclosed Tabs' }}</span>
+                <span class="text-[9.5px] px-1.5 py-0.2 rounded-xs tabular-nums" style="background: var(--bg-secondary); color: var(--accent); border: 0.5px solid var(--border);">
+                  {{ exportCounts.total }} {{ getMessage('tabs') || 'tabs' }}
+                </span>
+              </div>
+              <div class="text-[9px] tabular-nums" style="color: var(--text-tertiary);">
+                {{ exportCounts.open }} open &bull; {{ exportCounts.unrestored }} unrestored
+              </div>
+            </div>
+            <p class="text-[10px] leading-relaxed" style="color: var(--text-tertiary);">
+              {{ getMessage('exportKnownTabsDesc') || 'Export open and previously known tabs that were not explicitly closed (e.g., to recover missing tabs after browser crash or sync failure).' }}
+            </p>
+
+            <!-- Scope & Format Selectors -->
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-[9.5px] font-medium mb-1" style="color: var(--text-secondary);">Scope</label>
+                <select
+                  v-model="exportScope"
+                  class="w-full text-[11px] rounded-sm py-1 px-2 border-0 cursor-pointer"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                >
+                  <option value="all_unclosed">{{ getMessage('exportScopeAllUnclosed') || 'Open + Unrestored' }}</option>
+                  <option value="open_only">{{ getMessage('exportScopeOpenOnly') || 'Open Tabs Only' }}</option>
+                  <option value="missing_only">{{ getMessage('exportScopeMissingOnly') || 'Unrestored Only' }}</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[9.5px] font-medium mb-1" style="color: var(--text-secondary);">Format</label>
+                <select
+                  v-model="exportFormat"
+                  class="w-full text-[11px] rounded-sm py-1 px-2 border-0 cursor-pointer"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                >
+                  <option value="markdown">Markdown (.md)</option>
+                  <option value="json">JSON (.json)</option>
+                  <option value="txt">Plain Text URLs (.txt)</option>
+                  <option value="html">HTML Bookmarks (.html)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Action Buttons: Copy & Download -->
+            <div class="flex gap-2">
+              <button
+                @click="handleCopyExportTabs"
+                class="flex-1 py-1.5 text-xs font-medium rounded-sm transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer focus:outline-none"
+                style="background: var(--bg-secondary); color: var(--text-primary); border: 0.5px solid var(--border);"
+              >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
+                  <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h8a2 2 0 00-2-2H5z" />
+                </svg>
+                <span>{{ exportCopyFeedback || 'Copy List' }}</span>
+              </button>
+              <button
+                @click="handleDownloadExportTabs"
+                class="flex-1 py-1.5 text-xs font-medium rounded-sm transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer focus:outline-none"
+                style="background: var(--accent); color: #ffffff;"
+              >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+                </svg>
+                <span>{{ exportDownloadFeedback || 'Export File' }}</span>
+              </button>
+            </div>
+            <p v-if="exportError" class="text-[10px] text-center" style="color: var(--group-red);">
+              {{ exportError }}
+            </p>
+          </div>
         </div>
 
         <!-- About & Build Info -->
