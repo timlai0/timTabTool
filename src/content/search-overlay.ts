@@ -2320,15 +2320,14 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
         maxTokens = modelId.includes('opus') || modelId.includes('haiku') ? 4096 : 8192
       }
 
-      settings.ai.model = modelId
-      settings.ai.provider = provider
-      settings.ai.maxTokens = maxTokens
-
-      // Step 3: Save settings
-      await chrome.runtime.sendMessage({
-        action: 'SAVE_SETTINGS',
-        payload: settings
+      // Step 3: Save the model choice (content scripts may not write full settings)
+      const saveRes = await chrome.runtime.sendMessage({
+        action: 'SET_AI_MODEL',
+        payload: { model: modelId, provider, maxTokens }
       })
+      if (saveRes?.error) {
+        throw new Error(saveRes.error)
+      }
 
       // Update local overlay metrics so autocomplete filtering refreshes immediately!
       if (overlayMetrics && overlayMetrics.aiSettings) {

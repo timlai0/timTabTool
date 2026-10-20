@@ -5,6 +5,50 @@ import { STORAGE_KEYS } from './constants'
 
 const MAX_LOG_ENTRIES = 50
 
+const SECRET_PATTERNS: Array<[RegExp, string]> = [
+  [/([?&](?:key|api_key|apikey|access_token|token)=)[^&#\s"']+/gi, '$1[REDACTED]'],
+  [/(Bearer\s+)[A-Za-z0-9._~+/=-]+/g, '$1[REDACTED]'],
+  [/((?:x-api-key|x-goog-api-key)["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi, '$1[REDACTED]'],
+]
+
+/**
+ * Strips API keys and bearer tokens from text before it is persisted or exported.
+ * @param {string | undefined} text - Text that may contain secrets.
+ * @returns {string | undefined} Redacted text.
+ */
+export function redactSecrets<T extends string | undefined>(text: T): T {
+  if (!text) return text
+  let out: string = text
+  for (const [pattern, replacement] of SECRET_PATTERNS) {
+    out = out.replace(pattern, replacement)
+  }
+  return out as T
+}
+
+/**
+ * Redacts secrets in already-stored log entries (logs written before redaction existed).
+ * @param {AIOperationLogEntry} log - Entry to scrub in place.
+ * @returns {boolean} True if anything changed.
+ */
+function scrubLogEntry(log: AIOperationLogEntry): boolean {
+  let changed = false
+  for (const req of log.rawRequests ?? []) {
+    const endpoint = redactSecrets(req.endpoint)
+    if (endpoint !== req.endpoint) {
+      req.endpoint = endpoint
+      changed = true
+    }
+  }
+  for (const res of log.rawResponses ?? []) {
+    const error = redactSecrets(res.error)
+    if (error !== res.error) {
+      res.error = error
+      changed = true
+    }
+  }
+  return changed
+}
+
 /**
  * @callback ActivityCallback
  * @param {number} windowId
@@ -155,7 +199,7 @@ export class AILogger {
   ): void {
     this.entry.rawRequests.push({
       batchIndex,
-      endpoint,
+      endpoint: redactSecrets(endpoint),
       payloadSummary,
       systemMessage,
       userMessage,
@@ -182,7 +226,7 @@ export class AILogger {
       responseTimeMs,
       responseBody,
       parsedJson,
-      error,
+      error: redactSecrets(error),
       responseTimestamp: Date.now(),
     })
     this.flush()
@@ -279,6 +323,7 @@ export class AILogger {
 
     const now = Date.now()
     for (const log of logs) {
+      if (scrubLogEntry(log)) updated = true
       if (log.status === 'RUNNING') {
         const isStale = (now - log.timestamp > 240_000) // Older than 4 minutes
         const isNotActiveInWindow = activeWindowIds && log.windowId !== undefined && !activeWindowIds.has(log.windowId)

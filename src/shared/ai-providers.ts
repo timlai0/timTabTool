@@ -77,9 +77,9 @@ export async function fetchGoogleModels(apiKey: string, endpoint?: string): Prom
   }
   const baseUrl = endpoint?.trim() || DEFAULT_ENDPOINTS.gemini
   const cleanBase = baseUrl.replace(/\/$/, '')
-  const url = `${cleanBase}/v1beta/models?key=${encodeURIComponent(apiKey.trim())}`
+  const url = `${cleanBase}/v1beta/models`
 
-  const res = await fetch(url)
+  const res = await fetch(url, { headers: { 'x-goog-api-key': apiKey.trim() } })
   if (!res.ok) {
     let errText = ''
     try {

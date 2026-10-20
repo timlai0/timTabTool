@@ -123,6 +123,47 @@ async function triggerReconnect(): Promise<void> {
   }
 }
 
+// MCP auth token (stored separately from settings, so config copy/paste never includes it)
+const mcpToken = ref('')
+const mcpTokenVisible = ref(false)
+const mcpTokenCopied = ref(false)
+
+/**
+ * Loads the MCP auth token from the background script.
+ * @returns {Promise<void>}
+ */
+async function loadMCPToken(): Promise<void> {
+  try {
+    const res = await chrome.runtime.sendMessage({ action: 'GET_MCP_TOKEN' })
+    if (res?.token) mcpToken.value = res.token
+  } catch (err) {
+    // Ignore error
+  }
+}
+
+/**
+ * Copies the MCP auth token to the clipboard.
+ * @returns {Promise<void>}
+ */
+async function copyMCPToken(): Promise<void> {
+  if (!mcpToken.value) return
+  await navigator.clipboard.writeText(mcpToken.value)
+  mcpTokenCopied.value = true
+  setTimeout(() => {
+    mcpTokenCopied.value = false
+  }, 1500)
+}
+
+/**
+ * Replaces the MCP auth token; connected servers must re-authenticate with the new one.
+ * @returns {Promise<void>}
+ */
+async function regenerateMCPToken(): Promise<void> {
+  if (!confirm('Generate a new MCP token? Your MCP server will be disconnected until you update its token.')) return
+  const res = await chrome.runtime.sendMessage({ action: 'REGENERATE_MCP_TOKEN' })
+  if (res?.token) mcpToken.value = res.token
+}
+
 const copyText = ref('Copy Config')
 const pasteText = ref('Paste Config')
 const backupError = ref('')
@@ -726,6 +767,7 @@ onMounted(async () => {
   // Start polling MCP connection status
   updateMCPStatus()
   statusPollInterval = setInterval(updateMCPStatus, 1000)
+  loadMCPToken()
 
   // Load AI operation logs
   loadAILogs()
@@ -2492,6 +2534,65 @@ async function pasteConfig() {
                 Server listens on 127.0.0.1. Ensure your MCP client points to the same port.
               </p>
             </div>
+
+            <!-- Auth Token -->
+            <div class="px-3.5 py-2.5 setting-row">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider mb-1" style="color: var(--text-secondary);">
+                Auth Token
+              </label>
+              <div class="flex items-center gap-1.5">
+                <input
+                  :type="mcpTokenVisible ? 'text' : 'password'"
+                  :value="mcpToken"
+                  readonly
+                  class="flex-1 min-w-0 text-xs font-mono rounded-sm border-0 py-1.5 px-2"
+                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                />
+                <button
+                  @click="mcpTokenVisible = !mcpTokenVisible"
+                  class="px-2 py-1 text-[10px] font-medium rounded-sm border"
+                  style="background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border);"
+                >
+                  {{ mcpTokenVisible ? 'Hide' : 'Show' }}
+                </button>
+                <button
+                  @click="copyMCPToken"
+                  class="px-2 py-1 text-[10px] font-medium rounded-sm border"
+                  style="background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border);"
+                >
+                  {{ mcpTokenCopied ? 'Copied!' : 'Copy' }}
+                </button>
+                <button
+                  @click="regenerateMCPToken"
+                  class="px-2 py-1 text-[10px] font-medium rounded-sm border"
+                  style="background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border);"
+                >
+                  New
+                </button>
+              </div>
+              <p class="text-[10px] mt-1.5 leading-relaxed" style="color: var(--text-tertiary);">
+                Your MCP server must send <code>{"type":"auth","token":"&lt;token&gt;"}</code> as its first message. Commands from unauthenticated servers are ignored.
+              </p>
+            </div>
+
+            <!-- Script execution opt-in -->
+            <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
+              <div class="flex-1">
+                <span class="text-xs block" style="color: var(--text-primary);">Allow script execution</span>
+                <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--group-red);">
+                  Lets the MCP server run any JavaScript in any tab (execute_script). Only enable if you trust every tool connected to it.
+                </p>
+              </div>
+              <div class="relative mt-0.5">
+                <input
+                  type="checkbox"
+                  v-model="settings.mcpAllowScriptExecution"
+                  class="sr-only peer"
+                />
+                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
+                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
+              </div>
+            </label>
           </template>
         </div>
       </div>

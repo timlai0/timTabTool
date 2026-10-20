@@ -2278,9 +2278,11 @@ ${formattedWindows}`
     while (continuations <= maxContinuations) {
       const startTime = Date.now()
       const action = onProgress ? 'streamGenerateContent' : 'generateContent'
-      const sseQuery = onProgress ? '&alt=sse' : ''
+      const sseQuery = onProgress ? '?alt=sse' : ''
       const apiKey = (this.config.apiKey || '').trim()
-      const endpoint = `${baseUrl}/v1beta/models/${model}:${action}?key=${apiKey}${sseQuery}`
+      // Send the key as a header so it never ends up in URLs, logs or log exports
+      const endpoint = `${baseUrl}/v1beta/models/${model}:${action}${sseQuery}`
+      const geminiHeaders = { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
 
       if (this.logger) {
         this.logger.logRawRequest(batchIndex, endpoint, `Message len: ${userMessage.length}`, this.systemPrompt, userMessage)
@@ -2296,7 +2298,7 @@ ${formattedWindows}`
 
       let response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: geminiHeaders,
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: this.systemPrompt }] },
           contents,
@@ -2318,7 +2320,7 @@ ${formattedWindows}`
           delete generationConfig.thinkingConfig
           response = await fetch(endpoint, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: geminiHeaders,
             body: JSON.stringify({
               systemInstruction: { parts: [{ text: this.systemPrompt }] },
               contents,

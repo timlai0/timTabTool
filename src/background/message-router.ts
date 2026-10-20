@@ -53,7 +53,14 @@ import {
   restoreClosedBatch,
   removeClosedBatch,
 } from '../shared/closed-tabs-manager'
-import { getMCPStatus, reconnectMCP } from './mcp-bridge'
+import { getMCPStatus, reconnectMCP, getOrCreateMCPToken, regenerateMCPToken } from './mcp-bridge'
+import {
+  isActionAllowed,
+  isTrustedSender,
+  redactSettingsSecrets,
+  restoreRedactedSecrets,
+  REDACTED_SECRET,
+} from './sender-policy'
 import {
   broadcastAIStart,
   broadcastAIComplete,
@@ -323,16 +330,16 @@ async function handleClosedTabMessages(action: string, payload: unknown): Promis
 /**
  * Handles extension settings and MCP messages.
  */
-async function handleSettingsAndMCPMessages(action: string, payload: unknown): Promise<unknown> {
+async function handleSettingsAndMCPMessages(action: string, payload: unknown, sender?: chrome.runtime.MessageSender): Promise<unknown> {
   switch (action) {
     case 'GET_SETTINGS': {
       const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
       const saved = (data[STORAGE_KEYS.SETTINGS] ?? {}) as Partial<ExtensionSettings>
-      return { 
-        ...DEFAULT_SETTINGS, 
+      const merged: ExtensionSettings = {
+        ...DEFAULT_SETTINGS,
         ...saved,
-        ai: { 
-          ...DEFAULT_SETTINGS.ai, 
+        ai: {
+          ...DEFAULT_SETTINGS.ai,
           ...saved?.ai,
           providerSettings: {
             ...DEFAULT_SETTINGS.ai.providerSettings,
@@ -340,12 +347,47 @@ async function handleSettingsAndMCPMessages(action: string, payload: unknown): P
           },
         },
       }
+      // Content scripts never need real API keys
+      return isTrustedSender(sender) ? merged : redactSettingsSecrets(merged)
     }
     case 'SAVE_SETTINGS': {
-      const newSettings = payload as ExtensionSettings
+      const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
+      const stored = (data[STORAGE_KEYS.SETTINGS] ?? {}) as Partial<ExtensionSettings>
+      const newSettings = restoreRedactedSecrets(payload as ExtensionSettings, stored)
       await chrome.storage.local.set({ [STORAGE_KEYS.SETTINGS]: newSettings })
       invalidatePreviewCache()
       await chrome.action.setPopup({ popup: newSettings.useSearchPopup ? 'src/popup/search.html' : 'src/popup/index.html' })
+      return { ok: true }
+    }
+    case 'SET_AI_MODEL': {
+      // Narrow update the search overlay may use instead of a full SAVE_SETTINGS
+      const p = (payload ?? {}) as { model?: unknown; provider?: unknown; maxTokens?: unknown }
+      const providers = Object.keys(DEFAULT_SETTINGS.ai.providerSettings ?? {})
+      if (typeof p.model !== 'string' || !p.model.trim() || p.model.length > 200) {
+        return { error: 'Invalid model' }
+      }
+      if (typeof p.provider !== 'string' || !providers.includes(p.provider)) {
+        return { error: 'Invalid provider' }
+      }
+      const maxTokens = Number(p.maxTokens)
+      if (!Number.isInteger(maxTokens) || maxTokens <= 0 || maxTokens > 1_000_000) {
+        return { error: 'Invalid maxTokens' }
+      }
+      const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
+      const stored = (data[STORAGE_KEYS.SETTINGS] ?? {}) as Partial<ExtensionSettings>
+      const updated = {
+        ...DEFAULT_SETTINGS,
+        ...stored,
+        ai: {
+          ...DEFAULT_SETTINGS.ai,
+          ...stored.ai,
+          model: p.model,
+          provider: p.provider as ExtensionSettings['ai']['provider'],
+          maxTokens,
+        },
+      }
+      await chrome.storage.local.set({ [STORAGE_KEYS.SETTINGS]: updated })
+      invalidatePreviewCache()
       return { ok: true }
     }
     case 'GET_MCP_STATUS':
@@ -353,6 +395,10 @@ async function handleSettingsAndMCPMessages(action: string, payload: unknown): P
     case 'RECONNECT_MCP':
       reconnectMCP()
       return { ok: true }
+    case 'GET_MCP_TOKEN':
+      return { ok: true, token: await getOrCreateMCPToken() }
+    case 'REGENERATE_MCP_TOKEN':
+      return { ok: true, token: await regenerateMCPToken() }
     default:
       return null
   }
@@ -365,6 +411,11 @@ async function handleSettingsAndMCPMessages(action: string, payload: unknown): P
  * @returns {Promise<unknown>} Response payload.
  */
 export async function handleExtensionMessage(message: ExtensionMessage, sender?: chrome.runtime.MessageSender): Promise<unknown> {
+  if (!isActionAllowed(message?.action, sender)) {
+    console.warn(`[timTabTool] Blocked privileged action "${message?.action}" from untrusted sender ${sender?.url ?? 'unknown'}`)
+    return { error: 'Not allowed from this context' }
+  }
+
   if (sender?.tab?.id && sender?.tab?.windowId) {
     registerOperationTab(sender.tab.windowId, sender.tab.id)
   }
@@ -375,7 +426,7 @@ export async function handleExtensionMessage(message: ExtensionMessage, sender?:
   const closedTabsResult = await handleClosedTabMessages(message.action, message.payload)
   if (closedTabsResult !== null) return closedTabsResult
 
-  const settingsResult = await handleSettingsAndMCPMessages(message.action, message.payload)
+  const settingsResult = await handleSettingsAndMCPMessages(message.action, message.payload, sender)
   if (settingsResult !== null) return settingsResult
 
   switch (message.action) {
@@ -805,6 +856,10 @@ export async function handleExtensionMessage(message: ExtensionMessage, sender?:
     case 'OPEN_URL': {
       const url = (message.payload as { url: string })?.url
       if (url) {
+        // Web pages must not use the extension to open script/local-file URLs
+        if (!isTrustedSender(sender) && /^\s*(javascript|data|file|blob|vbscript):/i.test(url)) {
+          return { error: 'URL scheme not allowed' }
+        }
         await chrome.tabs.create({ url })
       }
       return { ok: true }
@@ -833,9 +888,14 @@ export async function handleExtensionMessage(message: ExtensionMessage, sender?:
 
       const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
       const saved = (data[STORAGE_KEYS.SETTINGS] ?? {}) as Partial<ExtensionSettings>
-      const aiSettings = { 
-        ...DEFAULT_SETTINGS.ai, 
+      const aiSettings = {
+        ...DEFAULT_SETTINGS.ai,
         ...saved?.ai,
+      }
+      // The overlay only checks whether a key exists; never hand the real one to a content script
+      if (!isTrustedSender(sender)) {
+        aiSettings.apiKey = aiSettings.apiKey ? REDACTED_SECRET : ''
+        delete aiSettings.providerSettings
       }
 
       const activeOps = getActiveOperations()

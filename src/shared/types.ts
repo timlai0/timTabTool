@@ -241,6 +241,8 @@ export interface ExtensionSettings {
   sortNewTabs?: boolean
   mcpEnabled?: boolean
   mcpPort?: number
+  /** Allows the MCP `execute_script` command (arbitrary JS in any tab). Off by default. */
+  mcpAllowScriptExecution?: boolean
   ecoMode?: boolean
   fastOverlayMode?: boolean
 }
@@ -318,6 +320,9 @@ type MessageAction =
   | 'BACKUP_GROUPS'
   | 'GET_MCP_STATUS'
   | 'RECONNECT_MCP'
+  | 'SET_AI_MODEL'
+  | 'GET_MCP_TOKEN'
+  | 'REGENERATE_MCP_TOKEN'
   | 'CLEANUP_GROUPS'
   | 'GET_AI_LOGS'
   | 'CLEAR_AI_LOGS'
