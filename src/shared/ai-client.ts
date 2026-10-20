@@ -1,7 +1,7 @@
 import type { AIConfig, AIGroupResult, ChromeTabGroupColor, GroupCategory, AIProgressCallback, AIProgressUpdate, OperationRetryInfo, OpenRouterProviderItem, OpenRouterKeyInfo, ReviewAndRegroupTabInput, ReviewAndRegroupDecision, DuplicateGroupClusterItem, DistinctGroupRenameResult, WindowNameResult } from './types'
 import type { AILogger } from './ai-logger'
 import { DEFAULT_GROUPING_PROMPT, DEFAULT_WINDOW_NAMING_PROMPT, MODEL_PRICING, PROVIDER_DEFAULTS, DEFAULT_MODELS, DEFAULT_ENDPOINTS } from './constants'
-import { getAutoBatchSize, formatTimeAgo, extractDomain, extractJsonSubstring } from './utils'
+import { getAutoBatchSize, formatTimeAgo, extractDomain, extractJsonSubstring, assertSecureEndpoint } from './utils'
 import {
   getGoogleModelPricing,
   fetchGoogleModels,
@@ -1984,7 +1984,7 @@ ${formattedWindows}`
    */
   private async chatClaude(userMessage: string, jsonMode?: boolean, batchIndex = 1): Promise<string> {
     // loop through items to handle max token continuations
-    const baseUrl = this.config.endpoint || DEFAULT_ENDPOINTS.claude
+    const baseUrl = assertSecureEndpoint(this.config.endpoint || DEFAULT_ENDPOINTS.claude)
     const endpoint = `${baseUrl}/v1/messages`
     const maxContinuations = 3
     let continuations = 0
@@ -2249,7 +2249,7 @@ ${formattedWindows}`
     batchIndex = 1,
     onProgress?: (update: AIProgressUpdate) => void
   ): Promise<string> {
-    const baseUrl = this.config.endpoint || DEFAULT_ENDPOINTS.gemini
+    const baseUrl = assertSecureEndpoint(this.config.endpoint || DEFAULT_ENDPOINTS.gemini)
     const model = this.config.model || this.defaultModel
     const maxContinuations = 3
     let continuations = 0
@@ -2400,7 +2400,7 @@ ${formattedWindows}`
   }
 
   private getBaseUrl(): string {
-    return this.config.endpoint || DEFAULT_ENDPOINTS[this.config.provider] || DEFAULT_ENDPOINTS.openai
+    return assertSecureEndpoint(this.config.endpoint || DEFAULT_ENDPOINTS[this.config.provider] || DEFAULT_ENDPOINTS.openai)
   }
 
   private getHeaders(): Record<string, string> {

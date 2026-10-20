@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
+const shadowAddEventListener = vi.fn()
+
 describe('Search Overlay', () => {
   beforeEach(() => {
+    shadowAddEventListener.mockClear()
     ;(globalThis as any).window = {
       addEventListener: vi.fn(),
       matchMedia: vi.fn().mockReturnValue({ matches: false }),
@@ -21,6 +24,7 @@ describe('Search Overlay', () => {
           addEventListener: vi.fn(),
           attachShadow: vi.fn().mockReturnValue({
             appendChild: vi.fn(),
+            addEventListener: shadowAddEventListener,
             querySelector: vi.fn(),
             querySelectorAll: vi.fn(() => []),
             elementFromPoint: vi.fn(),
@@ -137,6 +141,20 @@ describe('Search Overlay', () => {
       toggle()
       toggle()
     }).not.toThrow()
+  })
+
+  it('stops keyboard and text events from bubbling out of the overlay to the page', async () => {
+    await import('../src/content/search-overlay')
+    ;(globalThis as any).window.__ATM_TOGGLE_SEARCH__()
+
+    const types = shadowAddEventListener.mock.calls.map(call => call[0])
+    for (const type of ['keydown', 'keyup', 'keypress', 'input', 'beforeinput', 'paste']) {
+      expect(types).toContain(type)
+    }
+    const handler = shadowAddEventListener.mock.calls.find(call => call[0] === 'keyup')![1]
+    const event = { stopPropagation: vi.fn() }
+    handler(event)
+    expect(event.stopPropagation).toHaveBeenCalled()
   })
 })
 

@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue"
 import { AIClient } from "../../shared/ai-client"
 import { STORAGE_KEYS, DEFAULT_SETTINGS } from "../../shared/constants"
-import { formatMarkdown as baseFormatMarkdown } from "../../shared/utils"
+import { formatMarkdown as baseFormatMarkdown, isSafeLinkUrl, escapeAttribute } from "../../shared/utils"
 import type { WindowGroupsInfo, ExtensionSettings, ReasoningEffort } from "../../shared/types"
 
 interface ChatMessage {
@@ -341,10 +341,14 @@ Answer the user's question concisely based on the provided list of tabs. You MUS
 function formatMarkdown(text: string) {
   if (!text) return ""
   let html = baseFormatMarkdown(text)
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, title, url) => {
-    const isClicked = clickedUrls.value.includes(url)
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, title, url) => {
+    // AI output is untrusted: only http(s) links become anchors, and quotes can't break out of the attribute
+    const decodedUrl = String(url).trim().replace(/&amp;/g, "&")
+    if (!isSafeLinkUrl(decodedUrl)) return match
+    const safeUrl = escapeAttribute(decodedUrl)
+    const isClicked = clickedUrls.value.includes(decodedUrl)
     const clickedClasses = isClicked ? "line-through opacity-40 text-t-secondary" : "text-accent hover:underline"
-    return `<a href="${url}" class="${clickedClasses} cursor-pointer transition-all duration-150" data-url="${url}">${title}</a>`
+    return `<a href="${safeUrl}" class="${clickedClasses} cursor-pointer transition-all duration-150" data-url="${safeUrl}">${title}</a>`
   })
   return html
 }
@@ -354,7 +358,7 @@ function handleLinkClick(e: MouseEvent) {
   if (target) {
     e.preventDefault()
     const url = target.getAttribute("href")
-    if (url) {
+    if (url && isSafeLinkUrl(url)) {
       if (!clickedUrls.value.includes(url)) {
         clickedUrls.value.push(url)
         chrome.storage.local.set({ chatClickedUrls: clickedUrls.value })

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, toRaw, nextTick } from 'vue'
 import { getMessage } from '../../shared/i18n'
+import { buildExportableConfig, sanitizeImportedConfig } from '../../shared/config-transfer'
 import { DEFAULT_SETTINGS, STORAGE_KEYS, DEFAULT_GROUPING_PROMPT, DEFAULT_SPLIT_PROMPT, DEFAULT_CLASSIFY_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_WINDOW_NAMING_PROMPT, PREDEFINED_MODELS, DEFAULT_ENDPOINTS, DEFAULT_MODELS, MODEL_PRICING, PROVIDER_DEFAULTS, OPENROUTER_PROVIDERS } from '../../shared/constants'
 import { getAutoBatchSize, parseMaxTokensToNumber, formatTimeAgo, formatMarkdown } from '../../shared/utils'
 import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse, AIProvider, OpenRouterProviderItem, ClosedTabEntry } from '../../shared/types'
@@ -1202,12 +1203,7 @@ async function testConnection() {
 async function copyConfig() {
   backupError.value = ''
   try {
-    const rawConfig = JSON.parse(JSON.stringify(toRaw(settings.value)))
-    if (rawConfig.ai) {
-      delete rawConfig.ai.customModels
-    }
-    delete rawConfig.customModels
-    const jsonStr = JSON.stringify(rawConfig, null, 2)
+    const jsonStr = JSON.stringify(buildExportableConfig(toRaw(settings.value)), null, 2)
     await navigator.clipboard.writeText(jsonStr)
     copyText.value = 'Config Copied!'
     setTimeout(() => {
@@ -1225,18 +1221,10 @@ async function pasteConfig() {
     if (!text) {
       throw new Error('Clipboard is empty')
     }
-    const parsed = JSON.parse(text)
-    if (typeof parsed !== 'object' || parsed === null) {
-      throw new Error('Invalid configuration JSON')
-    }
-    
-    settings.value = {
-      ...DEFAULT_SETTINGS,
-      ...parsed,
-      ai: {
-        ...DEFAULT_SETTINGS.ai,
-        ...(parsed.ai || {})
-      }
+    const { settings: imported, skipped } = sanitizeImportedConfig(JSON.parse(text), toRaw(settings.value))
+    settings.value = imported
+    if (skipped.length > 0) {
+      backupError.value = 'Ignored invalid or protected fields: ' + skipped.join(', ')
     }
     
     pasteText.value = 'Config Pasted!'

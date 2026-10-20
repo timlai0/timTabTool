@@ -42,6 +42,74 @@ export function parseMaxTokensToNumber(maxTokensStr: string | number | undefined
 }
 
 /**
+ * Whether a hostname is loopback or on a private network, where plain http is acceptable
+ * (e.g. a local Ollama or LM Studio server).
+ * @param {string} hostname
+ * @returns {boolean}
+ */
+export function isLocalNetworkHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  return host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    host === '::1' ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
+    /^f[cd][0-9a-f]{2}:/.test(host)
+}
+
+/**
+ * Throws unless an AI endpoint is https, or http on a local/private host.
+ * Keeps API keys and tab data from crossing the internet unencrypted.
+ * @param {string} endpoint
+ * @returns {string} The endpoint, unchanged.
+ */
+export function assertSecureEndpoint(endpoint: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(endpoint)
+  } catch {
+    throw new Error(`Invalid AI endpoint URL: ${endpoint}`)
+  }
+  if (parsed.protocol === 'https:') return endpoint
+  if (parsed.protocol === 'http:' && isLocalNetworkHost(parsed.hostname)) return endpoint
+  if (parsed.protocol === 'http:') {
+    throw new Error(`Refusing to use unencrypted http:// endpoint for remote host ${parsed.hostname}. Use https:// instead.`)
+  }
+  throw new Error(`Unsupported AI endpoint protocol: ${parsed.protocol}`)
+}
+
+/**
+ * Whether a URL is safe to render as a clickable link (http/https only).
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isSafeLinkUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url)
+    return protocol === 'http:' || protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Escapes a string for use inside a double- or single-quoted HTML attribute.
+ * @param {string} value
+ * @returns {string}
+ */
+export function escapeAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+/**
  * Gets the optimal favicon URL, preferring Google favicon service.
  * @param {string} urlStr
  * @param {string} [fallbackFavIconUrl]
@@ -53,8 +121,9 @@ export function getOptimalFaviconUrl(urlStr: string, fallbackFavIconUrl?: string
     const urlObj = new URL(urlStr)
     const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('firefox')
     
-    if (!isFirefox && typeof chrome !== 'undefined' && chrome.runtime?.id) {
-      return `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(urlObj.href)}&size=16`
+    if (!isFirefox && typeof chrome !== 'undefined' && chrome.runtime?.id && chrome.runtime.getURL) {
+      // getURL returns the per-session dynamic URL in content scripts (manifest sets use_dynamic_url)
+      return `${chrome.runtime.getURL('/_favicon/')}?pageUrl=${encodeURIComponent(urlObj.href)}&size=16`
     }
     
     if (fallbackFavIconUrl) {

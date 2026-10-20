@@ -2,6 +2,7 @@
 
 import { DEFAULT_ENDPOINTS, MODEL_PRICING, PROVIDER_DEFAULTS } from './constants'
 import type { OpenRouterProviderItem, OpenRouterKeyInfo } from './types'
+import { assertSecureEndpoint } from './utils'
 
 export interface GoogleModelItem {
   id: string
@@ -76,7 +77,7 @@ export async function fetchGoogleModels(apiKey: string, endpoint?: string): Prom
     throw new Error('Google API Key is required to fetch models.')
   }
   const baseUrl = endpoint?.trim() || DEFAULT_ENDPOINTS.gemini
-  const cleanBase = baseUrl.replace(/\/$/, '')
+  const cleanBase = assertSecureEndpoint(baseUrl).replace(/\/$/, '')
   const url = `${cleanBase}/v1beta/models`
 
   const res = await fetch(url, { headers: { 'x-goog-api-key': apiKey.trim() } })
@@ -186,7 +187,7 @@ export function isFreeModel(modelId?: string, modelObj?: { costFactor?: string; 
  */
 export async function fetchOpenRouterModels(apiKey?: string, endpoint?: string, onlyFree = false): Promise<GoogleModelItem[]> {
   const baseUrl = endpoint?.trim() || DEFAULT_ENDPOINTS.openrouter
-  const cleanBase = baseUrl.replace(/\/$/, '')
+  const cleanBase = assertSecureEndpoint(baseUrl).replace(/\/$/, '')
   const url = `${cleanBase}/models`
 
   const headers: Record<string, string> = {
@@ -285,7 +286,7 @@ export async function fetchOpenRouterModels(apiKey?: string, endpoint?: string, 
  */
 export async function fetchOpenRouterProviders(apiKey?: string, endpoint?: string): Promise<OpenRouterProviderItem[]> {
   const baseUrl = endpoint?.trim() || DEFAULT_ENDPOINTS.openrouter
-  const cleanBase = baseUrl.replace(/\/$/, '')
+  const cleanBase = assertSecureEndpoint(baseUrl).replace(/\/$/, '')
   const url = `${cleanBase}/providers`
 
   const headers: Record<string, string> = {
@@ -326,7 +327,7 @@ export async function fetchOpenRouterProviders(apiKey?: string, endpoint?: strin
  */
 export async function fetchOpenRouterKeyInfo(apiKey?: string, endpoint?: string): Promise<OpenRouterKeyInfo> {
   const baseUrl = endpoint?.trim() || DEFAULT_ENDPOINTS.openrouter
-  const cleanBase = baseUrl.replace(/\/$/, '')
+  const cleanBase = assertSecureEndpoint(baseUrl).replace(/\/$/, '')
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   }

@@ -8,6 +8,9 @@ import { AIClient } from '../shared/ai-client'
 import { MODEL_PRICING, PROVIDER_DEFAULTS, MODEL_NAMES, DEFAULT_MODELS } from '../shared/constants'
 import { getOptimalFaviconUrl, formatMarkdown } from '../shared/utils'
 
+/** Events that would leak overlay input to the host page if allowed to bubble out of the shadow root. */
+const LEAKY_EVENT_TYPES = ['keydown', 'keyup', 'keypress', 'input', 'beforeinput', 'compositionstart', 'compositionupdate', 'compositionend', 'paste', 'copy', 'cut'] as const
+
 /**
  * Represents a command item in the search overlay.
  */
@@ -997,6 +1000,11 @@ if (!(window as unknown as Record<string, boolean>).__ATM_SEARCH_LOADED__) {
       hostEl.style.height = '100%'
     }
     shadow = hostEl.attachShadow({ mode: 'closed' })
+    // Keyboard and text events are composed and would bubble out to the page's own listeners,
+    // letting the site read what the user types into the overlay. Stop them at the shadow root.
+    for (const type of LEAKY_EVENT_TYPES) {
+      shadow.addEventListener(type, (e) => e.stopPropagation())
+    }
 
     const style = document.createElement('style')
     style.textContent = cssText
