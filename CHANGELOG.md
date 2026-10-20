@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MCP Bridge Authentication (breaking for MCP servers)**: The bridge now requires the server to send `{"type":"auth","token":"<token>"}` as its first message; the token is shown in Settings → MCP and stored separately from settings. Unauthenticated or wrong-token connections are closed with code `4401`. `execute_script` is disabled unless "Allow script execution" is turned on, `create_tab` only accepts http(s) URLs, and tab IDs are validated.
 - **Gemini API Key Leak into Logs**: Gemini requests and model listing now send the key via the `x-goog-api-key` header instead of the `?key=` query string. AI logs redact keys and bearer tokens, and keys already stored in old logs are scrubbed on load.
 - **Message Sender Checks**: Settings writes, MCP token/status, AI logs, closed-tab management and tab export are now restricted to extension pages. Content scripts receive settings with API keys redacted, change the model through the narrow `SET_AI_MODEL` action, and cannot open `javascript:`/`data:`/`file:`/`blob:` URLs via `OPEN_URL`.
+- **Dependencies**: Applied non-breaking `npm audit fix` updates (including vite and undici).
 
 ### Fixed
 - **Gemini API Deprecated Generation Parameters**: Removed deprecated custom sampling parameters (`temperature`, `top_p`, `top_k`) from Gemini requests and migrated reasoning effort configuration from token-based `thinking_budget` to `thinking_level` (`minimal`, `low`, `medium`, `high`), preventing HTTP 400 `INVALID_ARGUMENT` errors.
