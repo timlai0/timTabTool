@@ -7,7 +7,7 @@ import { getAutoBatchSize, parseMaxTokensToNumber, formatTimeAgo, formatMarkdown
 import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse, AIProvider, OpenRouterProviderItem, ClosedTabEntry } from '../../shared/types'
 import { getClosedTabs, restoreClosedTab, restoreAllClosedTabs, removeClosedTab, clearClosedTabs, restoreClosedBatch, removeClosedBatch } from '../../shared/closed-tabs-manager'
 import type { TabExportScope, TabExportFormat } from '../../shared/tab-exporter'
-import { AIClient, SYSTEM_PROMPT, fetchGoogleModels, fetchOpenRouterModels, fetchOpenRouterProviders, fetchOpenRouterKeyInfo, isFreeModel } from '../../shared/ai-client'
+import { AIClient, SYSTEM_PROMPT, fetchGoogleModels, isChatCompatibleGeminiModel, fetchOpenRouterModels, fetchOpenRouterProviders, fetchOpenRouterKeyInfo, isFreeModel } from '../../shared/ai-client'
 import { APP_VERSION, BUILD_NUMBER, BUILD_HASH, BUILD_TIME } from '../../shared/version'
 
 const props = defineProps<{
@@ -481,7 +481,7 @@ const openRouterProviderSelectValue = computed({
 const allProviderModels = computed(() => {
   const provider = settings.value.ai.provider
   if (provider === 'gemini' && settings.value.ai.customModels?.gemini?.length) {
-    return settings.value.ai.customModels.gemini
+    return settings.value.ai.customModels.gemini.filter(m => isChatCompatibleGeminiModel(m.id))
   } else if (provider === 'openrouter' && settings.value.ai.customModels?.openrouter?.length) {
     return settings.value.ai.customModels.openrouter
   }
@@ -714,7 +714,28 @@ watch(() => settings.value.ai.model, (newModel) => {
   }
 })
 
+// Matches the two-column breakpoint in the stylesheet below: when the page is wide enough
+// there is room to show the collapsible AI sections open. Only expands on entering the wide
+// layout, so a manual collapse isn't overridden until the window is resized across it.
+const wideLayoutQuery = typeof window !== 'undefined' && window.matchMedia
+  ? window.matchMedia('(min-width: 880px)')
+  : null
+
+function expandAiSectionsIfWide(wide: boolean): void {
+  if (!wide) return
+  connectionSettingsExpanded.value = true
+  advancedPromptsExpanded.value = true
+}
+
+function onWideLayoutChange(e: MediaQueryListEvent): void {
+  expandAiSectionsIfWide(e.matches)
+}
+
 onMounted(async () => {
+  if (wideLayoutQuery) {
+    expandAiSectionsIfWide(wideLayoutQuery.matches)
+    wideLayoutQuery.addEventListener('change', onWideLayoutChange)
+  }
   const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
   const stored = data[STORAGE_KEYS.SETTINGS] as Partial<ExtensionSettings> | undefined
   if (stored) {
@@ -780,6 +801,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  wideLayoutQuery?.removeEventListener('change', onWideLayoutChange)
   if (statusPollInterval) {
     clearInterval(statusPollInterval)
   }
@@ -1624,30 +1646,30 @@ async function handleDownloadExportTabs(): Promise<void> {
                   <div v-if="settings.ai.provider === 'gemini'" class="mt-1.5 flex flex-wrap gap-1">
                     <button
                       type="button"
-                      @click="applyModelPreset('gemini-2.5-flash')"
+                      @click="applyModelPreset('gemini-flash-latest')"
                       class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity"
-                      :style="settings.ai.model === 'gemini-2.5-flash' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
-                      title="Default thinking model with low latency"
+                      :style="settings.ai.model === 'gemini-flash-latest' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
+                      title="Always the newest Gemini Flash (gemini-flash-latest)"
                     >
-                      Gemini 2.5 Flash (Thinking)
+                      Gemini Flash (Latest)
                     </button>
                     <button
                       type="button"
-                      @click="applyModelPreset('gemini-2.5-pro')"
+                      @click="applyModelPreset('gemini-pro-latest')"
                       class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity"
-                      :style="settings.ai.model === 'gemini-2.5-pro' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
-                      title="High capability deep reasoning model"
+                      :style="settings.ai.model === 'gemini-pro-latest' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
+                      title="Always the newest Gemini Pro (gemini-pro-latest)"
                     >
-                      Gemini 2.5 Pro (Deep CoT)
+                      Gemini Pro (Latest)
                     </button>
                     <button
                       type="button"
-                      @click="applyModelPreset('gemini-3.5-flash')"
+                      @click="applyModelPreset('gemini-flash-lite-latest')"
                       class="text-[8.5px] px-1.5 py-0.5 rounded-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity"
-                      :style="settings.ai.model === 'gemini-3.5-flash' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
-                      title="Next-gen Gemini 3.5 Flash"
+                      :style="settings.ai.model === 'gemini-flash-lite-latest' ? 'background: var(--accent-soft); border-color: var(--accent); color: var(--accent);' : 'background: var(--bg-secondary); border-color: var(--border); color: var(--text-secondary);'"
+                      title="Always the newest Gemini Flash Lite (gemini-flash-lite-latest)"
                     >
-                      Gemini 3.5 Flash
+                      Gemini Flash Lite (Latest)
                     </button>
                   </div>
                 </div>
@@ -3422,7 +3444,15 @@ async function handleDownloadExportTabs(): Promise<void> {
           </svg>
           Backup & Import
         </h2>
-        <div class="rounded-sm overflow-hidden p-3 space-y-2" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
+        <div class="rounded-sm overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
+          <!-- Settings Transfer -->
+          <div class="p-3 space-y-2">
+            <div>
+              <div class="text-xs font-medium" style="color: var(--text-primary);">Settings Transfer</div>
+              <p class="text-[10px] leading-relaxed mt-0.5" style="color: var(--text-tertiary);">
+                Copy your settings to the clipboard or paste a config from another browser. API keys are never copied.
+              </p>
+            </div>
           <div class="flex gap-2">
             <button
               @click="copyConfig"
@@ -3449,35 +3479,33 @@ async function handleDownloadExportTabs(): Promise<void> {
           <p v-if="backupError" class="text-[10px] text-center" style="color: var(--group-red);">
             {{ backupError }}
           </p>
-
-          <!-- Divider -->
-          <div style="height: 0.5px; background: var(--border);" />
+          </div>
 
           <!-- Export Known Unclosed Tabs -->
-          <div class="space-y-2 pt-0.5">
-            <div class="flex items-center justify-between gap-2">
-              <div class="text-xs font-medium flex items-center gap-1.5" style="color: var(--text-primary);">
-                <span>{{ getMessage('exportKnownTabsTitle') || 'Export Known Unclosed Tabs' }}</span>
-                <span class="text-[9.5px] px-1.5 py-0.2 rounded-xs tabular-nums" style="background: var(--bg-secondary); color: var(--accent); border: 0.5px solid var(--border);">
+          <div class="p-3 space-y-2.5" style="background: var(--bg-secondary); border-top: 0.5px solid var(--border);">
+            <div>
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-xs font-medium" style="color: var(--text-primary);">
+                  {{ getMessage('exportKnownTabsTitle') || 'Export Known Unclosed Tabs' }}
+                </div>
+                <span class="text-[9.5px] px-1.5 py-0.5 rounded-xs tabular-nums shrink-0" style="background: var(--bg-primary); color: var(--accent); border: 0.5px solid var(--border);">
                   {{ exportCounts.total }} {{ getMessage('tabs') || 'tabs' }}
+                  <span style="color: var(--text-tertiary);">&middot; {{ exportCounts.open }} open &middot; {{ exportCounts.unrestored }} unrestored</span>
                 </span>
               </div>
-              <div class="text-[9px] tabular-nums" style="color: var(--text-tertiary);">
-                {{ exportCounts.open }} open &bull; {{ exportCounts.unrestored }} unrestored
-              </div>
+              <p class="text-[10px] leading-relaxed mt-0.5" style="color: var(--text-tertiary);">
+                {{ getMessage('exportKnownTabsDesc') || 'Export open and previously known tabs that were not explicitly closed (e.g., to recover missing tabs after browser crash or sync failure).' }}
+              </p>
             </div>
-            <p class="text-[10px] leading-relaxed" style="color: var(--text-tertiary);">
-              {{ getMessage('exportKnownTabsDesc') || 'Export open and previously known tabs that were not explicitly closed (e.g., to recover missing tabs after browser crash or sync failure).' }}
-            </p>
 
             <!-- Scope & Format Selectors -->
             <div class="grid grid-cols-2 gap-2">
               <div>
-                <label class="block text-[9.5px] font-medium mb-1" style="color: var(--text-secondary);">Scope</label>
+                <label class="block text-[9.5px] font-medium uppercase tracking-wide mb-1" style="color: var(--text-secondary);">Scope</label>
                 <select
                   v-model="exportScope"
-                  class="w-full text-[11px] rounded-sm py-1 px-2 border-0 cursor-pointer"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                  class="w-full text-[11px] rounded-sm py-1 px-2 cursor-pointer"
+                  style="background: var(--bg-primary); color: var(--text-primary); border: 0.5px solid var(--border);"
                 >
                   <option value="all_unclosed">{{ getMessage('exportScopeAllUnclosed') || 'Open + Unrestored' }}</option>
                   <option value="open_only">{{ getMessage('exportScopeOpenOnly') || 'Open Tabs Only' }}</option>
@@ -3485,11 +3513,11 @@ async function handleDownloadExportTabs(): Promise<void> {
                 </select>
               </div>
               <div>
-                <label class="block text-[9.5px] font-medium mb-1" style="color: var(--text-secondary);">Format</label>
+                <label class="block text-[9.5px] font-medium uppercase tracking-wide mb-1" style="color: var(--text-secondary);">Format</label>
                 <select
                   v-model="exportFormat"
-                  class="w-full text-[11px] rounded-sm py-1 px-2 border-0 cursor-pointer"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
+                  class="w-full text-[11px] rounded-sm py-1 px-2 cursor-pointer"
+                  style="background: var(--bg-primary); color: var(--text-primary); border: 0.5px solid var(--border);"
                 >
                   <option value="markdown">Markdown (.md)</option>
                   <option value="json">JSON (.json)</option>
@@ -3504,7 +3532,7 @@ async function handleDownloadExportTabs(): Promise<void> {
               <button
                 @click="handleCopyExportTabs"
                 class="flex-1 py-1.5 text-xs font-medium rounded-sm transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer focus:outline-none"
-                style="background: var(--bg-secondary); color: var(--text-primary); border: 0.5px solid var(--border);"
+                style="background: var(--bg-primary); color: var(--text-primary); border: 0.5px solid var(--border);"
               >
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                   <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
@@ -3530,7 +3558,7 @@ async function handleDownloadExportTabs(): Promise<void> {
         </div>
 
         <!-- About & Build Info -->
-        <div class="p-3 rounded-sm" style="background: var(--bg-primary); border: 0.5px solid var(--border);">
+        <div class="p-3 rounded-sm mt-2" style="background: var(--bg-primary); border: 0.5px solid var(--border);">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
               <img src="/icons/icon-32.png" alt="" class="w-4 h-4 shrink-0" />
