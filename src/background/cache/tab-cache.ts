@@ -12,7 +12,7 @@ import {
 } from '../tabs/tab-common'
 import {
   activeOperationsMap,
-  activeAIOperationWindows,
+  clearActiveOperation,
   activeAbortControllers,
   lastAutoExtendMap,
   clearOperationTimeout,
@@ -297,11 +297,10 @@ export function cacheUpdateTab(tab: chrome.tabs.Tab): void {
 }
 
 export function clearWindowCache(windowId: number): void {
-  activeAIOperationWindows.delete(windowId)
   previewCacheMap.delete(windowId)
   cacheIsAIGroupedMap.delete(windowId)
   titlesHiddenMap.delete(windowId)
-  activeOperationsMap.delete(windowId)
+  clearActiveOperation(windowId)
   lastAutoExtendMap.delete(windowId)
   clearOperationTimeout(windowId)
   const bt = badgeTimeoutsByWindow.get(windowId)

@@ -32,6 +32,8 @@ import {
   closeRightTabs,
   getActiveOperations,
   setActiveOperation,
+  clearActiveOperation,
+  activeAbortControllers,
   clearOperationError,
   extendOperationTimeout,
   cancelActiveOperation,
@@ -259,6 +261,14 @@ async function runAIOperation<T>(
     const errorMsg = err?.message || String(err)
     await broadcastAIFailed(windowId, actionName, errorMsg)
     return { error: errorMsg }
+  } finally {
+    // Safety net: an operation that threw or returned early must not leave a stale entry
+    // behind. Skip if a newer operation has since taken over this window.
+    const controller = activeAbortControllers.get(windowId)
+    const status = getActiveOperations()[windowId]
+    if (status?.type && !(controller && !controller.signal.aborted)) {
+      clearActiveOperation(windowId)
+    }
   }
 }
 

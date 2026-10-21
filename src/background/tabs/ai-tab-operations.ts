@@ -22,7 +22,6 @@ import {
 } from '../cache/tab-cache'
 import {
   activeAbortControllers,
-  activeOperationsMap,
   activeAIOperationWindows,
   operationStartTimestamps,
   applyCompletedOnCancelFlags,
@@ -31,6 +30,8 @@ import {
   registerTimeoutLogger,
   unregisterOperationTab,
   updateOperationProgress,
+  setActiveOperation,
+  clearActiveOperation,
 } from '../operations/operation-registry'
 import {
   setAIBadge,
@@ -74,7 +75,7 @@ export function cancelActiveOperation(windowId: number, applyCompleted = false):
     activeAbortControllers.delete(windowId)
   }
   if (!applyCompleted) {
-    activeOperationsMap.delete(windowId)
+    clearActiveOperation(windowId)
   }
   updateNewTabsBadge(windowId).catch(console.error)
 }
@@ -375,7 +376,7 @@ function initRegroupOperation(windowId: number): AbortController {
   const controller = new AbortController()
   setupOperationTimeout(windowId, controller)
   activeAbortControllers.set(windowId, controller)
-  activeOperationsMap.set(windowId, { type: 'regroup', error: null })
+  setActiveOperation(windowId, 'regroup')
   activeAIOperationWindows.add(windowId)
   return controller
 }
@@ -395,7 +396,7 @@ async function resolveAISettings(aiOverrides?: Partial<ExtensionSettings['ai']>)
 }
 
 async function finishEmptyRegroup(windowId: number, logger?: AILogger): Promise<RegroupLast20Result> {
-  activeOperationsMap.delete(windowId)
+  clearActiveOperation(windowId)
   operationStartTimestamps.delete(windowId)
   const summary = 'No unpinned tabs found to check.'
   if (logger) {
@@ -537,9 +538,7 @@ function cleanupRegroupOperation(windowId: number, controller: AbortController):
   if (activeAbortControllers.get(windowId) === controller) {
     activeAbortControllers.delete(windowId)
   }
-  if (activeOperationsMap.get(windowId)?.type === 'regroup') {
-    activeOperationsMap.delete(windowId)
-  }
+  clearActiveOperation(windowId, ['regroup'])
   operationStartTimestamps.delete(windowId)
 }
 
@@ -625,7 +624,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
   const controller = new AbortController()
   setupOperationTimeout(windowId, controller)
   activeAbortControllers.set(windowId, controller)
-  activeOperationsMap.set(windowId, { type: 'group', error: null })
+  setActiveOperation(windowId, 'group')
 
   try {
     const tabs = await chrome.tabs.query({ windowId, windowType: 'normal' })
@@ -717,7 +716,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
         }
 
         if (freeGroups.length === 0) {
-          activeOperationsMap.delete(windowId)
+          clearActiveOperation(windowId)
           operationStartTimestamps.delete(windowId)
           return
         }
@@ -802,7 +801,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
           processedTabs: unpinnedTabs.length,
           totalTabs: unpinnedTabs.length,
         })
-        activeOperationsMap.delete(windowId)
+        clearActiveOperation(windowId)
         operationStartTimestamps.delete(windowId)
 
         const finalGroups = isTabGroupsSupported() ? await chrome.tabGroups.query({ windowId }) : []
@@ -861,11 +860,11 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
           cacheIsAIGroupedMap.set(windowId, false)
           debouncedUpdateNewTabsBadge(windowId)
           const finalErr = new Error(`AI Grouping failed: ${aiError.message}. Fell back to sorting tabs.`)
-          activeOperationsMap.set(windowId, { type: null, error: finalErr.message })
+          setActiveOperation(windowId, null, finalErr.message)
           throw finalErr
         }
         const finalErr = new Error(`AI Grouping failed: ${aiError.message}`)
-        activeOperationsMap.set(windowId, { type: null, error: finalErr.message })
+        setActiveOperation(windowId, null, finalErr.message)
         throw finalErr
       }
     }
@@ -909,7 +908,7 @@ export async function groupAllTabs(windowId: number, aiOverrides?: Partial<Exten
     invalidatePreviewCache(windowId)
     await getGroupsPreview(windowId)
     debouncedUpdateNewTabsBadge(windowId)
-    activeOperationsMap.delete(windowId)
+    clearActiveOperation(windowId)
   } finally {
     activeAIOperationWindows.delete(windowId)
     clearOperationTimeout(windowId)
@@ -932,7 +931,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
   const controller = new AbortController()
   setupOperationTimeout(windowId, controller)
   activeAbortControllers.set(windowId, controller)
-  activeOperationsMap.set(windowId, { type: 'classify', error: null })
+  setActiveOperation(windowId, 'classify')
 
   try {
     let settings = await getSettings()
@@ -1039,7 +1038,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     }
 
     if (!classifications || classifications.length === 0) {
-      activeOperationsMap.delete(windowId)
+      clearActiveOperation(windowId)
       operationStartTimestamps.delete(windowId)
       return
     }
@@ -1147,7 +1146,7 @@ export async function classifyNewTabs(windowId: number, aiOverrides?: Partial<Ex
     invalidatePreviewCache(windowId)
     await getGroupsPreview(windowId)
     debouncedUpdateNewTabsBadge(windowId)
-    activeOperationsMap.delete(windowId)
+    clearActiveOperation(windowId)
 
     const finalGroups = isTabGroupsSupported() ? await chrome.tabGroups.query({ windowId }) : []
     const groupsAfter = finalGroups.length
@@ -1219,7 +1218,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
   const controller = new AbortController()
   setupOperationTimeout(windowId, controller)
   activeAbortControllers.set(windowId, controller)
-  activeOperationsMap.set(windowId, { type: 'group', error: null })
+  setActiveOperation(windowId, 'group')
 
   try {
     const group = await chrome.tabGroups.get(groupId)
@@ -1334,7 +1333,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
 
     invalidatePreviewCache(windowId)
     await getGroupsPreview(windowId)
-    activeOperationsMap.delete(windowId)
+    clearActiveOperation(windowId)
 
     const finalWinGroups = await chrome.tabGroups.query({ windowId })
     const createdNames = freeGroups.map((g) => g.name)
@@ -1370,9 +1369,7 @@ export async function splitGroup(groupId: number, aiOverrides?: Partial<Extensio
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
-    if (activeOperationsMap.get(windowId)?.type === 'group') {
-      activeOperationsMap.delete(windowId)
-    }
+    clearActiveOperation(windowId, ['group'])
     await updateNewTabsBadge(windowId).catch(console.error)
   }
 }
@@ -1393,7 +1390,7 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
   const controller = new AbortController()
   setupOperationTimeout(windowId, controller)
   activeAbortControllers.set(windowId, controller)
-  activeOperationsMap.set(windowId, { type: 'merge', error: null })
+  setActiveOperation(windowId, 'merge')
   operationStartTimestamps.set(windowId, Date.now())
 
   try {
@@ -1498,7 +1495,7 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
 
     invalidatePreviewCache(windowId)
     await getGroupsPreview(windowId)
-    activeOperationsMap.delete(windowId)
+    clearActiveOperation(windowId)
 
     const mergedToNames: string[] = []
     for (const gid of targetGroupTabMap.keys()) {
@@ -1537,9 +1534,7 @@ export async function mergeGroup(groupId: number, aiOverrides?: Partial<Extensio
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
-    if (activeOperationsMap.get(windowId)?.type === 'merge' || activeOperationsMap.get(windowId)?.type === 'group') {
-      activeOperationsMap.delete(windowId)
-    }
+    clearActiveOperation(windowId, ['merge', 'group'])
     await updateNewTabsBadge(windowId).catch(console.error)
   }
 }
@@ -1562,7 +1557,7 @@ export async function renameDuplicateGroups(
   const controller = new AbortController()
   setupOperationTimeout(windowId, controller)
   activeAbortControllers.set(windowId, controller)
-  activeOperationsMap.set(windowId, { type: 'rename', error: null })
+  setActiveOperation(windowId, 'rename')
   operationStartTimestamps.set(windowId, Date.now())
 
   let logger: AILogger | undefined
@@ -1734,7 +1729,7 @@ export async function renameDuplicateGroups(
       await getGroupsPreview(wid)
       debouncedUpdateNewTabsBadge(wid)
     }
-    activeOperationsMap.delete(windowId)
+    clearActiveOperation(windowId)
 
     const summary = `Renamed ${allRenamedResults.length} duplicate groups: ${allRenamedResults.map(r => `"${r.oldName}" -> "${r.newName}"`).join(', ')}`
     if (logger) {
@@ -1767,9 +1762,7 @@ export async function renameDuplicateGroups(
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
-    if (activeOperationsMap.get(windowId)?.type === 'rename') {
-      activeOperationsMap.delete(windowId)
-    }
+    clearActiveOperation(windowId, ['rename'])
     await updateNewTabsBadge(windowId).catch(console.error)
   }
 }
@@ -1787,7 +1780,7 @@ export async function generateWindowName(
   const controller = new AbortController()
   setupOperationTimeout(windowId, controller)
   activeAbortControllers.set(windowId, controller)
-  activeOperationsMap.set(windowId, { type: 'name_window', error: null, statusText: 'Analyzing window tabs...' })
+  setActiveOperation(windowId, 'name_window', null, 'Analyzing window tabs...')
   operationStartTimestamps.set(windowId, Date.now())
 
   let logger: AILogger | undefined
@@ -1918,9 +1911,7 @@ export async function generateWindowName(
     if (activeAbortControllers.get(windowId) === controller) {
       activeAbortControllers.delete(windowId)
     }
-    if (activeOperationsMap.get(windowId)?.type === 'name_window') {
-      activeOperationsMap.delete(windowId)
-    }
+    clearActiveOperation(windowId, ['name_window'])
     await updateNewTabsBadge(windowId).catch(console.error)
   }
 }
@@ -1939,7 +1930,7 @@ export async function generateAllWindowsNames(
   const controller = new AbortController()
   setupOperationTimeout(opWindowId, controller)
   activeAbortControllers.set(opWindowId, controller)
-  activeOperationsMap.set(opWindowId, { type: 'name_window', error: null, statusText: 'Analyzing all window workspaces...' })
+  setActiveOperation(opWindowId, 'name_window', null, 'Analyzing all window workspaces...')
   operationStartTimestamps.set(opWindowId, Date.now())
 
   let logger: AILogger | undefined
@@ -2070,9 +2061,7 @@ export async function generateAllWindowsNames(
     if (activeAbortControllers.get(opWindowId) === controller) {
       activeAbortControllers.delete(opWindowId)
     }
-    if (activeOperationsMap.get(opWindowId)?.type === 'name_window') {
-      activeOperationsMap.delete(opWindowId)
-    }
+    clearActiveOperation(opWindowId, ['name_window'])
     await updateNewTabsBadge(opWindowId).catch(console.error)
   }
 }

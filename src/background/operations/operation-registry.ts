@@ -246,42 +246,69 @@ function broadcastOperationProgress(windowId: number, status: OperationStatus): 
   }
 }
 
-export function setActiveOperation(
-  windowId: number,
-  type: 'group' | 'classify' | 'split' | 'merge' | 'sort' | 'regroup' | 'rename' | 'name_window' | null,
-  error: string | null = null
-): void {
-  if (type === null && error === null) {
-    activeOperationsMap.delete(windowId)
-    operationStartTimestamps.delete(windowId)
-    activeAIOperationWindows.delete(windowId)
-  } else {
-    if (type !== null) {
-      activeAIOperationWindows.add(windowId)
-    } else {
-      activeAIOperationWindows.delete(windowId)
-    }
-    const startTs = operationStartTimestamps.get(windowId) ?? Date.now()
-    const endTs = timeoutEndTimestamps.get(windowId) ?? (Date.now() + OPERATION_TIMEOUT_MS)
-    const remainingSec = Math.max(0, Math.round((endTs - Date.now()) / 1000))
-    const existing = activeOperationsMap.get(windowId)
-    activeOperationsMap.set(windowId, {
-      ...existing,
-      type,
-      error,
-      stage: type ? 'preparing' : 'idle',
-      startTimestamp: startTs,
-      timeoutRemainingSec: remainingSec,
-      timeoutEndTimestamp: endTs,
-      autoExtendCount: autoExtendCounts.get(windowId) ?? 0,
-    })
-  }
+function broadcastActiveOperations(): void {
   if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
     chrome.runtime.sendMessage({
       action: 'ACTIVE_OPERATIONS_UPDATED',
       payload: getActiveOperations(),
     }).catch(() => {})
   }
+}
+
+/**
+ * Single entry point for starting (type set) or failing (type null + error) an operation.
+ * Always keeps the tracking sets/maps consistent and notifies every open view, so callers
+ * must not mutate activeOperationsMap directly.
+ */
+export function setActiveOperation(
+  windowId: number,
+  type: OperationStatus['type'],
+  error: string | null = null,
+  statusText?: string
+): void {
+  if (type === null && error === null) {
+    clearActiveOperation(windowId)
+    return
+  }
+
+  const now = Date.now()
+  if (type !== null) {
+    activeAIOperationWindows.add(windowId)
+    if (!operationStartTimestamps.has(windowId)) operationStartTimestamps.set(windowId, now)
+  } else {
+    activeAIOperationWindows.delete(windowId)
+    operationStartTimestamps.delete(windowId)
+  }
+  const startTs = operationStartTimestamps.get(windowId) ?? now
+  const endTs = timeoutEndTimestamps.get(windowId) ?? (now + OPERATION_TIMEOUT_MS)
+  const remainingSec = Math.max(0, Math.round((endTs - now) / 1000))
+  const existing = activeOperationsMap.get(windowId)
+  activeOperationsMap.set(windowId, {
+    // Only carry progress details over while the same kind of operation continues
+    ...(existing?.type === type ? existing : undefined),
+    type,
+    error,
+    stage: type ? 'preparing' : 'idle',
+    statusText: statusText ?? (existing?.type === type ? existing.statusText : undefined),
+    startTimestamp: startTs,
+    timeoutRemainingSec: remainingSec,
+    timeoutEndTimestamp: endTs,
+    autoExtendCount: autoExtendCounts.get(windowId) ?? 0,
+  })
+  broadcastActiveOperations()
+}
+
+/**
+ * Removes the tracked operation for a window and notifies views.
+ * With `onlyTypes`, leaves the entry alone if it belongs to a different (newer) operation.
+ */
+export function clearActiveOperation(windowId: number, onlyTypes?: OperationStatus['type'][]): void {
+  const existing = activeOperationsMap.get(windowId)
+  if (onlyTypes && existing && !onlyTypes.includes(existing.type)) return
+  const hadEntry = activeOperationsMap.delete(windowId)
+  operationStartTimestamps.delete(windowId)
+  activeAIOperationWindows.delete(windowId)
+  if (hadEntry) broadcastActiveOperations()
 }
 
 export function getActiveOperations(): Record<number, OperationStatus> {

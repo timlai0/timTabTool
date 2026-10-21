@@ -25,6 +25,8 @@ export {
   autoExtendOperationTimeout,
   updateOperationProgress,
   setActiveOperation,
+  clearActiveOperation,
+  activeAbortControllers,
   getActiveOperations,
   clearOperationError,
 } from './operations/operation-registry'
