@@ -72,6 +72,14 @@ export function getGoogleModelPricing(id: string): { input: number; output: numb
   return PROVIDER_DEFAULTS.gemini
 }
 
+// Name segments marking Gemini models that can't serve plain text chat
+// (embeddings, image/video/music generation, speech, live audio, robotics, computer use).
+const INCOMPATIBLE_GEMINI_SEGMENTS = /(^|[-_/.])(embedding|imagen|image|veo|lyria|aqa|bison|robotics|tts|transcribe|audio|live|computer)([-_.]|$)/
+
+export function isChatCompatibleGeminiModel(id: string): boolean {
+  return !INCOMPATIBLE_GEMINI_SEGMENTS.test(id.toLowerCase())
+}
+
 export async function fetchGoogleModels(apiKey: string, endpoint?: string): Promise<GoogleModelItem[]> {
   if (!apiKey || !apiKey.trim()) {
     throw new Error('Google API Key is required to fetch models.')
@@ -108,11 +116,8 @@ export async function fetchGoogleModels(apiKey: string, endpoint?: string): Prom
     // 2. Must be a Gemini or Gemma model
     if (!rawName.includes('gemini') && !rawName.includes('gemma')) return false
 
-    // 3. Exclude non-chat / specialized incompatible models (embeddings, imagen, veo, aqa, bison, robotics)
-    const incompatibleKeywords = ['embedding', 'imagen', 'veo', 'aqa', 'bison', 'robotics']
-    if (incompatibleKeywords.some(keyword => rawName.includes(keyword))) return false
-
-    return true
+    // 3. Exclude non-chat / specialized incompatible models
+    return isChatCompatibleGeminiModel(rawName)
   })
 
   const results: GoogleModelItem[] = compatibleModels.map((m: any) => {

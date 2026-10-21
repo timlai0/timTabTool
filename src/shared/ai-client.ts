@@ -5,6 +5,7 @@ import { getAutoBatchSize, formatTimeAgo, extractDomain, extractJsonSubstring, a
 import {
   getGoogleModelPricing,
   fetchGoogleModels,
+  isChatCompatibleGeminiModel,
   isFreeModel,
   fetchOpenRouterModels,
   fetchOpenRouterProviders,
@@ -16,6 +17,7 @@ export type { GoogleModelItem }
 export {
   getGoogleModelPricing,
   fetchGoogleModels,
+  isChatCompatibleGeminiModel,
   isFreeModel,
   fetchOpenRouterModels,
   fetchOpenRouterProviders,
