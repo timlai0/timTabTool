@@ -6,7 +6,7 @@ export const APP_VERSION = '1.2.0'
 /**
  * @constant {string} BUILD_NUMBER - The current build number.
  */
-export const BUILD_NUMBER = '24'
+export const BUILD_NUMBER = '25'
 
 /**
  * @constant {string} BUILD_HASH - The git commit hash of the build.
