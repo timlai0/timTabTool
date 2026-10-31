@@ -32,7 +32,7 @@ let massCloseDebounceTimer: ReturnType<typeof setTimeout> | null = null
 const MASS_CLOSE_DEBOUNCE_MS = 400
 
 /**
- * Mark tab IDs as explicitly closed by TabPilot extension actions to avoid duplicate recording.
+ * Mark tab IDs as explicitly closed by timTabTool extension actions to avoid duplicate recording.
  */
 export function markTabIdsClosedByExtension(tabIds: number[]): void {
   for (const id of tabIds) {

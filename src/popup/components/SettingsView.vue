@@ -1333,7 +1333,7 @@ async function handleDownloadExportTabs(): Promise<void> {
     const a = document.createElement('a')
     a.href = url
     const dateStamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
-    a.download = `tabpilot_tabs_${exportScope.value}_${dateStamp}.${extByFormat[exportFormat.value]}`
+    a.download = `timtabtool_tabs_${exportScope.value}_${dateStamp}.${extByFormat[exportFormat.value]}`
     a.click()
     URL.revokeObjectURL(url)
     exportDownloadFeedback.value = `Downloaded .${extByFormat[exportFormat.value]}!`
@@ -3563,7 +3563,7 @@ async function handleDownloadExportTabs(): Promise<void> {
             <div class="flex items-center gap-2">
               <img src="/icons/icon-32.png" alt="" class="w-4 h-4 shrink-0" />
               <div>
-                <div class="text-xs font-semibold" style="color: var(--text-primary);">TabPilot</div>
+                <div class="text-xs font-semibold" style="color: var(--text-primary);">timTabTool</div>
                 <div class="text-[10px]" style="color: var(--text-secondary);">
                   Version {{ APP_VERSION }} <span style="color: var(--text-tertiary);">(Build #{{ BUILD_NUMBER }})</span>
                 </div>

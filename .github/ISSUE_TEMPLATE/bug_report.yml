@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug to help us improve TabPilot
+description: Report a bug to help us improve timTabTool
 title: "[Bug]: "
 labels: ["bug"]
 body:
@@ -28,7 +28,7 @@ body:
   - type: input
     id: extension-version
     attributes:
-      label: TabPilot Version
+      label: timTabTool Version
       placeholder: "e.g. 1.0.0"
     validations:
       required: true
@@ -88,7 +88,7 @@ body:
     id: console-errors
     attributes:
       label: Console Errors (if any)
-      description: Open chrome://extensions → TabPilot → "Inspect views" → Console tab
+      description: Open chrome://extensions → timTabTool → "Inspect views" → Console tab
       render: shell
 
   - type: textarea

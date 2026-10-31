@@ -1,6 +1,6 @@
-# TabPilot Design Guidelines
+# timTabTool Design Guidelines
 
-This document specifies the design architecture, visual language, component patterns, and styling standards for the TabPilot extension.
+This document specifies the design architecture, visual language, component patterns, and styling standards for the timTabTool extension.
 
 ---
 
@@ -78,7 +78,7 @@ Tab group colors map to Chrome's native tab group color palette:
 
 ### 4.1 Border Radii Hierarchy
 
-TabPilot enforces strict 2px geometric consistency configured in [tailwind.config.ts](file:///d:/Downloads/tabpilot-v1.0.0/tailwind.config.ts):
+timTabTool enforces strict 2px geometric consistency configured in [tailwind.config.ts](file:///d:/Downloads/tabpilot-v1.0.0/tailwind.config.ts):
 
 | Token Alias | Value | Usage |
 | :--- | :--- | :--- |
@@ -156,7 +156,7 @@ TabPilot enforces strict 2px geometric consistency configured in [tailwind.confi
 - **Keyboard Navigation**: Full arrow-key selection cycle (`ArrowUp`, `ArrowDown`, `Enter`, `Escape`, `Tab`).
 
 ### 5.7 Standalone Search Page ([search.html](file:///d:/Downloads/tabpilot-v1.0.0/src/popup/search.html), [search-page.ts](file:///d:/Downloads/tabpilot-v1.0.0/src/popup/search-page.ts))
-- **Layout**: Split-view layout featuring a 380px fixed-width TabPilot sidebar paired with a full-viewport search view.
+- **Layout**: Split-view layout featuring a 380px fixed-width timTabTool sidebar paired with a full-viewport search view.
 - **Full Viewport Responsive**: Adapts automatically when opened as a dedicated browser tab or window.
 
 ### 5.8 Form Controls & Settings ([SettingsView.vue](file:///d:/Downloads/tabpilot-v1.0.0/src/popup/components/SettingsView.vue))

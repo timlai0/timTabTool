@@ -12,12 +12,8 @@ This document serves as the master index for the architecture, namespaces, and c
   * **Responsibilities:** Classifying tabs into categories using the rule engine and free-form AI-based grouping logic.
 * **`src/background/index.ts`**
   * **Namespace:** Background service worker, `getAIOverrides`
-  * **Dependencies:** `./tab-manager`, `./searcher`, `./storage`, `../shared/constants`, `../shared/types`, `./mcp-bridge`, `../shared/ai-logger`
+  * **Dependencies:** `./tab-manager`, `./searcher`, `./storage`, `../shared/constants`, `../shared/types`, `../shared/ai-logger`
   * **Responsibilities:** Core service worker entrypoint. Manages context menus, keyboard shortcuts, background messaging routing, and lifecycle events for tabs/windows.
-* **`src/background/mcp-bridge.ts`**
-  * **Namespace:** `getMCPStatus`, `reconnectMCP`, `initMCPBridge`
-  * **Dependencies:** `../shared/constants`, `../shared/types`
-  * **Responsibilities:** WebSocket connection management and MCP (Model Context Protocol) command handling for manipulating tabs/groups externally.
 * **`src/background/searcher.ts`**
   * **Namespace:** `searchTabs`
   * **Dependencies:** `../shared/types`

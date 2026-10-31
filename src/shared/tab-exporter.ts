@@ -311,7 +311,7 @@ export function formatExportAsHtmlBookmarks(
     '<TITLE>Bookmarks</TITLE>',
     '<H1>Bookmarks</H1>',
     '<DL><p>',
-    `  <DT><H3 ADD_DATE="${nowSec}" LAST_MODIFIED="${nowSec}">TabPilot Export (${escapeHtml(dateLabel)} - ${escapeHtml(scope)})</H3>`,
+    `  <DT><H3 ADD_DATE="${nowSec}" LAST_MODIFIED="${nowSec}">timTabTool Export (${escapeHtml(dateLabel)} - ${escapeHtml(scope)})</H3>`,
     '  <DL><p>',
   ]
 

@@ -2413,7 +2413,7 @@ ${formattedWindows}`
       headers['Authorization'] = `Bearer ${this.config.apiKey.trim()}`
     }
     if (this.config.provider === 'openrouter') {
-      headers['HTTP-Referer'] = 'https://tabpilot.app'
+      headers['HTTP-Referer'] = 'https://timayaya.de'
       headers['X-Title'] = 'timTabTool'
     }
     return headers

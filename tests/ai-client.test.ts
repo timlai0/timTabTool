@@ -532,7 +532,7 @@ describe('OpenRouter Provider & Model Fetching', () => {
     expect(result.ok).toBe(true)
     expect(capturedUrl).toBe('https://openrouter.ai/api/v1/chat/completions')
     expect(capturedHeaders['Authorization']).toBe('Bearer sk-or-v1-test')
-    expect(capturedHeaders['HTTP-Referer']).toBe('https://tabpilot.app')
+    expect(capturedHeaders['HTTP-Referer']).toBe('https://timayaya.de')
     expect(capturedHeaders['X-Title']).toBe('timTabTool')
   })
 
@@ -1692,7 +1692,7 @@ describe('OpenRouter Provider & Model Fetching', () => {
     const result = await client.testConnection()
     expect(result.ok).toBe(true)
     expect(capturedHeaders['Authorization']).toBeUndefined()
-    expect(capturedHeaders['HTTP-Referer']).toBe('https://tabpilot.app')
+    expect(capturedHeaders['HTTP-Referer']).toBe('https://timayaya.de')
   })
 
   it('automatically retries without response_format when provider returns 400 parameter error', async () => {

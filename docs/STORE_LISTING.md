@@ -6,7 +6,7 @@
 timTabTool
 
 ### Summary (132 chars max)
-Autopilot for your tabs. One-click smart grouping, instant search, optional AI enhancement — 100% private, open source.
+Autopilot for your tabs. One-click smart grouping, instant search, optional AI enhancement — local-first, open source.
 
 ### Description
 **Drowning in browser tabs?** timTabTool is the autopilot for your browser — it automatically organizes tabs into smart groups and lets you search through them instantly.
@@ -24,15 +24,16 @@ Autopilot for your tabs. One-click smart grouping, instant search, optional AI e
 - Results highlighted with relevance scoring
 
 🤖 **Optional AI Enhancement**
-- Bring your own API key (OpenAI, Claude, or any OpenAI-compatible endpoint)
+- Bring your own API key (OpenAI, Claude, Gemini, OpenRouter, or any OpenAI-compatible endpoint)
 - AI handles the tabs that rule-based classification can't categorize
 - Boosts classification accuracy from ~75% to ~95%
 - Your API key stays on your device — we never see it
+- Tab titles and URLs are sent to your chosen AI provider only when you trigger an AI action
 
 🔒 **Privacy First**
-- All data stored locally on your device
+- All settings and history stored locally on your device
 - No accounts, no tracking, no analytics
-- Zero data sent to our servers
+- Nothing is sent to our servers; the only network requests go to the AI provider you configure, and only when you use AI features
 - Open source and transparent
 
 🌐 **Bilingual**
@@ -58,7 +59,7 @@ English, Chinese (Simplified)
 timTabTool
 
 ### 简介 (132 字符)
-标签页自动驾驶。一键智能分组、即时搜索、可选 AI 增强 — 100% 隐私、开源。
+标签页自动驾驶。一键智能分组、即时搜索、可选 AI 增强 — 本地优先、开源。
 
 ### 描述
 **标签页太多？** timTabTool 是你的标签页自动驾驶仪 — 自动整理标签页为智能分组，支持即时搜索。
@@ -76,15 +77,16 @@ timTabTool
 - 结果高亮显示，按相关性排序
 
 🤖 **可选 AI 增强**
-- 自带 API 密钥（支持 OpenAI、Claude 或任何兼容接口）
+- 自带 API 密钥（支持 OpenAI、Claude、Gemini、OpenRouter 或任何兼容接口）
 - AI 处理规则引擎无法分类的标签
 - 分类准确率从 ~75% 提升到 ~95%
 - API 密钥仅存储在本地 — 我们永远看不到
+- 仅在你触发 AI 操作时，标签标题和 URL 才会发送到你选择的 AI 服务商
 
 🔒 **隐私优先**
-- 所有数据存储在本地
+- 设置和历史记录仅存储在本地
 - 无账号、无追踪、无分析
-- 零数据发送到我们的服务器
+- 不向我们的服务器发送任何数据；仅在使用 AI 功能时向你配置的 AI 服务商发送请求
 - 开源透明
 
 **适合：**

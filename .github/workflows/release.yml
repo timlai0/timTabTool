@@ -37,18 +37,18 @@ jobs:
       - name: Package extension
         run: |
           cd dist
-          zip -r ../tabpilot-${GITHUB_REF_NAME}.zip . -x "*.DS_Store" ".vite/*"
+          zip -r ../timtabtool-${GITHUB_REF_NAME}.zip . -x "*.DS_Store" ".vite/*"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: TabPilot ${{ github.ref_name }}
-          files: tabpilot-${{ github.ref_name }}.zip
+          name: timTabTool ${{ github.ref_name }}
+          files: timtabtool-${{ github.ref_name }}.zip
           generate_release_notes: true
           body: |
             ## Install
 
-            1. Download `tabpilot-${{ github.ref_name }}.zip` below
+            1. Download `timtabtool-${{ github.ref_name }}.zip` below
             2. Unzip to a folder
             3. Open `chrome://extensions` → enable **Developer Mode**
             4. Click **Load unpacked** → select the unzipped folder
