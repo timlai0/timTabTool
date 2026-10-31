@@ -74,10 +74,12 @@ export function getGoogleModelPricing(id: string): { input: number; output: numb
 
 // Name segments marking Gemini models that can't serve plain text chat
 // (embeddings, image/video/music generation, speech, live audio, robotics, computer use).
-const INCOMPATIBLE_GEMINI_SEGMENTS = /(^|[-_/.])(embedding|imagen|image|veo|lyria|aqa|bison|robotics|tts|transcribe|audio|live|computer)([-_.]|$)/
+// Checked against display names too, since some image models (e.g. "Nano Banana") hide it in the id.
+const INCOMPATIBLE_GEMINI_SEGMENTS = /(^|[-_/.\s])(embedding|embeddings|imagen|image|images|veo|lyria|aqa|bison|robotics|tts|transcribe|audio|live|computer|banana|dialog)([-_.\s]|$)/
 
-export function isChatCompatibleGeminiModel(id: string): boolean {
-  return !INCOMPATIBLE_GEMINI_SEGMENTS.test(id.toLowerCase())
+export function isChatCompatibleGeminiModel(id: string, displayName?: string): boolean {
+  if (INCOMPATIBLE_GEMINI_SEGMENTS.test(id.toLowerCase())) return false
+  return !displayName || !INCOMPATIBLE_GEMINI_SEGMENTS.test(displayName.toLowerCase())
 }
 
 export async function fetchGoogleModels(apiKey: string, endpoint?: string): Promise<GoogleModelItem[]> {
@@ -117,7 +119,7 @@ export async function fetchGoogleModels(apiKey: string, endpoint?: string): Prom
     if (!rawName.includes('gemini') && !rawName.includes('gemma')) return false
 
     // 3. Exclude non-chat / specialized incompatible models
-    return isChatCompatibleGeminiModel(rawName)
+    return isChatCompatibleGeminiModel(rawName, m.displayName)
   })
 
   const results: GoogleModelItem[] = compatibleModels.map((m: any) => {

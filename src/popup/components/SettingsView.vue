@@ -481,7 +481,7 @@ const openRouterProviderSelectValue = computed({
 const allProviderModels = computed(() => {
   const provider = settings.value.ai.provider
   if (provider === 'gemini' && settings.value.ai.customModels?.gemini?.length) {
-    return settings.value.ai.customModels.gemini.filter(m => isChatCompatibleGeminiModel(m.id))
+    return settings.value.ai.customModels.gemini.filter(m => isChatCompatibleGeminiModel(m.id, m.name))
   } else if (provider === 'openrouter' && settings.value.ai.customModels?.openrouter?.length) {
     return settings.value.ai.customModels.openrouter
   }

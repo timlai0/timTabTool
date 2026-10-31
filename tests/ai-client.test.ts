@@ -361,6 +361,11 @@ describe('fetchGoogleModels', () => {
           outputTokenLimit: 65536,
         },
         {
+          name: 'models/gemini-3.1-flash-preview-0925',
+          displayName: 'Nano Banana 2.1', // image model whose id carries no marker
+          supportedGenerationMethods: ['generateContent'],
+        },
+        {
           name: 'models/gemma-2-9b-it',
           displayName: 'Gemma 2 9B',
           supportedGenerationMethods: ['generateContent'],
@@ -381,6 +386,7 @@ describe('fetchGoogleModels', () => {
     expect(models.map(m => m.id)).toContain('gemma-2-9b-it')
     expect(models.map(m => m.id)).not.toContain('text-embedding-004')
     expect(models.map(m => m.id)).not.toContain('imagen-3.0-generate-002')
+    expect(models.map(m => m.id)).not.toContain('gemini-3.1-flash-preview-0925')
 
     const flashModel = models.find(m => m.id === 'gemini-2.5-flash')
     expect(flashModel?.costDetails).toBeDefined()
