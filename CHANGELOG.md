@@ -10,11 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - **MCP Bridge**: The Model Context Protocol WebSocket bridge, its Settings section, message actions and settings keys (`mcpEnabled`, `mcpPort`, `mcpAllowScriptExecution`) have been removed for now.
 
+### Added
+- **AI Operation Log Filtering & Export**: Filter AI logs by status, action type, age range, and text query in Settings. Export single or filtered logs as JSON, Markdown, or CSV with optional raw requests/responses.
+- **Export Known Unclosed Tabs**: Export currently open tabs and unrestored history tabs that were not explicitly closed (e.g. to recover lost tabs after a browser crash or sync failure). Supports scoping to open tabs only, unrestored tabs only, or both, formatted as Markdown (.md), JSON (.json), plain text URL list (.txt), or Netscape Bookmark HTML (.html) with copy-to-clipboard and file download options in Settings.
+
 ### Changed
 - **Branding Consistency**: Standardized remaining repository references, documentation, issue templates, release packaging, and export files from TabPilot to timTabTool.
-
-### Added
-- **Export Known Unclosed Tabs**: Export currently open tabs and unrestored history tabs that were not explicitly closed (e.g. to recover lost tabs after a browser crash or sync failure). Supports scoping to open tabs only, unrestored tabs only, or both, formatted as Markdown (.md), JSON (.json), plain text URL list (.txt), or Netscape Bookmark HTML (.html) with copy-to-clipboard and file download options in Settings.
+- **Gemini Model Filtering**: Enhanced Gemini model list filtering to check display names against non-chat and image generation patterns in addition to model IDs.
 
 ### Security
 - **Gemini API Key Leak into Logs**: Gemini requests and model listing now send the key via the `x-goog-api-key` header instead of the `?key=` query string. AI logs redact keys and bearer tokens, and keys already stored in old logs are scrubbed on load.

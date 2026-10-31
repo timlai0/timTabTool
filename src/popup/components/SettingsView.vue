@@ -8,6 +8,8 @@ import type { ExtensionSettings, AIOperationLogEntry, AILogRawResponse, AIProvid
 import { getClosedTabs, restoreClosedTab, restoreAllClosedTabs, removeClosedTab, clearClosedTabs, restoreClosedBatch, removeClosedBatch } from '../../shared/closed-tabs-manager'
 import type { TabExportScope, TabExportFormat } from '../../shared/tab-exporter'
 import { AIClient, SYSTEM_PROMPT, fetchGoogleModels, isChatCompatibleGeminiModel, fetchOpenRouterModels, fetchOpenRouterProviders, fetchOpenRouterKeyInfo, isFreeModel } from '../../shared/ai-client'
+import { filterLogs, getActionTypes, computeLogTimeEstimate, formatLogsExport, buildLogExportFilename, formatMs } from '../../shared/ai-log-exporter'
+import type { LogExportFormat, LogTimeRange } from '../../shared/ai-log-exporter'
 import { APP_VERSION, BUILD_NUMBER, BUILD_HASH, BUILD_TIME } from '../../shared/version'
 
 const props = defineProps<{
@@ -802,6 +804,11 @@ async function handleClearClosedTabs(): Promise<void> {
 const aiLogs = ref<AIOperationLogEntry[]>([])
 const expandedLogId = ref<string | null>(null)
 const logFilterStatus = ref<string>('all')
+const logFilterAction = ref<string>('all')
+const logFilterRange = ref<LogTimeRange>('all')
+const logFilterSearch = ref('')
+const logExportFormat = ref<LogExportFormat>('json')
+const logExportIncludeRaw = ref(false)
 
 async function loadAILogs() {
   try {
@@ -846,15 +853,33 @@ async function markLogInterrupted(id: string) {
   }
 }
 
-function exportLogsAsJson() {
-  const jsonStr = JSON.stringify(aiLogs.value, null, 2)
-  const blob = new Blob([jsonStr], { type: 'application/json' })
+const MIME_BY_FORMAT: Record<LogExportFormat, string> = {
+  json: 'application/json',
+  markdown: 'text/markdown',
+  csv: 'text/csv',
+}
+
+function downloadLogs(logs: AIOperationLogEntry[]) {
+  if (logs.length === 0) return
+  const format = logExportFormat.value
+  const text = formatLogsExport(logs, format, { includeRaw: logExportIncludeRaw.value })
+  const blob = new Blob([text], { type: MIME_BY_FORMAT[format] })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `ai_operation_logs_${Date.now()}.json`
+  a.download = buildLogExportFilename(format, logs)
   a.click()
   URL.revokeObjectURL(url)
+}
+
+/** Exports every log that matches the current filters. */
+function exportFilteredLogs() {
+  downloadLogs(filteredLogs.value)
+}
+
+/** Exports one specific log using the selected format. */
+function exportSingleLog(log: AIOperationLogEntry) {
+  downloadLogs([log])
 }
 
 function toggleLogExpand(id: string) {
@@ -1054,10 +1079,22 @@ function copyToClipboard(text: string) {
   navigator.clipboard.writeText(text).catch(console.error)
 }
 
-const filteredLogs = computed(() => {
-  if (logFilterStatus.value === 'all') return aiLogs.value
-  return aiLogs.value.filter(l => l.status === logFilterStatus.value)
-})
+const logActionTypes = computed(() => getActionTypes(aiLogs.value))
+
+const filteredLogs = computed(() => filterLogs(aiLogs.value, {
+  status: logFilterStatus.value,
+  actionType: logFilterAction.value,
+  timeRange: logFilterRange.value,
+  search: logFilterSearch.value,
+}))
+
+function getLogTimeLine(log: AIOperationLogEntry): string {
+  const t = computeLogTimeEstimate(log)
+  const parts = [`API ${formatMs(t.apiMs)}`, `overhead ${formatMs(t.overheadMs)}`]
+  if (t.msPerTab !== undefined) parts.push(`${formatMs(t.msPerTab)}/tab`)
+  if (t.estimatedRemainingMs !== undefined) parts.push(`~${formatMs(t.estimatedRemainingMs)} left`)
+  return parts.join(' · ')
+}
 
 function resetGroupingPrompt() {
   settings.value.ai.groupingPrompt = DEFAULT_SETTINGS.ai.groupingPrompt
@@ -2914,12 +2951,13 @@ async function handleDownloadExportTabs(): Promise<void> {
           <div class="flex items-center gap-1.5">
             <button
               v-if="aiLogs.length > 0"
-              @click="exportLogsAsJson"
-              class="px-2 py-0.5 text-[9px] font-medium rounded-sm transition-all cursor-pointer"
+              @click="exportFilteredLogs"
+              :disabled="filteredLogs.length === 0"
+              class="px-2 py-0.5 text-[9px] font-medium rounded-sm transition-all cursor-pointer disabled:opacity-40"
               style="background: var(--bg-primary); color: var(--accent); border: 0.5px solid var(--border);"
-              title="Export all logs as JSON"
+              title="Export logs matching the current filters"
             >
-              Export JSON
+              Export {{ filteredLogs.length }} {{ logExportFormat.toUpperCase() }}
             </button>
             <button
               v-if="aiLogs.length > 0"
@@ -2938,13 +2976,46 @@ async function handleDownloadExportTabs(): Promise<void> {
             Logs recorded when Shift-clicking AI operations or when AI operations crash/fail. Retained across restarts.
           </p>
 
+          <div v-if="aiLogs.length > 0" class="flex flex-wrap items-center gap-1 px-1 text-[10px]">
+            <select v-model="logFilterStatus" class="px-1 py-0.5 rounded-sm" style="background: var(--bg-secondary); border: 0.5px solid var(--border); color: var(--text-primary);" title="Filter by status">
+              <option value="all">All statuses</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="FAILED">Failed</option>
+              <option value="CRASHED">Crashed</option>
+              <option value="RUNNING">Running</option>
+            </select>
+            <select v-model="logFilterAction" class="px-1 py-0.5 rounded-sm" style="background: var(--bg-secondary); border: 0.5px solid var(--border); color: var(--text-primary);" title="Filter by action">
+              <option value="all">All actions</option>
+              <option v-for="a in logActionTypes" :key="a" :value="a">{{ a }}</option>
+            </select>
+            <select v-model="logFilterRange" class="px-1 py-0.5 rounded-sm" style="background: var(--bg-secondary); border: 0.5px solid var(--border); color: var(--text-primary);" title="Filter by age">
+              <option value="all">Any time</option>
+              <option value="1h">Last hour</option>
+              <option value="24h">Last 24h</option>
+              <option value="7d">Last 7 days</option>
+            </select>
+            <input v-model="logFilterSearch" type="text" placeholder="Search model, error…" class="px-1.5 py-0.5 rounded-sm flex-1 min-w-[90px]" style="background: var(--bg-secondary); border: 0.5px solid var(--border); color: var(--text-primary);" />
+            <select v-model="logExportFormat" class="px-1 py-0.5 rounded-sm" style="background: var(--bg-secondary); border: 0.5px solid var(--border); color: var(--text-primary);" title="Export format">
+              <option value="json">JSON</option>
+              <option value="markdown">Markdown</option>
+              <option value="csv">CSV</option>
+            </select>
+            <label class="flex items-center gap-1 cursor-pointer" style="color: var(--text-secondary);" title="Include raw requests/responses and tab lists">
+              <input v-model="logExportIncludeRaw" type="checkbox" /> Raw
+            </label>
+          </div>
+
           <div v-if="aiLogs.length === 0" class="text-center py-6 text-[11px]" style="color: var(--text-tertiary);">
             No recorded AI logs yet. Hold Shift and click an AI operation (e.g. Group Tabs) to generate a detailed verbose log.
           </div>
 
+          <div v-else-if="filteredLogs.length === 0" class="text-center py-4 text-[11px]" style="color: var(--text-tertiary);">
+            No logs match the current filters.
+          </div>
+
           <div v-else class="space-y-1.5">
             <div
-              v-for="log in aiLogs"
+              v-for="log in filteredLogs"
               :key="log.id"
               class="rounded-sm border overflow-hidden transition-all text-xs"
               style="background: var(--bg-secondary); border-color: var(--border);"
@@ -3005,6 +3076,14 @@ async function handleDownloadExportTabs(): Promise<void> {
                     {{ formatTimeAgo(log.timestamp) }}
                   </span>
                   <button
+                    @click.stop="exportSingleLog(log)"
+                    class="px-1.5 py-0.5 text-[9px] font-medium rounded-sm transition-colors cursor-pointer"
+                    style="color: var(--accent); border: 0.5px solid var(--border);"
+                    title="Export this log"
+                  >
+                    Export
+                  </button>
+                  <button
                     @click.stop="deleteSingleLog(log.id)"
                     class="p-1 rounded-sm hover:bg-red-500/10 text-red-500 transition-colors cursor-pointer"
                     title="Delete log"
@@ -3044,6 +3123,7 @@ async function handleDownloadExportTabs(): Promise<void> {
                   <div><span class="opacity-60">Model:</span> {{ log.configSnapshot?.model || 'default' }}</div>
                   <div><span class="opacity-60">Duration:</span> {{ log.durationMs ? formatDurationMs(log.durationMs) : 'In progress' }}</div>
                   <div v-if="log.tokenUsage?.estimatedCostStr"><span class="opacity-60">Cost Est:</span> {{ log.tokenUsage.estimatedCostStr }}</div>
+                  <div class="col-span-2"><span class="opacity-60">Timing:</span> {{ getLogTimeLine(log) }}</div>
                   <div v-if="log.results?.summary" class="col-span-2"><span class="opacity-60">Result:</span> {{ log.results.summary }}</div>
                 </div>
 
