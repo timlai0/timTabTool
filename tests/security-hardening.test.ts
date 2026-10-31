@@ -45,7 +45,6 @@ describe('config copy/paste', () => {
   it('drops wrong-typed fields and non-http endpoints', () => {
     const current = settingsWithKeys()
     const pasted = {
-      mcpPort: '8585; rm -rf',
       windowWidth: 500,
       ai: {
         provider: 'evil',
@@ -56,22 +55,14 @@ describe('config copy/paste', () => {
       },
     }
     const { settings, skipped } = sanitizeImportedConfig(pasted, current)
-    expect(settings.mcpPort).toBe(8585)
     expect(settings.windowWidth).toBe(500)
     expect(settings.ai.provider).toBe('openai')
     expect((settings.ai.providerSettings as any).openai.endpoint).toBe('https://api.openai.com/v1')
     expect((settings.ai.providerSettings as any).openai.model).toBe('gpt-4o-mini')
     expect(settings.ai.providerSettings).not.toHaveProperty('bogus')
     expect(skipped).toEqual(expect.arrayContaining([
-      'mcpPort', 'ai.provider', 'ai.providerSettings.openai.endpoint', 'ai.providerSettings.openai.model', 'ai.providerSettings.bogus',
+      'ai.provider', 'ai.providerSettings.openai.endpoint', 'ai.providerSettings.openai.model', 'ai.providerSettings.bogus',
     ]))
-  })
-
-  it('never lets a paste enable MCP script execution', () => {
-    const current = settingsWithKeys()
-    const { settings, skipped } = sanitizeImportedConfig({ mcpAllowScriptExecution: true }, current)
-    expect(settings.mcpAllowScriptExecution).toBe(false)
-    expect(skipped).toContain('mcpAllowScriptExecution')
   })
 
   it('ignores prototype pollution keys', () => {

@@ -88,84 +88,6 @@ watch([advancedPromptsExpanded, activePromptTab], () => {
   })
 })
 
-// MCP Status & Reconnection refs
-const mcpStatus = ref({ state: 'disabled', port: 8585, error: null as string | null, autoRetrySecondsLeft: 0 })
-const reconnecting = ref(false)
-let statusPollInterval: any = null
-
-/**
- * Fetches the current MCP status from the background script.
- * @returns {Promise<void>}
- */
-async function updateMCPStatus(): Promise<void> {
-  try {
-    const res = await chrome.runtime.sendMessage({ action: 'GET_MCP_STATUS' })
-    if (res && res.state) {
-      mcpStatus.value = res
-    }
-  } catch (err) {
-    // Ignore error
-  }
-}
-
-/**
- * Triggers an MCP reconnection attempt.
- * @returns {Promise<void>}
- */
-async function triggerReconnect(): Promise<void> {
-  reconnecting.value = true
-  try {
-    await chrome.runtime.sendMessage({ action: 'RECONNECT_MCP' })
-    setTimeout(async () => {
-      await updateMCPStatus()
-      reconnecting.value = false
-    }, 1200)
-  } catch (err) {
-    reconnecting.value = false
-  }
-}
-
-// MCP auth token (stored separately from settings, so config copy/paste never includes it)
-const mcpToken = ref('')
-const mcpTokenVisible = ref(false)
-const mcpTokenCopied = ref(false)
-
-/**
- * Loads the MCP auth token from the background script.
- * @returns {Promise<void>}
- */
-async function loadMCPToken(): Promise<void> {
-  try {
-    const res = await chrome.runtime.sendMessage({ action: 'GET_MCP_TOKEN' })
-    if (res?.token) mcpToken.value = res.token
-  } catch (err) {
-    // Ignore error
-  }
-}
-
-/**
- * Copies the MCP auth token to the clipboard.
- * @returns {Promise<void>}
- */
-async function copyMCPToken(): Promise<void> {
-  if (!mcpToken.value) return
-  await navigator.clipboard.writeText(mcpToken.value)
-  mcpTokenCopied.value = true
-  setTimeout(() => {
-    mcpTokenCopied.value = false
-  }, 1500)
-}
-
-/**
- * Replaces the MCP auth token; connected servers must re-authenticate with the new one.
- * @returns {Promise<void>}
- */
-async function regenerateMCPToken(): Promise<void> {
-  if (!confirm('Generate a new MCP token? Your MCP server will be disconnected until you update its token.')) return
-  const res = await chrome.runtime.sendMessage({ action: 'REGENERATE_MCP_TOKEN' })
-  if (res?.token) mcpToken.value = res.token
-}
-
 const copyText = ref('Copy Config')
 const pasteText = ref('Paste Config')
 const backupError = ref('')
@@ -787,11 +709,6 @@ onMounted(async () => {
     console.error('Failed to get commands:', err)
   }
 
-  // Start polling MCP connection status
-  updateMCPStatus()
-  statusPollInterval = setInterval(updateMCPStatus, 1000)
-  loadMCPToken()
-
   // Load AI operation logs
   loadAILogs()
 
@@ -802,9 +719,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   wideLayoutQuery?.removeEventListener('change', onWideLayoutChange)
-  if (statusPollInterval) {
-    clearInterval(statusPollInterval)
-  }
 })
 
 // --- Restorable Closed Tabs state and handlers ---
@@ -2537,162 +2451,6 @@ async function handleDownloadExportTabs(): Promise<void> {
               {{ getMessage('apiKeyNote') }}
             </p>
           </div>
-        </div>
-      </div>
-
-      <!-- Model Context Protocol (MCP) Bridge -->
-      <div>
-        <h2 class="text-[10px] font-semibold uppercase tracking-wider px-3 mb-1.5 flex items-center gap-1.5" style="color: var(--text-secondary);">
-          <svg class="w-3.5 h-3.5 opacity-80" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M10 3a1 1 0 01.707.293l3 3a1 1 0 01-1.414 1.414L11 6.414V14a1 1 0 11-2 0V6.414L7.707 7.707a1 1 0 01-1.414-1.414l3-3A1 1 0 0110 3zm-3.707 9.293a1 1 0 011.414 0L10 14.586l2.293-2.293a1 1 0 011.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
-          </svg>
-          Model Context Protocol (MCP) Bridge
-        </h2>
-        <div class="rounded-sm overflow-hidden" style="background: var(--bg-primary); box-shadow: var(--shadow-xs);">
-          <!-- Enable toggle -->
-          <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
-            <div class="flex-1">
-              <span class="text-xs block" style="color: var(--text-primary);">Enable MCP WebSocket Server</span>
-              <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--text-tertiary);">
-                Bridges browser tab operations directly to your AI agents locally.
-              </p>
-            </div>
-            <div class="relative mt-0.5">
-              <input
-                type="checkbox"
-                v-model="settings.mcpEnabled"
-                class="sr-only peer"
-              />
-              <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
-              <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
-            </div>
-          </label>
-
-          <template v-if="settings.mcpEnabled">
-            <!-- Connection Status -->
-            <div class="px-3.5 py-2.5 setting-row flex flex-col gap-1.5">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider" style="color: var(--text-secondary);">
-                MCP Bridge Connection Status
-              </label>
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <span 
-                    class="w-2.5 h-2.5 rounded-full inline-block"
-                    :class="{
-                      'bg-green-500 shadow-[0_0_8px_rgba(52,199,89,0.6)]': mcpStatus.state === 'connected',
-                      'bg-yellow-500 animate-pulse shadow-[0_0_8px_rgba(255,159,10,0.6)]': mcpStatus.state === 'connecting',
-                      'bg-red-500 shadow-[0_0_8px_rgba(255,59,48,0.6)]': mcpStatus.state === 'disconnected' || mcpStatus.state === 'disabled'
-                    }"
-                    :style="{
-                      background: mcpStatus.state === 'connected' ? 'var(--group-green)' : (mcpStatus.state === 'connecting' ? 'var(--group-yellow)' : 'var(--group-red)')
-                    }"
-                  />
-                  <span class="text-xs font-semibold capitalize" :style="{ color: mcpStatus.state === 'connected' ? 'var(--group-green)' : (mcpStatus.state === 'connecting' ? 'var(--group-yellow)' : 'var(--text-primary)') }">
-                    {{ mcpStatus.state }}
-                  </span>
-                </div>
-                <button
-                  v-if="mcpStatus.state !== 'connected'"
-                  @click="triggerReconnect"
-                  :disabled="reconnecting"
-                  class="px-2.5 py-1 text-[10px] font-medium rounded-sm border transition-all duration-200"
-                  style="background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border);"
-                >
-                  {{ reconnecting ? 'Connecting...' : 'Retry Now' }}
-                </button>
-              </div>
-              
-              <!-- Connection Error Display -->
-              <p 
-                v-if="mcpStatus.state === 'disconnected' && mcpStatus.error" 
-                class="text-[10px] leading-relaxed p-1.5 rounded-sm border mt-1" 
-                style="color: var(--group-red); background: rgba(255,59,48,0.06); border-color: rgba(255,59,48,0.15);"
-              >
-                <strong>Error:</strong> {{ mcpStatus.error }}
-                <br />
-                <span v-if="mcpStatus.autoRetrySecondsLeft && mcpStatus.autoRetrySecondsLeft > 0" class="text-[9px] opacity-90">Auto-retry in <span class="font-bold" style="color: var(--group-yellow);">{{ mcpStatus.autoRetrySecondsLeft }}</span>s...</span>
-                <span v-else class="text-[9px] opacity-75">Auto-retrying every 5 seconds...</span>
-              </p>
-            </div>
-
-            <!-- Port Selection -->
-            <div class="px-3.5 py-2.5 setting-row">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider mb-1" style="color: var(--text-secondary);">
-                WebSocket Server Port
-              </label>
-              <input
-                type="number"
-                v-model.number="settings.mcpPort"
-                placeholder="8585"
-                min="1024"
-                max="65535"
-                class="w-full text-xs rounded-sm border-0 py-1.5 px-2"
-                style="background: var(--bg-secondary); color: var(--text-primary);"
-              />
-              <p class="text-[10px] mt-1.5 leading-relaxed" style="color: var(--text-tertiary);">
-                Server listens on 127.0.0.1. Ensure your MCP client points to the same port.
-              </p>
-            </div>
-
-            <!-- Auth Token -->
-            <div class="px-3.5 py-2.5 setting-row">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider mb-1" style="color: var(--text-secondary);">
-                Auth Token
-              </label>
-              <div class="flex items-center gap-1.5">
-                <input
-                  :type="mcpTokenVisible ? 'text' : 'password'"
-                  :value="mcpToken"
-                  readonly
-                  class="flex-1 min-w-0 text-xs font-mono rounded-sm border-0 py-1.5 px-2"
-                  style="background: var(--bg-secondary); color: var(--text-primary);"
-                />
-                <button
-                  @click="mcpTokenVisible = !mcpTokenVisible"
-                  class="px-2 py-1 text-[10px] font-medium rounded-sm border"
-                  style="background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border);"
-                >
-                  {{ mcpTokenVisible ? 'Hide' : 'Show' }}
-                </button>
-                <button
-                  @click="copyMCPToken"
-                  class="px-2 py-1 text-[10px] font-medium rounded-sm border"
-                  style="background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border);"
-                >
-                  {{ mcpTokenCopied ? 'Copied!' : 'Copy' }}
-                </button>
-                <button
-                  @click="regenerateMCPToken"
-                  class="px-2 py-1 text-[10px] font-medium rounded-sm border"
-                  style="background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border);"
-                >
-                  New
-                </button>
-              </div>
-              <p class="text-[10px] mt-1.5 leading-relaxed" style="color: var(--text-tertiary);">
-                Your MCP server must send <code>{"type":"auth","token":"&lt;token&gt;"}</code> as its first message. Commands from unauthenticated servers are ignored.
-              </p>
-            </div>
-
-            <!-- Script execution opt-in -->
-            <label class="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer setting-row">
-              <div class="flex-1">
-                <span class="text-xs block" style="color: var(--text-primary);">Allow script execution</span>
-                <p class="text-[10px] mt-0.5 leading-relaxed" style="color: var(--group-red);">
-                  Lets the MCP server run any JavaScript in any tab (execute_script). Only enable if you trust every tool connected to it.
-                </p>
-              </div>
-              <div class="relative mt-0.5">
-                <input
-                  type="checkbox"
-                  v-model="settings.mcpAllowScriptExecution"
-                  class="sr-only peer"
-                />
-                <div class="toggle-track w-[38px] h-[22px] rounded-full transition-colors duration-200"></div>
-                <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform duration-200 peer-checked:translate-x-4"></div>
-              </div>
-            </label>
-          </template>
         </div>
       </div>
     </div>

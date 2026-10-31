@@ -4,7 +4,7 @@ import { DEFAULT_SETTINGS } from './constants'
 import type { ExtensionSettings } from './types'
 
 /** Settings that a pasted config may never change; they keep the current value. */
-const PROTECTED_KEYS: ReadonlySet<string> = new Set(['mcpAllowScriptExecution'])
+const PROTECTED_KEYS: ReadonlySet<string> = new Set([])
 
 const REDACTED_SECRET = '__REDACTED__'
 

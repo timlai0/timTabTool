@@ -116,7 +116,7 @@ const settingsWithKeys = () => ({
       claude: { apiKey: '', endpoint: 'https://api.anthropic.com' },
     },
   },
-  mcpEnabled: false,
+  windowWidth: 420,
 })
 
 beforeEach(() => {
@@ -140,7 +140,7 @@ describe('sender policy', () => {
 
   it('blocks privileged actions only for untrusted senders', () => {
     expect(policy.isActionAllowed('SAVE_SETTINGS', contentScriptSender)).toBe(false)
-    expect(policy.isActionAllowed('REGENERATE_MCP_TOKEN', contentScriptSender)).toBe(false)
+    expect(policy.isActionAllowed('CLEAR_AI_LOGS', contentScriptSender)).toBe(false)
     expect(policy.isActionAllowed('EXPORT_KNOWN_TABS', contentScriptSender)).toBe(false)
     expect(policy.isActionAllowed('SAVE_SETTINGS', extensionPageSender)).toBe(true)
     expect(policy.isActionAllowed('SEARCH_TABS', contentScriptSender)).toBe(true)
@@ -171,15 +171,15 @@ describe('message router sender checks', () => {
   it('refuses SAVE_SETTINGS from a content script and leaves settings untouched', async () => {
     store.settings = settingsWithKeys()
     const res = await handleExtensionMessage(
-      { action: 'SAVE_SETTINGS', payload: { ...settingsWithKeys(), mcpEnabled: true } } as any,
+      { action: 'SAVE_SETTINGS', payload: { ...settingsWithKeys(), windowWidth: 999 } } as any,
       contentScriptSender,
     )
     expect(res).toEqual({ error: 'Not allowed from this context' })
-    expect(store.settings.mcpEnabled).toBe(false)
+    expect(store.settings.windowWidth).toBe(420)
   })
 
-  it('refuses MCP token access from a content script', async () => {
-    const res = await handleExtensionMessage({ action: 'GET_MCP_TOKEN' } as any, contentScriptSender)
+  it('refuses AI log access from a content script', async () => {
+    const res = await handleExtensionMessage({ action: 'GET_AI_LOGS' } as any, contentScriptSender)
     expect(res).toEqual({ error: 'Not allowed from this context' })
   })
 
@@ -276,105 +276,5 @@ describe('Gemini API key transport', () => {
     expect(url).not.toContain('AIzaSECRET')
     expect(url).not.toContain('key=')
     expect(init.headers['x-goog-api-key']).toBe('AIzaSECRET')
-  })
-})
-
-describe('MCP bridge', () => {
-  class FakeWebSocket {
-    static instances: FakeWebSocket[] = []
-    readyState = 0
-    sent: any[] = []
-    closedWith: number | null = null
-    onopen: (() => void) | null = null
-    onclose: ((e: any) => void) | null = null
-    onerror: ((e: any) => void) | null = null
-    onmessage: ((e: any) => Promise<void> | void) | null = null
-    constructor(public url: string) {
-      FakeWebSocket.instances.push(this)
-    }
-    send(data: string) {
-      this.sent.push(JSON.parse(data))
-    }
-    close(code?: number) {
-      this.closedWith = code ?? 1000
-      this.readyState = 3
-    }
-    open() {
-      this.readyState = 1
-      this.onopen?.()
-    }
-    async receive(msg: any) {
-      await this.onmessage?.({ data: JSON.stringify(msg) })
-    }
-  }
-
-  let bridge: typeof import('../src/background/mcp-bridge')
-
-  beforeAll(async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket)
-    bridge = await import('../src/background/mcp-bridge')
-  })
-
-  beforeEach(() => {
-    FakeWebSocket.instances = []
-  })
-
-  async function connectBridge(): Promise<FakeWebSocket> {
-    store.settings = { mcpEnabled: true, mcpPort: 8585 }
-    bridge.initMCPBridge()
-    await Promise.resolve()
-    const ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
-    ws.open()
-    return ws
-  }
-
-  it('ignores commands until the server authenticates and closes on unauthenticated messages', async () => {
-    const ws = await connectBridge()
-    await ws.receive({ id: 1, command: 'list_tabs' })
-    expect(ws.sent.find((m) => m.id === 1)).toBeUndefined()
-    expect(ws.closedWith).toBe(4401)
-    expect(bridge.getMCPStatus().state).not.toBe('connected')
-  })
-
-  it('rejects a wrong token', async () => {
-    const ws = await connectBridge()
-    await ws.receive({ type: 'auth', token: 'f'.repeat(64) })
-    expect(ws.sent).toContainEqual(expect.objectContaining({ type: 'auth_failed' }))
-    expect(ws.closedWith).toBe(4401)
-  })
-
-  it('accepts the stored token and then runs commands', async () => {
-    const token = await bridge.getOrCreateMCPToken()
-    expect(token).toMatch(/^[0-9a-f]{64}$/)
-    const ws = await connectBridge()
-    await ws.receive({ type: 'auth', token })
-    expect(ws.sent).toContainEqual({ type: 'auth_ok' })
-    expect(bridge.getMCPStatus().state).toBe('connected')
-
-    await ws.receive({ id: 7, command: 'list_tabs' })
-    expect(ws.sent).toContainEqual(expect.objectContaining({ id: 7, success: true }))
-  })
-
-  it('keeps the same token across calls and changes it on regenerate', async () => {
-    const first = await bridge.getOrCreateMCPToken()
-    expect(await bridge.getOrCreateMCPToken()).toBe(first)
-    const next = await bridge.regenerateMCPToken()
-    expect(next).not.toBe(first)
-    expect(store.mcpAuthToken).toBe(next)
-  })
-
-  it('refuses execute_script unless explicitly enabled', async () => {
-    store.settings = { mcpEnabled: false, mcpAllowScriptExecution: false }
-    bridge.initMCPBridge()
-    await expect(bridge.handleMCPCommand('execute_script', { tabId: 1, script: '1+1' })).rejects.toThrow(/disabled/)
-    expect(chrome.scripting.executeScript).not.toHaveBeenCalled()
-  })
-
-  it('validates create_tab URLs and tab IDs', async () => {
-    await expect(bridge.handleMCPCommand('create_tab', { url: 'javascript:alert(1)' })).rejects.toThrow(/http/)
-    await expect(bridge.handleMCPCommand('create_tab', { url: 'file:///C:/secret.txt' })).rejects.toThrow(/http/)
-    await expect(bridge.handleMCPCommand('close_tabs', { tabIds: ['1; drop'] })).rejects.toThrow(/Invalid tabId/)
-    await expect(bridge.handleMCPCommand('get_tab_content', { tabId: -3 })).rejects.toThrow(/Invalid tabId/)
-    await expect(bridge.handleMCPCommand('create_tab', { url: 'https://example.com' })).resolves.toMatchObject({ url: 'https://example.com/' })
   })
 })

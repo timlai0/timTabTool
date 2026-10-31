@@ -114,9 +114,6 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   showRuleGroupsWhenUngrouped: true,
   useSearchPopup: false,
   sortNewTabs: false,
-  mcpEnabled: false,
-  mcpPort: 8585,
-  mcpAllowScriptExecution: false,
   ecoMode: true,
   fastOverlayMode: true,
 }
@@ -131,7 +128,6 @@ export const STORAGE_KEYS = {
   AI_OPERATION_LOGS: 'aiOperationLogs',
   CLOSED_TABS_BY_EXTENSION: 'closedTabsByExtension',
   CUSTOM_WINDOW_NAMES: 'customWindowNames',
-  MCP_AUTH_TOKEN: 'mcpAuthToken',
 } as const
 
 export const MODEL_PRICING: Record<string, { input: number; output: number }> = {

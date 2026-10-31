@@ -62,7 +62,6 @@ import {
   type TabExportFormat,
   type ExportableOpenTab,
 } from '../shared/tab-exporter'
-import { getMCPStatus, reconnectMCP, getOrCreateMCPToken, regenerateMCPToken } from './mcp-bridge'
 import {
   isActionAllowed,
   isTrustedSender,
@@ -429,9 +428,9 @@ async function handleExportKnownTabs(payload: unknown): Promise<unknown> {
 }
 
 /**
- * Handles extension settings and MCP messages.
+ * Handles extension settings messages.
  */
-async function handleSettingsAndMCPMessages(action: string, payload: unknown, sender?: chrome.runtime.MessageSender): Promise<unknown> {
+async function handleSettingsMessages(action: string, payload: unknown, sender?: chrome.runtime.MessageSender): Promise<unknown> {
   switch (action) {
     case 'GET_SETTINGS': {
       const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
@@ -491,15 +490,6 @@ async function handleSettingsAndMCPMessages(action: string, payload: unknown, se
       invalidatePreviewCache()
       return { ok: true }
     }
-    case 'GET_MCP_STATUS':
-      return getMCPStatus()
-    case 'RECONNECT_MCP':
-      reconnectMCP()
-      return { ok: true }
-    case 'GET_MCP_TOKEN':
-      return { ok: true, token: await getOrCreateMCPToken() }
-    case 'REGENERATE_MCP_TOKEN':
-      return { ok: true, token: await regenerateMCPToken() }
     default:
       return null
   }
@@ -527,7 +517,7 @@ export async function handleExtensionMessage(message: ExtensionMessage, sender?:
   const closedTabsResult = await handleClosedTabMessages(message.action, message.payload)
   if (closedTabsResult !== null) return closedTabsResult
 
-  const settingsResult = await handleSettingsAndMCPMessages(message.action, message.payload, sender)
+  const settingsResult = await handleSettingsMessages(message.action, message.payload, sender)
   if (settingsResult !== null) return settingsResult
 
   switch (message.action) {

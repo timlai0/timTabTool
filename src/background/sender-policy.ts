@@ -8,14 +8,10 @@ export const REDACTED_SECRET = '__REDACTED__'
 /**
  * Actions that only the extension's own pages (popup, settings, search/chat pages) may call.
  * Content scripts run inside arbitrary web pages, so a compromised renderer must not be able to
- * read secrets, rewrite settings (e.g. point the AI endpoint elsewhere or enable MCP), or wipe data.
+ * read secrets, rewrite settings (e.g. point the AI endpoint elsewhere), or wipe data.
  */
 export const PRIVILEGED_ACTIONS: ReadonlySet<string> = new Set([
   'SAVE_SETTINGS',
-  'GET_MCP_STATUS',
-  'RECONNECT_MCP',
-  'GET_MCP_TOKEN',
-  'REGENERATE_MCP_TOKEN',
   'GET_AI_LOGS',
   'CLEAR_AI_LOGS',
   'DELETE_AI_LOG',

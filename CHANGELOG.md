@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **MCP Bridge**: The Model Context Protocol WebSocket bridge, its Settings section, message actions and settings keys (`mcpEnabled`, `mcpPort`, `mcpAllowScriptExecution`) have been removed for now.
+
 ### Changed
 - **Branding Consistency**: Standardized remaining repository references, documentation, issue templates, release packaging, and export files from TabPilot to timTabTool.
 
@@ -14,9 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Export Known Unclosed Tabs**: Export currently open tabs and unrestored history tabs that were not explicitly closed (e.g. to recover lost tabs after a browser crash or sync failure). Supports scoping to open tabs only, unrestored tabs only, or both, formatted as Markdown (.md), JSON (.json), plain text URL list (.txt), or Netscape Bookmark HTML (.html) with copy-to-clipboard and file download options in Settings.
 
 ### Security
-- **MCP Bridge Authentication (breaking for MCP servers)**: The bridge now requires the server to send `{"type":"auth","token":"<token>"}` as its first message; the token is shown in Settings → MCP and stored separately from settings. Unauthenticated or wrong-token connections are closed with code `4401`. `execute_script` is disabled unless "Allow script execution" is turned on, `create_tab` only accepts http(s) URLs, and tab IDs are validated.
 - **Gemini API Key Leak into Logs**: Gemini requests and model listing now send the key via the `x-goog-api-key` header instead of the `?key=` query string. AI logs redact keys and bearer tokens, and keys already stored in old logs are scrubbed on load.
-- **Message Sender Checks**: Settings writes, MCP token/status, AI logs, closed-tab management and tab export are now restricted to extension pages. Content scripts receive settings with API keys redacted, change the model through the narrow `SET_AI_MODEL` action, and cannot open `javascript:`/`data:`/`file:`/`blob:` URLs via `OPEN_URL`.
+- **Message Sender Checks**: Settings writes, AI logs, closed-tab management and tab export are now restricted to extension pages. Content scripts receive settings with API keys redacted, change the model through the narrow `SET_AI_MODEL` action, and cannot open `javascript:`/`data:`/`file:`/`blob:` URLs via `OPEN_URL`.
 - **Config Copy/Paste**: "Copy Config" no longer puts API keys on the clipboard. "Paste Config" type-checks every field, drops non-http(s) endpoints and unknown providers, keeps existing API keys when the paste has none, ignores `__proto__` keys, never changes "Allow script execution", and lists any ignored fields.
 - **Chat Link Sanitization**: Markdown links in AI chat replies only become anchors for http(s) URLs, and link attributes are quote-escaped so model output cannot inject attributes or `javascript:` links.
 - **Favicon Fingerprinting**: The `_favicon/*` web-accessible resource now uses `use_dynamic_url`, so websites can no longer probe the static extension URL to detect the extension.

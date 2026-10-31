@@ -26,7 +26,6 @@ import {
 import { recordTabVisit } from './storage'
 import { STORAGE_KEYS } from '../shared/constants'
 import type { ExtensionMessage, ExtensionSettings } from '../shared/types'
-import { initMCPBridge } from './mcp-bridge'
 import {
   toggleSearchOverlay,
   focusExistingSearchTabOrWindow,
@@ -377,6 +376,3 @@ chrome.runtime.onMessage.addListener(
     return true
   },
 )
-
-// MCP bridge listener initialization
-initMCPBridge()
