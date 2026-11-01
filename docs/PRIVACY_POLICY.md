@@ -1,62 +1,77 @@
 # Privacy Policy for timTabTool
 
-**Last Updated:** 2026-02-26
+**Last Updated:** 2026-11-01
 
 ## Overview
 
-timTabTool is a Chrome browser extension that helps users organize and search their browser tabs using rule-based and AI-powered classification. We are committed to protecting your privacy.
+timTabTool is a browser extension for Chrome and Firefox that helps you organize, search and manage your browser tabs using a built-in rule engine and, optionally, an AI provider that you configure yourself. It has no accounts, no servers of its own, and no analytics. We do not receive any of your data.
 
-## Data Collection
+## Data the extension handles
 
-### What We Collect
-- **Tab metadata only:** Tab titles and URLs are processed locally on your device for classification and search purposes.
-- **Tab visit history:** Stored locally in `chrome.storage.local` (up to 500 recent entries) to enable searching recently closed tabs.
+The extension works with the following data, all of which stays on your device in `chrome.storage.local` (`browser.storage.local` in Firefox) unless you use an optional AI feature (see below):
 
-### What We Do NOT Collect
-- We do **not** collect, store, or transmit any personal information.
-- We do **not** track browsing behavior beyond what is needed for tab management.
-- We do **not** use analytics, tracking pixels, or any third-party tracking services.
-- We do **not** sell, share, or monetize any user data.
+- **Open tabs:** titles, URLs, favicons, tab group and window membership, used for grouping, search and the popup list.
+- **Recently closed tabs and visit history:** a bounded list of tabs you or the extension closed, so you can search and restore them.
+- **Settings:** your preferences, custom prompts, window names and, if you add them, AI provider settings including your API key.
+- **AI operation log:** a local record of AI requests and responses (including the tab titles and URLs that were sent) so you can review what happened. You can filter, export and clear it in Settings.
+- **Window Chat conversations:** the threads, messages, summaries and undo information for the optional chat feature.
 
-## AI Feature (Optional)
+We do **not** read the content of the web pages you visit. The extension's content script only provides the search overlay; it does not read, collect or transmit page content, form data or keystrokes outside that overlay.
 
-If you choose to enable the optional AI-enhanced classification:
-- Your API key is stored locally in `chrome.storage.local` on your device.
-- Tab titles and URLs are sent to the AI provider you configure (OpenAI, Anthropic, or custom endpoint) **only when you explicitly trigger classification**.
-- We do **not** proxy or intercept these requests. They go directly from your browser to the AI provider.
-- You are responsible for your relationship with the AI provider and their privacy policy.
+## Optional AI features
 
-## Data Storage
+AI features are off until you add an API key. When you use one (for example "Group Tabs" with AI, classification, or Window Chat):
 
-- All data is stored locally on your device using Chrome's `chrome.storage.local` API.
-- No data is stored on external servers.
-- Uninstalling the extension removes all stored data.
+- Tab **titles and URLs** (and your own chat messages and the chat history needed for context) are sent **directly from your browser** to the AI provider you chose: OpenAI, Anthropic, Google Gemini, OpenRouter, or a custom OpenAI-compatible endpoint you entered (including local servers such as Ollama).
+- Requests happen only when you trigger an AI action or send a chat message (or when an optional automatic feature that you enabled runs).
+- We do not proxy, see or store these requests. Your API key is stored locally and is sent only to the provider you configured. The provider's own privacy policy governs what it does with the data.
+- Requests to OpenRouter include an `X-Title: timTabTool` and a `HTTP-Referer` header that identify the app to OpenRouter; they contain no tab data.
+- Unencrypted `http://` endpoints are refused for public hosts; they are allowed only for localhost and private-network servers.
 
-## Permissions
+### Tab actions in Window Chat
+
+If you enable tab actions in Window Chat, the assistant may *propose* closing, grouping, ungrouping, pinning, unpinning or focusing tabs. Depending on the permission mode you choose (Off, Ask every time, Confirm closing, Auto), actions run after your approval or automatically. The extension validates every proposal locally: it never touches pinned tabs or its own pages, and it limits how many tabs one action can affect. Closed tabs can be restored with Undo. Tab titles and URLs come from websites and are treated as untrusted when sent to the model.
+
+## Data we do not collect
+
+- We do not collect, transmit, sell or share personal information, browsing history or tab contents with us or any third party other than the AI provider you explicitly configure.
+- We do not use analytics, telemetry, advertising, tracking pixels or error-reporting services.
+- We do not use your data for creditworthiness, lending or any purpose unrelated to the extension's tab-management features.
+
+## Data storage and deletion
+
+- Everything is stored locally with `chrome.storage.local` (`browser.storage.local` in Firefox). Nothing is synced to our servers and the extension does not use `chrome.storage.sync`.
+- You can delete conversations, AI logs and history in the extension, or remove everything by uninstalling the extension.
+
+## Permissions and why they are needed
 
 | Permission | Purpose |
 |-----------|---------|
-| `tabs` | Read tab titles and URLs for classification and search |
-| `tabGroups` | Create and manage Chrome Tab Groups |
-| `storage` | Store settings and tab history locally |
-| `sidePanel` | Display the search interface in Chrome's side panel |
+| `tabs` | Read tab titles and URLs and manage tabs (group, move, close, focus) for classification, search and chat actions |
+| `tabGroups` | Create, rename, color and dissolve native browser tab groups |
+| `storage` | Keep settings, history, logs and chat threads on your device |
+| `scripting` | Inject the search overlay into tabs that were already open when the extension was installed or updated, or on demand in Firefox |
+| `favicon` | Show site icons in the tab list through Chrome's local favicon cache (Chrome build only; no external request) |
+| `clipboardRead` | Let you paste an exported settings configuration ("Paste Config") |
+| `contextMenus` | Add shortcuts to the toolbar icon's right-click menu (search and tab-group actions; includes the `menus` permission alias in the Firefox build) |
+| Host access (`<all_urls>`) | Show the search overlay on any page, inject it into existing tabs, and call the AI endpoint you configure (which can be any host you choose) |
 
-## Third-Party Services
+## Third-party services
 
-This extension does not use any third-party services by default. If you enable the optional AI feature, data is sent to the AI provider of your choice (OpenAI, Anthropic, or a custom endpoint).
+None by default. If you enable AI features, data is sent to the provider you configure, as described above.
 
-## Children's Privacy
+## Children's privacy
 
-This extension is not directed at children under the age of 13 and does not knowingly collect information from children.
+This extension is not directed at children under 13 and does not knowingly collect information from children.
 
-## Changes to This Policy
+## Changes to this policy
 
-We may update this privacy policy from time to time. Changes will be noted in the extension's changelog.
+We may update this policy from time to time. Changes will be noted in the changelog and the "Last Updated" date above.
 
 ## Contact
 
-If you have questions about this privacy policy, please open an issue on our GitHub repository.
+Questions about this policy can be raised by opening an issue on the project's GitHub repository: https://github.com/timlai0/timTabTool/issues
 
 ---
 
-*This privacy policy applies to timTabTool version 1.0.0 and later.*
+*This privacy policy applies to timTabTool version 1.2.0 and later.*

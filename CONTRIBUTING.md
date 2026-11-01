@@ -1,8 +1,8 @@
 # Contributing to timTabTool
 
-Thank you for your interest in contributing to timTabTool! This guide will help you get started.
+Thank you for your interest in contributing to timTabTool. This guide will help you get started.
 
-[🇨🇳 简体中文](#贡献指南)
+[简体中文](#贡献指南)
 
 ---
 
@@ -11,32 +11,32 @@ Thank you for your interest in contributing to timTabTool! This guide will help 
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 20+
-- [pnpm](https://pnpm.io/) 10+
-- Chrome browser
+- npm 10+ (or [pnpm](https://pnpm.io/) 10+)
+- Chrome or Firefox (142+) browser
 
 ### Setup
 
 ```bash
-git clone https://github.com/florianlanx/timTabTool.git
-cd timtabtool
-pnpm install
-pnpm dev
+git clone https://github.com/timlai0/timTabTool.git
+cd timTabTool
+npm ci
+npm run dev
 ```
 
-Load `dist/` as an unpacked extension in `chrome://extensions` (enable Developer Mode).
+Load `dist/` as an unpacked extension in `chrome://extensions` (enable Developer Mode), or run `npm run build:firefox` and load `dist-firefox/manifest.json` in Firefox (`about:debugging#/runtime/this-firefox`).
 
 ## How to Contribute
 
 ### Reporting Bugs
 
-Use the [Bug Report](https://github.com/florianlanx/timTabTool/issues/new?template=bug_report.yml) template. Include:
-- Chrome version and OS
+Use the [Bug Report](https://github.com/timlai0/timTabTool/issues/new?template=bug_report.yml) template. Include:
+- Browser version and OS
 - Steps to reproduce
 - Expected vs actual behavior
 
 ### Suggesting Features
 
-Use the [Feature Request](https://github.com/florianlanx/timTabTool/issues/new?template=feature_request.yml) template.
+Use the [Feature Request](https://github.com/timlai0/timTabTool/issues/new?template=feature_request.yml) template.
 
 ### Pull Requests
 
@@ -45,7 +45,7 @@ Use the [Feature Request](https://github.com/florianlanx/timTabTool/issues/new?t
    - `fix/issue-description` for bug fixes
    - `docs/what-changed` for documentation
 2. Make your changes
-3. Ensure the build passes: `pnpm build && pnpm test && pnpm typecheck`
+3. Ensure the build and tests pass: `npx vite build && npm run build:firefox && npm test && npm run typecheck`
 4. Submit a PR with a clear description
 
 ## Commit Convention
@@ -64,7 +64,7 @@ docs: update AI provider setup guide
 - **TypeScript strict mode** — no `any` unless unavoidable (add comment explaining why)
 - **Naming**: files `kebab-case.ts`, types `PascalCase`, variables `camelCase`, constants `UPPER_SNAKE_CASE`
 - **Vue**: extract complex template expressions into `computed`, avoid nested ternaries
-- **Functions**: keep them short and focused (~40 lines max), single responsibility
+- **Functions**: keep them short and focused (~30 lines max), single responsibility
 - **No dead code**: remove unused imports, variables, and functions before committing
 
 ## Project Architecture
@@ -81,33 +81,34 @@ src/
 ## Development Commands
 
 ```bash
-pnpm dev          # Dev server with HMR
-pnpm build        # Production build
-pnpm test         # Run tests
-pnpm typecheck    # Type check
+npm run dev           # Dev server with HMR
+npx vite build        # Production build (Chrome)
+npm run build:firefox # Production build (Firefox)
+npm test              # Run tests
+npm run typecheck     # Type check
 ```
 
 ---
 
 <h1 id="贡献指南">贡献指南</h1>
 
-感谢你对 timTabTool 的关注！以下是贡献指南。
+感谢你对 timTabTool 的关注。以下是贡献指南。
 
 ## 开始
 
 ### 环境要求
 
 - [Node.js](https://nodejs.org/) 20+
-- [pnpm](https://pnpm.io/) 10+
-- Chrome 浏览器
+- npm 10+（或 [pnpm](https://pnpm.io/) 10+）
+- Chrome 或 Firefox (142+) 浏览器
 
 ### 本地开发
 
 ```bash
-git clone https://github.com/florianlanx/timTabTool.git
-cd timtabtool
-pnpm install
-pnpm dev
+git clone https://github.com/timlai0/timTabTool.git
+cd timTabTool
+npm ci
+npm run dev
 ```
 
 在 `chrome://extensions` 中加载 `dist/` 目录（需开启开发者模式）。
@@ -116,14 +117,14 @@ pnpm dev
 
 ### 报告 Bug
 
-使用 [Bug 报告](https://github.com/florianlanx/timTabTool/issues/new?template=bug_report.yml) 模板，请提供：
-- Chrome 版本和操作系统
+使用 [Bug 报告](https://github.com/timlai0/timTabTool/issues/new?template=bug_report.yml) 模板，请提供：
+- 浏览器版本和操作系统
 - 复现步骤
 - 期望行为 vs 实际行为
 
 ### 功能建议
 
-使用 [功能请求](https://github.com/florianlanx/timTabTool/issues/new?template=feature_request.yml) 模板。
+使用 [功能请求](https://github.com/timlai0/timTabTool/issues/new?template=feature_request.yml) 模板。
 
 ### 提交 PR
 
@@ -132,7 +133,7 @@ pnpm dev
    - `fix/问题描述` Bug 修复
    - `docs/改动内容` 文档更新
 2. 完成修改
-3. 确保构建通过：`pnpm build && pnpm test && pnpm typecheck`
+3. 确保构建通过：`npx vite build && npm run build:firefox && npm test && npm run typecheck`
 4. 提交 PR 并附上清晰的描述
 
 ## 提交规范
@@ -149,7 +150,7 @@ docs: 更新 AI 供应商配置指南
 ## 代码规范
 
 - **TypeScript 严格模式** — 除非不可避免，否则不使用 `any`（需添加注释说明原因）
-- **命名**：文件 `kebab-case.ts`，类型 `PascalCase`，变量 `camelCase`，常量 `UPPER_SNAKE_CASE`
+- **命名**：文件 `kebab-case.ts`, 类型 `PascalCase`, 变量 `camelCase`, 常量 `UPPER_SNAKE_CASE`
 - **Vue**：复杂模板表达式提取为 `computed`，避免嵌套三元运算符
-- **函数**：保持简短聚焦（约 40 行以内），单一职责
+- **函数**：保持简短聚焦（约 30 行以内），单一职责
 - **无死代码**：提交前删除未使用的导入、变量和函数

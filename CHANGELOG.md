@@ -9,8 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - **MCP Bridge**: The Model Context Protocol WebSocket bridge, its Settings section, message actions and settings keys (`mcpEnabled`, `mcpPort`, `mcpAllowScriptExecution`) have been removed for now.
+- **Unused `activeTab` Permission**: Removed redundant `activeTab` permission from `manifest.json` since `<all_urls>` host permission and `tabs` are already declared.
 
 ### Added
+- **Multi-Thread Window Chat & Undoable Tab Actions**: Added multi-thread conversation management (`chat-threads.ts`), token budgeting and rolling conversation summarization (`chat-helpers.ts`), and structured assistant tab actions (`close`, `group`, `ungroup`, `pin`, `unpin`, `focus`) with configurable permission modes (`off`, `ask`, `confirm-close`, `auto`) and one-click snapshot undo (`chat-tools.ts`, `chat-tool-actions.ts`).
+- **Chrome Web Store & Firefox AMO Store Readiness**: Added automated store readiness test suite (`tests/store-readiness.test.ts`), updated privacy policy (`docs/PRIVACY_POLICY.md`) and bilingual store submission guide (`docs/STORE_LISTING.md`) with permission justifications and Mozilla AMO reviewer build instructions, and configured release packaging for Chrome (`timtabtool-chrome.zip`), Firefox (`timtabtool-firefox.zip`), and clean AMO source archives (`timtabtool-source.zip`).
 - **AI Operation Log Filtering & Export**: Filter AI logs by status, action type, age range, and text query in Settings. Export single or filtered logs as JSON, Markdown, or CSV with optional raw requests/responses.
 - **Export Known Unclosed Tabs**: Export currently open tabs and unrestored history tabs that were not explicitly closed (e.g. to recover lost tabs after a browser crash or sync failure). Supports scoping to open tabs only, unrestored tabs only, or both, formatted as Markdown (.md), JSON (.json), plain text URL list (.txt), or Netscape Bookmark HTML (.html) with copy-to-clipboard and file download options in Settings.
 

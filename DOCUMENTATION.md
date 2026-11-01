@@ -1,8 +1,8 @@
-# TabPilot Technical Documentation
+# timTabTool Technical Documentation
 
 ## Architecture & Core Modules
 
-This document serves as the master index for the architecture, namespaces, and core modules of the TabPilot repository. All files have been processed to include strict JSDoc blocks, narrative inline comments, and abandonment flags where applicable.
+This document serves as the master index for the architecture, namespaces, and core modules of the timTabTool repository. All files have been processed to include strict JSDoc blocks, narrative inline comments, and abandonment flags where applicable.
 
 ### Background Service & Core Logic (`src/background/`)
 
