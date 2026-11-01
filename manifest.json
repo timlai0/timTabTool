@@ -4,6 +4,7 @@
   "description": "__MSG_extDescription__",
   "version": "1.2.0.25",
   "default_locale": "en",
+  "minimum_chrome_version": "104",
   "permissions": [
     "tabs",
     "tabGroups",
@@ -11,8 +12,7 @@
     "scripting",
     "favicon",
     "clipboardRead",
-    "contextMenus",
-    "activeTab"
+    "contextMenus"
   ],
   "host_permissions": [
     "<all_urls>"

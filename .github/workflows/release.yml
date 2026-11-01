@@ -15,40 +15,58 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'pnpm'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Type check
-        run: pnpm typecheck
+        run: npm run typecheck
 
       - name: Run tests
-        run: pnpm test
+        run: npm test
 
-      - name: Build
-        run: pnpm build
+      - name: Build Chrome extension
+        run: npx vite build
 
-      - name: Package extension
+      - name: Build Firefox extension
+        run: npm run build:firefox
+
+      - name: Lint Firefox package
+        run: npm run lint:firefox
+
+      - name: Package Chrome, Firefox, and Source archives
         run: |
           cd dist
-          zip -r ../timtabtool-${GITHUB_REF_NAME}.zip . -x "*.DS_Store" ".vite/*"
+          zip -r ../timtabtool-chrome-${GITHUB_REF_NAME}.zip . -x "*.DS_Store" ".vite/*"
+          cd ..
+          cd dist-firefox
+          zip -r ../timtabtool-firefox-${GITHUB_REF_NAME}.zip . -x "*.DS_Store" ".vite/*"
+          cd ..
+          git archive --format=zip -o timtabtool-source-${GITHUB_REF_NAME}.zip HEAD
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: timTabTool ${{ github.ref_name }}
-          files: timtabtool-${{ github.ref_name }}.zip
+          files: |
+            timtabtool-chrome-${{ github.ref_name }}.zip
+            timtabtool-firefox-${{ github.ref_name }}.zip
+            timtabtool-source-${{ github.ref_name }}.zip
           generate_release_notes: true
           body: |
             ## Install
 
-            1. Download `timtabtool-${{ github.ref_name }}.zip` below
+            ### Chrome / Edge / Brave (Unpacked)
+            1. Download `timtabtool-chrome-${{ github.ref_name }}.zip` below
             2. Unzip to a folder
-            3. Open `chrome://extensions` → enable **Developer Mode**
-            4. Click **Load unpacked** → select the unzipped folder
+            3. Open `chrome://extensions` and enable **Developer Mode**
+            4. Click **Load unpacked** and select the unzipped folder
+
+            ### Firefox (Temporary Add-on / AMO Build)
+            1. Download `timtabtool-firefox-${{ github.ref_name }}.zip` below
+            2. Open `about:debugging#/runtime/this-firefox` in Firefox 142+
+            3. Click **Load Temporary Add-on...** and select the `.zip` file

@@ -9,7 +9,7 @@ const rootDir = path.resolve(__dirname, '..');
 const manifestPath = path.join(rootDir, 'manifest.json');
 const firefoxManifestPath = path.join(rootDir, 'dist-firefox', 'manifest.json');
 
-console.log('🤖 Transforming manifest.json for Firefox...');
+console.log('[timTabTool] Transforming manifest.json for Firefox...');
 
 try {
   // Read original manifest
@@ -49,6 +49,9 @@ try {
   // 4. Remove static content_scripts for Firefox to prevent 2000+ tab memory leaks (loaded dynamically on demand via scripting.executeScript)
   delete manifest.content_scripts;
 
+  // Chrome-only key; Firefox lints it as unsupported
+  delete manifest.minimum_chrome_version;
+
   // 5. Add Firefox browser_specific_settings (Gecko ID is MANDATORY for Firefox MV3)
   manifest.browser_specific_settings = {
     gecko: {
@@ -68,8 +71,8 @@ try {
 
   // Write new manifest
   fs.writeFileSync(firefoxManifestPath, JSON.stringify(manifest, null, 2), 'utf8');
-  console.log('✅ Firefox manifest generated successfully in dist-firefox/manifest.json');
+  console.log('[timTabTool] Firefox manifest generated successfully in dist-firefox/manifest.json');
 } catch (error) {
-  console.error('❌ Error generating Firefox manifest:', error);
+  console.error('[timTabTool] Error generating Firefox manifest:', error);
   process.exit(1);
 }

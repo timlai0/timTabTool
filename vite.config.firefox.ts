@@ -29,10 +29,10 @@ const firefoxManifestPlugin = () => ({
   name: 'firefox-manifest-plugin',
   closeBundle() {
     try {
-      console.log('🤖 Running build-firefox.js script...')
+      console.log('[timTabTool] Running build-firefox.js script...')
       execSync('node scripts/build-firefox.js', { stdio: 'inherit' })
     } catch (err) {
-      console.error('❌ Failed to run build-firefox.js:', err)
+      console.error('[timTabTool] Failed to run build-firefox.js:', err)
     }
   }
 })

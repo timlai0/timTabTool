@@ -36,4 +36,4 @@ versionTs = versionTs.replace(/export const APP_VERSION = '.*'/, `export const A
 versionTs = versionTs.replace(/export const BUILD_NUMBER = '.*'/, `export const BUILD_NUMBER = '${build}'`)
 fs.writeFileSync(versionTsPath, versionTs, 'utf-8')
 
-console.log(`\n🚀 Bumped version to ${newVersion} (Build ${build})\n`)
+console.log(`\n[timTabTool] Bumped version to ${newVersion} (Build ${build})\n`)
