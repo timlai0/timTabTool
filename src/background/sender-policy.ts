@@ -23,6 +23,8 @@ export const PRIVILEGED_ACTIONS: ReadonlySet<string> = new Set([
   'DELETE_CLOSED_BATCH',
   'CLEAR_CLOSED_TABS',
   'EXPORT_KNOWN_TABS',
+  'CHAT_TOOL_EXEC',
+  'CHAT_TOOL_UNDO',
 ])
 
 /**

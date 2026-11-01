@@ -1454,7 +1454,7 @@ For each tab, decide which existing group it belongs to. If none fit, use "NEW" 
 
 <template>
   <SettingsView v-if="currentView === 'settings'" :is-standalone-search="isStandaloneSearch" @back="handleSettingsBack" />
-  <ChatView v-else-if="currentView === 'chat'" :all-windows="allWindows" :current-window-id="activeChatWindowId || currentWindowId" @back="currentView = 'main'" />
+  <ChatView v-else-if="currentView === 'chat'" :all-windows="allWindows" :current-window-id="activeChatWindowId || currentWindowId" @back="currentView = 'main'" @tabs-changed="loadAllPreviews()" />
 
   <div v-else :style="isStandaloneSearch ? { width: '380px', height: '100%', background: 'var(--bg-primary)' } : { width: Math.max(360, windowWidth) + 'px', height: Math.max(240, Math.min(600, windowHeight || 500)) + 'px', background: 'var(--bg-primary)' }" class="flex flex-col">
     <!-- Header -->

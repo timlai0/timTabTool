@@ -3,6 +3,16 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue"
 import { AIClient } from "../../shared/ai-client"
 import { STORAGE_KEYS, DEFAULT_SETTINGS } from "../../shared/constants"
 import { formatMarkdown as baseFormatMarkdown, isSafeLinkUrl, escapeAttribute } from "../../shared/utils"
+import { buildChatPrompt, estimateChatTokens, exportChatMarkdown, splitForSummary, buildSummaryPrompt, cleanSummary, CHAT_SUGGESTIONS } from "../../shared/chat-helpers"
+import {
+  loadThreads, loadThread, saveThread, createThread, setActiveThread, renameThread, deleteThread, applyThreadSummary,
+  type ChatThreadMeta
+} from "../../shared/chat-threads"
+import {
+  CHAT_TOOL_MODES, DEFAULT_CHAT_TOOL_MODE, buildToolsPrompt, parseActionBlocks, stripActionsBlock, validateToolCalls,
+  needsConfirmation, actionMemoryNote, canUndo,
+  type ChatToolMode, type ChatActionRecord, type ScopeTab
+} from "../../shared/chat-tools"
 import type { WindowGroupsInfo, ExtensionSettings, ReasoningEffort } from "../../shared/types"
 
 interface ChatMessage {
@@ -11,6 +21,7 @@ interface ChatMessage {
   content: string
   reasoning?: string
   fullRequest?: string
+  actions?: ChatActionRecord[]
   timestamp: number
   showDetails?: boolean
 }
@@ -22,6 +33,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "back"): void
+  (e: "tabs-changed"): void
 }>()
 
 const targetWin = computed(() => {
@@ -48,6 +60,37 @@ const chatContainer = ref<HTMLElement | null>(null)
 const elapsedMs = ref<number>(0)
 const selectedScope = ref<string | number>(props.currentWindowId ?? "all")
 
+const threads = ref<ChatThreadMeta[]>([])
+const activeThreadId = ref("")
+const summary = ref("")
+const summarizedCount = ref(0)
+const isSummarizing = ref(false)
+const renaming = ref(false)
+const renameDraft = ref("")
+const renameInput = ref<HTMLInputElement | null>(null)
+const confirmingDelete = ref(false)
+let confirmDeleteTimer: ReturnType<typeof setTimeout> | null = null
+let summaryAbortController: AbortController | null = null
+
+const activeThread = computed(() => threads.value.find(t => t.id === activeThreadId.value))
+
+const toolMode = ref<ChatToolMode>(DEFAULT_CHAT_TOOL_MODE)
+const actionsRunning = ref(0)
+const isBusy = computed(() => isLoading.value || actionsRunning.value > 0)
+const toolModeHint = computed(() => CHAT_TOOL_MODES.find(m => m.value === toolMode.value)?.hint ?? "")
+
+const rootEl = ref<HTMLElement | null>(null)
+const rootWidth = ref(0)
+/** With enough room, threads move from the dropdown bar into a left sidebar. */
+const SIDEBAR_MIN_WIDTH = 720
+const showSidebar = computed(() => rootWidth.value >= SIDEBAR_MIN_WIDTH)
+let resizeObserver: ResizeObserver | null = null
+
+const scopeWindows = computed(() => {
+  if (selectedScope.value === "all") return props.allWindows
+  return [props.allWindows.find(w => w.windowId === selectedScope.value) || props.allWindows[0]].filter(Boolean)
+})
+
 const totalScopeTabs = computed(() => {
   if (selectedScope.value === "all") {
     return props.allWindows.reduce((acc, w) => acc + w.groups.reduce((gAcc, g) => gAcc + g.tabs.length, 0), 0)
@@ -57,7 +100,18 @@ const totalScopeTabs = computed(() => {
 })
 
 const estimatedTokens = computed(() => {
-  return Math.round(totalScopeTabs.value * 35)
+  return estimateChatTokens(totalScopeTabs.value, {
+    turns: messages.value,
+    summary: summary.value,
+    summarizedCount: summarizedCount.value
+  })
+})
+
+const lastAssistantId = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    if (messages.value[i].role === "assistant") return messages.value[i].id
+  }
+  return ""
 })
 
 let timerInterval: ReturnType<typeof setInterval> | null = null
@@ -99,22 +153,21 @@ function scrollToBottom() {
 onMounted(async () => {
   const data = await chrome.storage.local.get([
     "savedChatPrompts",
-    "chatSessionMessages",
     "chatCurrentPrompt",
     "chatReasoningEffort",
-    "chatClickedUrls",
+    "chatToolMode",
     STORAGE_KEYS.SETTINGS
   ])
+  if (CHAT_TOOL_MODES.some(m => m.value === data.chatToolMode)) {
+    toolMode.value = data.chatToolMode as ChatToolMode
+  }
 
   if (Array.isArray(data.savedChatPrompts)) {
     savedPrompts.value = data.savedChatPrompts as string[]
   }
-  if (Array.isArray(data.chatSessionMessages)) {
-    messages.value = data.chatSessionMessages
-  }
-  if (Array.isArray(data.chatClickedUrls)) {
-    clickedUrls.value = data.chatClickedUrls
-  }
+  const loaded = await loadThreads()
+  threads.value = loaded.threads
+  await openThread(loaded.activeId)
   if (typeof data.chatCurrentPrompt === "string") {
     userPrompt.value = data.chatCurrentPrompt
   }
@@ -131,8 +184,21 @@ onMounted(async () => {
   scrollToBottom()
 })
 
+onMounted(() => {
+  if (rootEl.value && typeof ResizeObserver !== "undefined") {
+    rootWidth.value = rootEl.value.clientWidth
+    resizeObserver = new ResizeObserver(entries => {
+      rootWidth.value = entries[0]?.contentRect.width ?? rootEl.value?.clientWidth ?? 0
+    })
+    resizeObserver.observe(rootEl.value)
+  }
+})
+
 onUnmounted(() => {
+  resizeObserver?.disconnect()
   stopTimer()
+  if (confirmDeleteTimer) clearTimeout(confirmDeleteTimer)
+  if (summaryAbortController) summaryAbortController.abort()
   if (currentAbortController) {
     currentAbortController.abort()
   }
@@ -142,27 +208,141 @@ watch(userPrompt, (val) => {
   chrome.storage.local.set({ chatCurrentPrompt: val })
 })
 
+watch(toolMode, (val) => {
+  chrome.storage.local.set({ chatToolMode: val })
+})
+
 watch(reasoningEffort, (val) => {
   chrome.storage.local.set({ chatReasoningEffort: val })
 })
 
-async function saveMessages() {
-  await chrome.storage.local.set({
-    chatSessionMessages: messages.value.map(m => ({
-      ...m,
-      showDetails: false // Don't persist UI toggle state
-    }))
-  })
-}
-
-async function clearChat() {
-  messages.value = []
-  clickedUrls.value = []
+/** Load a thread's messages and memory into the view. */
+async function openThread(id: string) {
+  const data = await loadThread(id)
+  activeThreadId.value = id
+  messages.value = data.messages
+  clickedUrls.value = data.clickedUrls
+  summary.value = data.summary
+  summarizedCount.value = data.summarizedCount
   errorMsg.value = ""
   liveReasoning.value = ""
   liveContent.value = ""
-  await chrome.storage.local.set({ chatClickedUrls: [] })
-  await saveMessages()
+  renaming.value = false
+  confirmingDelete.value = false
+  await setActiveThread(id)
+  scrollToBottom()
+}
+
+async function saveMessages() {
+  if (!activeThreadId.value) return
+  const result = await saveThread(activeThreadId.value, {
+    messages: messages.value.map(({ showDetails: _ui, ...m }) => m), // UI toggle state is not persisted
+    clickedUrls: clickedUrls.value,
+    summary: summary.value,
+    summarizedCount: summarizedCount.value
+  })
+  threads.value = result.threads
+  if (result.dropped > 0) {
+    // The oldest messages were trimmed from storage; mirror that so indices keep matching the summary.
+    messages.value = messages.value.slice(result.dropped)
+    summarizedCount.value = Math.max(0, summarizedCount.value - result.dropped)
+    if (summarizedCount.value === 0) summary.value = ""
+  }
+}
+
+async function switchThread(id: string) {
+  if (isBusy.value || id === activeThreadId.value) return
+  await openThread(id)
+}
+
+async function newChat() {
+  if (isBusy.value) return
+  // Reuse the current thread when it is still empty instead of piling up blank ones.
+  if (messages.value.length === 0) return
+  const created = await createThread()
+  threads.value = created.threads
+  await openThread(created.id)
+}
+
+function startRename() {
+  renameDraft.value = activeThread.value?.title ?? ""
+  renaming.value = true
+  nextTick(() => {
+    renameInput.value?.focus()
+    renameInput.value?.select()
+  })
+}
+
+async function commitRename() {
+  if (!renaming.value) return
+  renaming.value = false
+  threads.value = await renameThread(activeThreadId.value, renameDraft.value)
+}
+
+/** Two-step delete: the first click arms the button, the second (within 3s) removes the thread. */
+async function removeThread() {
+  if (isBusy.value) return
+  if (messages.value.length > 0 && !confirmingDelete.value) {
+    confirmingDelete.value = true
+    if (confirmDeleteTimer) clearTimeout(confirmDeleteTimer)
+    confirmDeleteTimer = setTimeout(() => { confirmingDelete.value = false }, 3000)
+    return
+  }
+  if (summaryAbortController) summaryAbortController.abort()
+  const result = await deleteThread(activeThreadId.value)
+  threads.value = result.threads
+  await openThread(result.activeId)
+}
+
+/**
+ * Fold the oldest unsummarized turns into the thread's rolling summary. Runs after a reply, in the
+ * background; on failure the older turns simply fall out of memory until the next attempt.
+ */
+async function maybeSummarize() {
+  if (isSummarizing.value) return
+  const turns = messages.value.map(memoryTurn)
+  const split = splitForSummary(turns, summarizedCount.value)
+  if (!split) return
+
+  const threadId = activeThreadId.value
+  const settingsData = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS)
+  const settings = (settingsData[STORAGE_KEYS.SETTINGS] as Partial<ExtensionSettings>) || { ...DEFAULT_SETTINGS }
+  const baseAiConfig = settings.ai || DEFAULT_SETTINGS.ai
+  if (!baseAiConfig.enabled || (!baseAiConfig.apiKey && baseAiConfig.provider !== "custom")) return
+
+  isSummarizing.value = true
+  summaryAbortController = new AbortController()
+  try {
+    const client = new AIClient({ ...baseAiConfig, reasoningEffort: "minimal" }, summaryAbortController.signal)
+    const raw = await client.chat(buildSummaryPrompt(summary.value, split.toSummarize))
+    const next = cleanSummary(raw)
+    if (!next) return
+
+    if (threadId === activeThreadId.value) {
+      // Ignore the result if the user deleted messages meanwhile and the numbering no longer lines up.
+      if (messages.value.length < split.newCount || summarizedCount.value > split.newCount) return
+      summary.value = next
+      summarizedCount.value = split.newCount
+      await saveMessages()
+    } else {
+      await applyThreadSummary(threadId, next, split.newCount)
+    }
+  } catch {
+    // Summaries are best-effort.
+  } finally {
+    isSummarizing.value = false
+    summaryAbortController = null
+  }
+}
+
+/** A message as the model should remember it: its text plus what happened to any actions it proposed. */
+function memoryTurn(m: ChatMessage) {
+  const note = actionMemoryNote(m.actions)
+  return { role: m.role, content: note ? `${m.content}\n${note}` : m.content }
+}
+
+function formatThreadLabel(t: ChatThreadMeta) {
+  return t.messageCount > 0 ? `${t.title} (${Math.ceil(t.messageCount / 2)})` : t.title
 }
 
 function stopGenerating() {
@@ -176,7 +356,7 @@ function stopGenerating() {
     messages.value.push({
       id: assistantMsgId,
       role: "assistant",
-      content: liveContent.value + "\n\n*(Generation stopped)*",
+      content: stripActionsBlock(liveContent.value) + "\n\n*(Generation stopped)*",
       reasoning: liveReasoning.value || undefined,
       timestamp: Date.now()
     })
@@ -211,19 +391,16 @@ function useSavedPrompt(prompt: string) {
   userPrompt.value = prompt
 }
 
-async function askQuestion() {
-  const promptText = userPrompt.value.trim()
+function askQuestion() {
+  return sendQuestion(userPrompt.value, true)
+}
+
+async function sendQuestion(text: string, fromInput = false) {
+  const promptText = text.trim()
   if (!promptText || isLoading.value) return
 
-  isLoading.value = true
-  errorMsg.value = ""
-  liveReasoning.value = ""
-  liveContent.value = ""
-  startTimer()
-
-  currentAbortController = new AbortController()
-
   // Add user message to history
+  const history = messages.value.map(memoryTurn)
   const userMsgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4)
   messages.value.push({
     id: userMsgId,
@@ -231,8 +408,69 @@ async function askQuestion() {
     content: promptText,
     timestamp: Date.now()
   })
-  userPrompt.value = ""
+  if (fromInput) userPrompt.value = ""
   await saveMessages()
+  await runCompletion(promptText, history)
+}
+
+/** Drop the last assistant reply and ask the same question again. */
+async function regenerate() {
+  if (isLoading.value) return
+  const lastIdx = messages.value.length - 1
+  if (lastIdx < 0 || messages.value[lastIdx].role !== "assistant") return
+  const userIdx = lastIdx - 1
+  if (userIdx < 0 || messages.value[userIdx].role !== "user") return
+
+  const question = messages.value[userIdx].content
+  const history = messages.value.slice(0, userIdx).map(memoryTurn)
+  messages.value.splice(lastIdx, 1)
+  await saveMessages()
+  await runCompletion(question, history)
+}
+
+/** Retry after an error: the failed question is already the last (user) message. */
+async function retryLast() {
+  if (isLoading.value) return
+  const lastIdx = messages.value.length - 1
+  if (lastIdx < 0 || messages.value[lastIdx].role !== "user") return
+  const history = messages.value.slice(0, lastIdx).map(memoryTurn)
+  await runCompletion(messages.value[lastIdx].content, history)
+}
+
+async function deleteMessage(id: string) {
+  if (isLoading.value) return
+  const idx = messages.value.findIndex(m => m.id === id)
+  if (idx < 0) return
+  // Removing a message the summary already covers makes the summary stale, so forget it.
+  if (idx < summarizedCount.value) {
+    if (summaryAbortController) summaryAbortController.abort()
+    summary.value = ""
+    summarizedCount.value = 0
+  }
+  messages.value.splice(idx, 1)
+  await saveMessages()
+}
+
+function exportChat() {
+  if (messages.value.length === 0) return
+  const md = exportChatMarkdown(messages.value, { title: activeThread.value?.title, model: activeModel.value })
+  const blob = new Blob([md], { type: "text/markdown;charset=utf-8" })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `window-chat-${new Date().toISOString().slice(0, 10)}.md`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function runCompletion(promptText: string, history: { role: "user" | "assistant"; content: string }[]) {
+  isLoading.value = true
+  errorMsg.value = ""
+  liveReasoning.value = ""
+  liveContent.value = ""
+  startTimer()
+
+  currentAbortController = new AbortController()
   scrollToBottom()
 
   try {
@@ -258,9 +496,9 @@ async function askQuestion() {
 
     const client = new AIClient(aiConfig, currentAbortController.signal)
     
-    const targetWindows = selectedScope.value === "all"
-      ? props.allWindows
-      : [props.allWindows.find(w => w.windowId === selectedScope.value) || props.allWindows[0]].filter(Boolean)
+    const targetWindows = scopeWindows.value
+    const toolsOn = toolMode.value !== "off"
+    const scopeTabs = new Map<number, ScopeTab>()
 
     let tabsContext = ""
     for (const win of targetWindows) {
@@ -273,19 +511,21 @@ async function askQuestion() {
         for (const tab of group.tabs) {
           const activeStr = tab.active ? " (Currently Active)" : ""
           const timeStr = tab.lastAccessed ? ` (Last Accessed: ${new Date(tab.lastAccessed).toLocaleString()})` : ""
-          tabsContext += `- "${tab.title}" [URL: ${tab.url}]${activeStr}${timeStr}\n`
+          if (tab.id !== undefined) {
+            scopeTabs.set(tab.id, { id: tab.id, title: tab.title, url: tab.url, pinned: Boolean(tab.pinned) })
+          }
+          const idStr = toolsOn && tab.id !== undefined ? `[id: ${tab.id}] ` : ""
+          tabsContext += `- ${idStr}"${tab.title}" [URL: ${tab.url}]${activeStr}${timeStr}\n`
         }
       }
     }
 
-    const systemPrompt = `You are a browser tab assistant. The user will ask a question about their current browser tabs.
-Here is the list of tabs in the current window:
-
-${tabsContext}
-
-Answer the user's question concisely based on the provided list of tabs. You MUST format any mentioned tabs as markdown links using their exact URL, e.g., [Tab Title](https://example.com). You can use basic markdown like **bold** and *italic*.`
-
-    const fullPrompt = `${systemPrompt}\n\nUser Question: ${promptText}`
+    const fullPrompt = buildChatPrompt(
+      tabsContext,
+      { turns: history, summary: summary.value, summarizedCount: summarizedCount.value },
+      promptText,
+      buildToolsPrompt(toolMode.value)
+    )
 
     let capturedReasoning = ""
     let capturedContent = ""
@@ -311,16 +551,29 @@ Answer the user's question concisely based on the provided list of tabs. You MUS
 
     // Add assistant response to history
     const assistantMsgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4)
+    const parsed = parseActionBlocks(result || capturedContent || liveContent.value)
+    const proposed = toolsOn
+      ? validateToolCalls(parsed.raw, scopeTabs, () => 'act-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6))
+      : []
+    let replyText = parsed.text
+    if (toolsOn && parsed.parseError) replyText += `\n\n*(${parsed.parseError})*`
     messages.value.push({
       id: assistantMsgId,
       role: "assistant",
-      content: result || capturedContent || liveContent.value,
+      content: replyText,
       reasoning: capturedReasoning || liveReasoning.value || undefined,
       fullRequest: fullPrompt,
+      actions: proposed.length > 0 ? proposed : undefined,
       timestamp: Date.now()
     })
     await saveMessages()
     scrollToBottom()
+
+    // Actions the mode allows run right away; the rest wait for the user's click.
+    for (const action of proposed) {
+      if (!needsConfirmation(toolMode.value, action)) await runAction(action, true)
+    }
+    void maybeSummarize()
 
   } catch (err: any) {
     if (err.message?.includes('aborted') || err.name === 'AbortError') {
@@ -335,6 +588,102 @@ Answer the user's question concisely based on the provided list of tabs. You MUS
     currentAbortController = null
     stopTimer()
     scrollToBottom()
+  }
+}
+
+function toPlain<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value))
+}
+
+async function runAction(action: ChatActionRecord, auto = false) {
+  if (action.status !== "proposed") return
+  action.status = "running"
+  actionsRunning.value++
+  try {
+    const res = await chrome.runtime.sendMessage({ action: "CHAT_TOOL_EXEC", payload: { call: toPlain(action.call) } })
+    if (res?.ok) {
+      action.status = "done"
+      action.snapshots = res.snapshots
+      action.executedAt = Date.now()
+      action.auto = auto
+      action.error = undefined
+      const skipped = (action.skipped || 0) + (res.skipped || 0)
+      action.skipped = skipped || undefined
+    } else {
+      action.status = "failed"
+      action.error = res?.error || "Action failed"
+    }
+  } catch (err: any) {
+    action.status = "failed"
+    action.error = err?.message || "Action failed"
+  } finally {
+    actionsRunning.value--
+  }
+  await saveMessages()
+  emit("tabs-changed")
+}
+
+async function undoAction(action: ChatActionRecord) {
+  if (!canUndo(action)) return
+  actionsRunning.value++
+  try {
+    const res = await chrome.runtime.sendMessage({
+      action: "CHAT_TOOL_UNDO",
+      payload: { tool: action.call.tool, snapshots: toPlain(action.snapshots) }
+    })
+    if (res?.ok) {
+      action.status = "undone"
+      action.error = res.failed > 0 ? `${res.failed} tab(s) could not be restored` : undefined
+    } else {
+      action.error = res?.error || "Undo failed"
+    }
+  } catch (err: any) {
+    action.error = err?.message || "Undo failed"
+  } finally {
+    actionsRunning.value--
+  }
+  await saveMessages()
+  emit("tabs-changed")
+}
+
+function declineAction(action: ChatActionRecord) {
+  if (action.status !== "proposed") return
+  action.status = "declined"
+  saveMessages()
+}
+
+async function approveAll(msg: ChatMessage) {
+  for (const action of msg.actions ?? []) await runAction(action, false)
+}
+
+function declineAll(msg: ChatMessage) {
+  for (const action of msg.actions ?? []) declineAction(action)
+}
+
+async function undoAll(msg: ChatMessage) {
+  for (const action of [...(msg.actions ?? [])].reverse()) await undoAction(action)
+}
+
+/** The newest reply's actions, when any of them can still be undone: drives the undo bar by the input. */
+const undoBarMessage = computed(() => {
+  const last = messages.value[messages.value.length - 1]
+  return last && last.role === "assistant" && last.actions?.some(canUndo) ? last : null
+})
+
+const undoBarLabel = computed(() => {
+  const done = undoBarMessage.value?.actions?.filter(canUndo) ?? []
+  if (done.length === 0) return ""
+  return done.length === 1 ? done[0].summary : `${done.length} actions done`
+})
+
+function actionStatusLabel(a: ChatActionRecord) {
+  switch (a.status) {
+    case "proposed": return a.destructive ? "Needs approval" : "Waiting"
+    case "running": return "Running…"
+    case "done": return a.auto ? "Done (auto)" : "Done"
+    case "undone": return "Undone"
+    case "declined": return "Dismissed"
+    case "failed": return "Failed"
   }
 }
 
@@ -361,7 +710,7 @@ function handleLinkClick(e: MouseEvent) {
     if (url && isSafeLinkUrl(url)) {
       if (!clickedUrls.value.includes(url)) {
         clickedUrls.value.push(url)
-        chrome.storage.local.set({ chatClickedUrls: clickedUrls.value })
+        saveMessages()
       }
       target.classList.add("line-through", "opacity-40")
       target.classList.remove("text-accent")
@@ -406,7 +755,7 @@ async function copyToClipboard(text: string) {
 </script>
 
 <template>
-  <div class="flex flex-col h-full bg-primary text-t-primary" style="background: var(--bg-primary); color: var(--text-primary);">
+  <div ref="rootEl" class="flex flex-col h-full bg-primary text-t-primary" style="background: var(--bg-primary); color: var(--text-primary);">
     <!-- Header -->
     <header class="flex items-center justify-between px-3 py-2 shrink-0 border-b border-border/40 gap-1.5" style="box-shadow: 0 0.5px 0 var(--border);">
       <!-- Left: Back button + Title + Scope Selector -->
@@ -462,16 +811,18 @@ async function copyToClipboard(text: string) {
           </select>
         </div>
 
-        <!-- Clear Chat History -->
-        <button 
+        <!-- Export Chat as Markdown -->
+        <button
           v-if="messages.length > 0"
-          @click="clearChat"
-          class="w-6 h-6 flex items-center justify-center rounded-sm hover:bg-red-500/10 hover:text-red-500 transition-colors cursor-pointer"
-          title="Clear Chat History"
+          @click="exportChat"
+          class="w-6 h-6 flex items-center justify-center rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+          title="Export chat as Markdown"
           style="color: var(--text-secondary);"
         >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
           </svg>
         </button>
 
@@ -491,6 +842,125 @@ async function copyToClipboard(text: string) {
       </div>
     </header>
 
+    <div class="flex flex-1 min-h-0 overflow-hidden">
+    <!-- Thread sidebar (wide layouts) -->
+    <aside v-if="showSidebar" class="w-52 shrink-0 flex flex-col border-r" style="border-color: var(--border); background: var(--bg-elevated);">
+      <div class="p-2 shrink-0">
+        <button
+          @click="newChat"
+          :disabled="isBusy || messages.length === 0"
+          class="w-full py-1.5 rounded-sm text-[11px] font-medium border cursor-pointer transition-opacity disabled:opacity-40"
+          style="border-color: var(--border); background: var(--bg-primary); color: var(--accent);"
+          title="Start a new chat thread"
+        >+ New chat</button>
+      </div>
+      <div class="flex-1 overflow-y-auto scrollbar-thin px-1.5 pb-2 flex flex-col gap-0.5">
+        <div
+          v-for="t in threads"
+          :key="t.id"
+          @click="switchThread(t.id)"
+          class="group flex items-center gap-1 rounded-sm px-2 py-1.5 text-[11px] transition-colors"
+          :class="[t.id === activeThreadId ? '' : 'hover:bg-black/5 dark:hover:bg-white/5', isBusy && t.id !== activeThreadId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer']"
+          :style="t.id === activeThreadId ? 'background: var(--hover); border: 1px solid var(--border);' : 'border: 1px solid transparent;'"
+          :title="t.title"
+        >
+          <input
+            v-if="renaming && t.id === activeThreadId"
+            ref="renameInput"
+            v-model="renameDraft"
+            @click.stop
+            @keydown.enter.prevent="commitRename"
+            @keydown.esc.prevent="renaming = false"
+            @blur="commitRename"
+            maxlength="80"
+            placeholder="Chat name (empty = automatic)"
+            class="flex-1 min-w-0 text-[11px] px-1 py-0.5 rounded-sm border bg-transparent focus:outline-none"
+            style="border-color: var(--accent); color: var(--text-primary);"
+          />
+          <template v-else>
+            <span class="flex-1 min-w-0 truncate" :class="t.id === activeThreadId ? 'font-medium' : ''">{{ t.title }}</span>
+            <span v-if="t.messageCount > 0 && t.id !== activeThreadId" class="text-[9px] opacity-50 shrink-0">{{ Math.ceil(t.messageCount / 2) }}</span>
+            <template v-if="t.id === activeThreadId">
+              <button @click.stop="startRename" :disabled="isBusy" class="opacity-50 hover:opacity-100 cursor-pointer disabled:opacity-30 shrink-0" title="Rename this chat">
+                <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>
+              </button>
+              <button
+                @click.stop="removeThread"
+                :disabled="isBusy"
+                class="shrink-0 cursor-pointer disabled:opacity-30"
+                :class="confirmingDelete ? 'text-[10px] font-medium px-1 rounded-sm' : 'opacity-50 hover:opacity-100 hover:text-red-500'"
+                :style="confirmingDelete ? 'color: var(--group-red); background: rgba(255, 59, 48, 0.12);' : ''"
+                :title="confirmingDelete ? 'Click again to delete this chat' : 'Delete this chat'"
+              >
+                <template v-if="confirmingDelete">Delete?</template>
+                <svg v-else class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" /></svg>
+              </button>
+            </template>
+          </template>
+        </div>
+      </div>
+    </aside>
+
+    <div class="flex flex-col flex-1 min-w-0 min-h-0">
+    <!-- Thread bar -->
+    <div v-if="!showSidebar" class="flex items-center gap-1.5 px-3 py-1.5 shrink-0 border-b border-border/40">
+      <input
+        v-if="renaming"
+        ref="renameInput"
+        v-model="renameDraft"
+        @keydown.enter.prevent="commitRename"
+        @keydown.esc.prevent="renaming = false"
+        @blur="commitRename"
+        maxlength="80"
+        placeholder="Chat name (empty = automatic)"
+        class="flex-1 min-w-0 text-[11px] px-1.5 py-0.5 rounded-sm border bg-transparent focus:outline-none"
+        style="border-color: var(--accent); color: var(--text-primary);"
+      />
+      <select
+        v-else
+        :value="activeThreadId"
+        @change="switchThread(($event.target as HTMLSelectElement).value)"
+        :disabled="isBusy"
+        class="flex-1 min-w-0 text-[11px] px-1.5 py-0.5 rounded-sm border bg-transparent cursor-pointer focus:outline-none truncate disabled:opacity-60"
+        style="border-color: var(--border); color: var(--text-primary);"
+        title="Switch chat thread"
+      >
+        <option v-for="t in threads" :key="t.id" :value="t.id" class="bg-primary text-t-primary" style="background: var(--bg-primary); color: var(--text-primary);">
+          {{ formatThreadLabel(t) }}
+        </option>
+      </select>
+
+      <button
+        @click="newChat"
+        :disabled="isBusy || messages.length === 0"
+        class="px-1.5 h-6 flex items-center justify-center rounded-sm text-[11px] font-medium hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer disabled:opacity-40 shrink-0"
+        title="Start a new chat thread"
+        style="color: var(--accent);"
+      >+ New</button>
+      <button
+        @click="startRename"
+        :disabled="isBusy || renaming"
+        class="w-6 h-6 flex items-center justify-center rounded-sm hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer disabled:opacity-40 shrink-0"
+        title="Rename this chat"
+        style="color: var(--text-secondary);"
+      >
+        <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>
+      </button>
+      <button
+        @click="removeThread"
+        :disabled="isBusy"
+        class="h-6 flex items-center justify-center rounded-sm transition-colors cursor-pointer disabled:opacity-40 shrink-0 text-[10.5px]"
+        :class="confirmingDelete ? 'px-1.5 font-medium' : 'w-6 hover:bg-red-500/10 hover:text-red-500'"
+        :style="confirmingDelete ? 'color: var(--group-red); background: rgba(255, 59, 48, 0.12);' : 'color: var(--text-secondary);'"
+        :title="confirmingDelete ? 'Click again to delete this chat' : 'Delete this chat'"
+      >
+        <template v-if="confirmingDelete">Delete?</template>
+        <svg v-else class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+        </svg>
+      </button>
+    </div>
+
     <div class="flex flex-col p-3 gap-2.5 flex-1 overflow-hidden">
       <!-- Saved Prompts Row -->
       <div v-if="savedPrompts.length > 0" class="flex flex-wrap gap-1.5 overflow-y-auto max-h-14 scrollbar-thin shrink-0">
@@ -504,8 +974,17 @@ async function copyToClipboard(text: string) {
 
       <!-- Messages Log -->
       <div ref="chatContainer" class="flex-1 overflow-y-auto scrollbar-thin rounded-sm border p-3 flex flex-col gap-3 text-[12px]" style="border-color: var(--border); background: var(--bg-elevated);">
-        <div v-if="messages.length === 0 && !isLoading && !errorMsg" class="opacity-50 italic text-center my-auto">
-          Ask a question about your tabs (e.g. "Which tabs contain urgent things?")
+        <div v-if="messages.length === 0 && !isLoading && !errorMsg" class="flex flex-col items-center gap-2 my-auto">
+          <span class="opacity-50 italic text-center">Ask a question about your tabs</span>
+          <div class="flex flex-wrap justify-center gap-1.5">
+            <button
+              v-for="s in CHAT_SUGGESTIONS"
+              :key="s"
+              @click="sendQuestion(s)"
+              class="px-2 py-1 rounded-sm text-[10.5px] border cursor-pointer hover:text-[var(--accent)] transition-colors"
+              style="border-color: var(--border); background: var(--bg-primary); color: var(--text-secondary);"
+            >{{ s }}</button>
+          </div>
         </div>
 
         <!-- Render Conversation Messages -->
@@ -515,12 +994,59 @@ async function copyToClipboard(text: string) {
             <div class="max-w-[85%] rounded-sm px-3 py-1.5 text-[11.5px] leading-relaxed shadow-xs text-white" style="background: var(--accent);">
               {{ msg.content }}
             </div>
+            <button
+              v-if="!isLoading"
+              @click="deleteMessage(msg.id)"
+              class="self-end ml-1 opacity-30 hover:opacity-100 hover:text-red-500 transition-opacity cursor-pointer"
+              title="Delete message"
+            >
+              <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
+            </button>
           </div>
 
           <!-- Assistant message -->
           <div v-else class="flex flex-col gap-1.5 max-w-[95%]">
-            <div class="rounded-sm p-2.5 border leading-relaxed bg-black/5 dark:bg-white/5" style="border-color: var(--border);" v-html="formatMarkdown(msg.content)" @click="handleLinkClick"></div>
+            <div v-if="msg.content" class="rounded-sm p-2.5 border leading-relaxed bg-black/5 dark:bg-white/5" style="border-color: var(--border);" v-html="formatMarkdown(msg.content)" @click="handleLinkClick"></div>
+
+            <!-- Tab actions proposed or run by the assistant -->
+            <div v-if="msg.actions?.length" class="flex flex-col gap-1">
+              <div
+                v-for="a in msg.actions"
+                :key="a.id"
+                class="flex items-start gap-2 rounded-sm border px-2 py-1.5 text-[10.5px]"
+                :style="a.destructive && a.status === 'proposed' ? 'border-color: rgba(255, 59, 48, 0.35); background: rgba(255, 59, 48, 0.06);' : 'border-color: var(--border); background: var(--bg-primary);'"
+              >
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-1.5">
+                    <span class="font-semibold uppercase tracking-wide text-[9px]" :style="a.status === 'failed' ? 'color: var(--group-red);' : a.status === 'done' ? 'color: var(--group-green, #34c759);' : 'color: var(--text-secondary);'">{{ actionStatusLabel(a) }}</span>
+                    <span v-if="a.destructive" class="text-[9px] px-1 rounded-sm" style="color: var(--group-red); border: 1px solid rgba(255, 59, 48, 0.3);">closes tabs</span>
+                  </div>
+                  <div class="break-words" :class="a.status === 'undone' || a.status === 'declined' ? 'line-through opacity-50' : ''">{{ a.summary }}</div>
+                  <div v-if="a.call.reason" class="opacity-60 break-words">{{ a.call.reason }}</div>
+                  <div v-if="a.skipped" class="opacity-60">{{ a.skipped }} tab(s) skipped (pinned or no longer open)</div>
+                  <div v-if="a.error" class="break-words" style="color: var(--group-red);">{{ a.error }}</div>
+                </div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <template v-if="a.status === 'proposed'">
+                    <button @click="runAction(a)" :disabled="actionsRunning > 0" class="px-2 py-0.5 rounded-sm text-white cursor-pointer disabled:opacity-50" :style="a.destructive ? 'background: var(--group-red);' : 'background: var(--accent);'">{{ a.destructive ? 'Close tabs' : 'Approve' }}</button>
+                    <button @click="declineAction(a)" class="px-1.5 py-0.5 rounded-sm border cursor-pointer" style="border-color: var(--border);">Dismiss</button>
+                  </template>
+                  <button v-else-if="canUndo(a)" @click="undoAction(a)" :disabled="actionsRunning > 0" class="px-2 py-0.5 rounded-sm border cursor-pointer font-medium disabled:opacity-50" style="border-color: var(--accent); color: var(--accent);">Undo</button>
+                </div>
+              </div>
+              <div v-if="msg.actions.filter(a => a.status === 'proposed').length > 1" class="flex items-center gap-2 text-[10px]">
+                <button @click="approveAll(msg)" :disabled="actionsRunning > 0" class="font-medium cursor-pointer hover:underline disabled:opacity-50" style="color: var(--accent);">Approve all</button>
+                <button @click="declineAll(msg)" class="opacity-70 cursor-pointer hover:underline">Dismiss all</button>
+              </div>
+            </div>
             
+            <!-- Message actions -->
+            <div v-if="!isLoading" class="flex items-center gap-2 text-[10px] opacity-60">
+              <button @click="copyToClipboard(msg.content)" class="hover:underline hover:opacity-100 cursor-pointer" title="Copy reply">Copy</button>
+              <button v-if="msg.id === lastAssistantId && !msg.actions?.some(a => a.status === 'done' || a.status === 'running')" @click="regenerate" class="hover:underline cursor-pointer" title="Ask again and replace this reply">Regenerate</button>
+              <button @click="deleteMessage(msg.id)" class="hover:underline hover:text-red-500 cursor-pointer" title="Delete reply">Delete</button>
+            </div>
+
             <!-- Inspector button for Request & Reasoning -->
             <div v-if="msg.reasoning || msg.fullRequest" class="flex items-center gap-2 text-[10px]">
               <button 
@@ -588,7 +1114,7 @@ async function copyToClipboard(text: string) {
 
           <!-- Live Streaming Text Content (rendered markdown + typing cursor) -->
           <div v-if="liveContent" class="rounded-sm p-2.5 border leading-relaxed bg-black/5 dark:bg-white/5" style="border-color: var(--border);">
-            <span v-html="formatMarkdown(liveContent)" @click="handleLinkClick"></span>
+            <span v-html="formatMarkdown(stripActionsBlock(liveContent))" @click="handleLinkClick"></span>
             <span class="inline-block w-1.5 h-3.5 ml-0.5 align-middle animate-pulse" style="background: var(--accent);"></span>
           </div>
 
@@ -610,6 +1136,11 @@ async function copyToClipboard(text: string) {
           <div class="flex-1 min-w-0">
             <div class="font-semibold mb-0.5">AI Request Failed</div>
             <div class="text-[10.5px] opacity-90 break-words">{{ errorMsg }}</div>
+            <button
+              v-if="messages.length > 0 && messages[messages.length - 1].role === 'user'"
+              @click="retryLast"
+              class="mt-1 text-[10.5px] font-medium underline cursor-pointer"
+            >Retry</button>
           </div>
         </div>
       </div>
@@ -623,8 +1154,26 @@ async function copyToClipboard(text: string) {
               {{ activeModel }}
             </span>
             <span class="truncate">Scope: {{ totalScopeTabs }} tabs</span>
+            <label class="flex items-center gap-1 shrink-0" :title="toolModeHint">
+              <span>Actions:</span>
+              <select
+                v-model="toolMode"
+                class="text-[10px] px-1 py-0 rounded-sm border bg-transparent cursor-pointer focus:outline-none"
+                :style="toolMode === 'auto' ? 'border-color: var(--group-orange, #ff9500); color: var(--group-orange, #ff9500);' : 'border-color: var(--border); color: var(--text-primary);'"
+              >
+                <option v-for="m in CHAT_TOOL_MODES" :key="m.value" :value="m.value" class="bg-primary text-t-primary" style="background: var(--bg-primary); color: var(--text-primary);">{{ m.label }}</option>
+              </select>
+            </label>
+            <span v-if="isSummarizing" class="truncate opacity-80" style="color: var(--accent);">· summarizing earlier messages…</span>
+            <span v-else-if="summary" class="truncate" title="Older messages are condensed into a summary that is sent with each request">· memory: summary + recent</span>
           </div>
           <span class="shrink-0">Est. Input: ~{{ estimatedTokens }} tokens</span>
+        </div>
+
+        <!-- Undo bar for the newest reply's actions -->
+        <div v-if="undoBarMessage" class="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-sm border text-[11px]" style="border-color: var(--border); background: var(--hover);">
+          <span class="truncate min-w-0" :title="undoBarLabel"><span style="color: var(--group-green, #34c759);">✓</span> {{ undoBarLabel }}</span>
+          <button @click="undoAll(undoBarMessage)" :disabled="actionsRunning > 0" class="shrink-0 px-2.5 py-0.5 rounded-sm border font-medium cursor-pointer disabled:opacity-50" style="border-color: var(--accent); color: var(--accent);">Undo</button>
         </div>
 
         <textarea 
@@ -669,6 +1218,8 @@ async function copyToClipboard(text: string) {
           </button>
         </div>
       </div>
+    </div>
+    </div>
     </div>
   </div>
 </template>

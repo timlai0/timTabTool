@@ -62,6 +62,7 @@ import {
   type TabExportFormat,
   type ExportableOpenTab,
 } from '../shared/tab-exporter'
+import { executeChatToolCall, undoChatToolCall } from './tabs/chat-tool-actions'
 import {
   isActionAllowed,
   isTrustedSender,
@@ -667,6 +668,15 @@ export async function handleExtensionMessage(message: ExtensionMessage, sender?:
       await cleanupTabGroups(windowId, minTabs)
       invalidatePreviewCache(windowId)
       return { ok: true }
+    }
+
+    case 'CHAT_TOOL_EXEC': {
+      return await executeChatToolCall((message.payload as { call?: unknown } | undefined)?.call)
+    }
+
+    case 'CHAT_TOOL_UNDO': {
+      const p = message.payload as { tool?: unknown; snapshots?: unknown } | undefined
+      return await undoChatToolCall(p?.tool, p?.snapshots)
     }
 
     case 'CLOSE_GROUP': {
